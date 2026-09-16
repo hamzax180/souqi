@@ -28,12 +28,22 @@ function createMockDb() {
         async updateOne(query, update) {
           const match = docs.find((d) => {
             for (const [k, v] of Object.entries(query)) {
-              if (d[k] !== v) return false;
+              if (v && typeof v === "object" && Array.isArray(v.$in)) {
+                if (!v.$in.includes(d[k])) return false;
+              } else if (v && typeof v === "object" && v.$gt !== undefined) {
+                if (d[k] <= v.$gt) return false;
+              } else if (v && typeof v === "object" && v.$lte !== undefined) {
+                if (d[k] > v.$lte) return false;
+              } else if (d[k] !== v) {
+                return false;
+              }
             }
             return true;
           });
           if (!match) return { modifiedCount: 0 };
           if (update.$set) Object.assign(match, update.$set);
+          if (update.$unset) { for (const key of Object.keys(update.$unset)) delete match[key]; }
+          if (update.$inc) { for (const [key, val] of Object.entries(update.$inc)) { match[key] = (match[key] || 0) + val; } }
           return { modifiedCount: 1 };
         },
         find(query, opts) {
@@ -55,7 +65,18 @@ function createMockDb() {
             async toArray() { return res.map((d) => Object.assign({}, d)); }
           };
         },
-        async createIndex() { return true; }
+        async createIndex() { return true; },
+        async deleteOne(query) {
+          const idx = docs.findIndex((d) => {
+            for (const [k, v] of Object.entries(query)) {
+              if (d[k] !== v) return false;
+            }
+            return true;
+          });
+          if (idx >= 0) { docs.splice(idx, 1); return { deletedCount: 1 }; }
+          return { deletedCount: 0 };
+        },
+        async deleteMany() { docs.length = 0; return { deletedCount: 0 }; }
       };
     }
     return collections[name];

@@ -159,26 +159,24 @@ function isQuestionOrConversational(prompt) {
   if (isDirectCommand) return false;
 
   // 2. Disclaimers, corrections, or telling the agent when to build or not to build:
-  // e.g. "build when i tell you build", "i didnt say build yet", "don't build yet", "wait", "hold on", "not yet", "stop", "i never said build"
-  const stopOrCorrection = /\b(didn'?t say|don'?t build|never said|not yet|wait|hold on|stop|not now|why are you building|i didn'?t ask|i haven'?t|no wait|dont build|tell you build|when i tell|only when i|build when i|build after|tell you to build|who said build|did i say build)\b/i;
+  // e.g. "build when i tell you build", "i didnt say build yet", "don't build yet", "wait", "hold on", "not yet", "stop"
+  const stopOrCorrection = /\b(didn'?t say|don'?t build|don'?t touch|dont touch|never said|not yet|wait|hold on|stop|not now|why are you building|i didn'?t ask|i haven'?t|no wait|dont build|tell you build|when i tell|only when i|build when i|build after|tell you to build|who said build|did i say build|before i told you|before you were asked|without asking)\b/i;
   if (stopOrCorrection.test(p)) return true;
 
   // 3. Indecision, lack of ideas, or asking for suggestions:
-  // e.g. "idk", "i don't know", "not sure", "dunno", "no idea", "any ideas", "suggest something", "what should i build"
   const indecision = /\b(idk|i don'?t know|not sure|dunno|no idea|have no idea|undecided|any ideas?|suggest something|recommend something|help me decide|what should i build|what do you suggest|give me ideas)\b/i;
   if (indecision.test(p)) return true;
 
-  // 4. Short affirmations, acknowledgments, or single-word reactions:
-  const shortReactions = /^(ok|okay|k|kk|sure|yes|no|yep|nope|yeah|yea|nah|fine|alright|sweet|bet|true|right|definitely|idk)$/i;
+  // 4. Short affirmations, acknowledgments, or single-word reactions (including common slang):
+  const shortReactions = /^(ok|okay|k|kk|sure|yes|no|yep|nope|yeah|yea|nah|fine|alright|sweet|bet|true|right|definitely|idk|hmm|hm|bro|bruh|lol|lmao|wdym|wtf|wth|omg|oof|meh|ah|oh|huh|damn|dang|yikes|nice|cool|wow|sup|yo)$/i;
   if (shortReactions.test(p)) return true;
 
   // 5. Casual conversational remarks, compliments, reactions:
-  // e.g. "you know when to build and when not now , wow", "wow", "haha", "nice job", "you are smart"
-  const casualChat = /\b(you know|you understand|you got it|impressive|smart|genius|cool|awesome|great|haha|lol|lmao|omg|good job|well done|thank you|thanks|thx|nice|wow|super|amazing)\b/i;
+  const casualChat = /\b(you know|you understand|you got it|impressive|smart|genius|cool|awesome|great|haha|lol|lmao|omg|good job|well done|thank you|thanks|thx|nice|wow|super|amazing|wdym|wtf|wth|bruh|bro)\b/i;
   if (casualChat.test(p)) return true;
 
   // 6. Conversational statements starting with personal pronouns/opinions that are not build commands
-  if (/^(i|you|we|it|that|they)\s+(am|are|was|were|think|feel|mean|said|didn'?t|don'?t|didnt|dont|know|thought|see|hear|just|only|already|can|will)\b/i.test(p)) {
+  if (/^(i|you|we|it|that|they)\s+(am|are|was|were|think|feel|mean|said|didn'?t|don'?t|didnt|dont|know|thought|see|hear|just|only|already|can|will|started|began|got|never|should)\b/i.test(p)) {
     return true;
   }
 
