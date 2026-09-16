@@ -4768,39 +4768,72 @@ app.post("/api/codeagent/runs", codeAgentLimiter, express.json({ limit: "1mb" })
     baseFiles = (full && full.files) || {};
   }
 
-function getConversationalFallback(prompt) {
+function getConversationalFallback(prompt, history) {
   const p = String(prompt || "").trim().toLowerCase();
-  if (/\b(started building|before i (finished|could|said)|premature|didn'?t say build|never said build|stop building)\b/i.test(p)) {
-    return "Understood, totally my bad! I won't touch any code until you give the green light. Take all the time you need!";
+
+  // 1. User correcting agent ("i said heyyy not build", "i didn't say build", "don't touch code", "stop", "not build")
+  if (
+    /\b(i said|said|told you|meant|meaning)\b.*\b(not|never|didn'?t)\b/i.test(p) ||
+    /\b(not build|didn'?t say build|never said build|stop building|don'?t build|dont build|hold on|wait|not yet|no building)\b/i.test(p) ||
+    /\b(started building|before i (finished|could|said)|premature|who said build|did i say build)\b/i.test(p)
+  ) {
+    const apologeticReplies = [
+      "Haha my bad, heard you loud and clear! No building at all. How are you doing today? We can just chat or bounce ideas around.",
+      "Understood, totally my fault! I won't touch any code until you give me the green light. What's on your mind?",
+      "Got it, no code! Sorry about that. Let me know whenever you want to plan something or if you just want to talk through ideas.",
+      "Haha my bad! Hey there! 👋 I'm all ears — take all the time you need, we'll only build when you explicitly say so."
+    ];
+    return apologeticReplies[Math.abs(p.length) % apologeticReplies.length];
   }
-  if (/^(idk|i don'?t know|not sure|dunno|no idea|have no idea|ideas?|suggest|what should i build)/i.test(p)) {
-    return "No worries at all! We could build a sleek personal portfolio, a local cafe website, an interactive task dashboard, or a mini-game. What kind of app sounds interesting to you?";
+
+  // 2. Greetings (including elongated words like "heyyyy", "hiiii", "hellooo", "yoooo", "suuuup")
+  if (/\b(h+e+y+|h+i+|h+e+l+l+o+|h+o+w+d+y+|y+o+|s+u+p+|g+m+|g+n+|g+r+e+e+t+i+n+g+s*)\b/i.test(p)) {
+    const greetingReplies = [
+      "Hey there! 👋 Great to see you. How are you doing today? Thinking of building something cool or just exploring?",
+      "Hey! What's up? I'm here to help — we can brainstorm app ideas, plan a project, or just chat. What's on your mind?",
+      "Hello! Hope you're having a great day. Let me know what you'd like to work on whenever you're ready!",
+      "Hey! 👋 Ready whenever you are. What kind of project or ideas are you thinking about today?"
+    ];
+    return greetingReplies[Math.abs(p.length) % greetingReplies.length];
   }
-  if (/^(ok|okay|k|kk|sure|got it|sounds good|alright|fine|yes|yep|yeah|bet)$/i.test(p)) {
-    return "Sounds good! Whenever you're ready, let me know what kind of app or feature you'd like to build.";
+
+  // 3. User asking "how are you", "what's up", "how's it going"
+  if (/\b(how are you|how r u|how are u|how you doing|what's up|whats up|how's it going|hows it going)\b/i.test(p)) {
+    return "I'm doing great, thanks for asking! Excited to help you build something awesome. What kind of project do you have in mind today?";
   }
+
+  // 4. Indecision or asking for suggestions ("idk", "what should i build", "any ideas")
+  if (/\b(idk|i don'?t know|not sure|dunno|no idea|have no idea|undecided|any ideas?|suggest|recommend|what should i build|give me ideas)\b/i.test(p)) {
+    return "No worries at all! Here are a few fun ideas we could create:\n• A sleek personal portfolio or resume site\n• A local cafe or restaurant landing page with a menu\n• A modern task tracker or habit dashboard\n• A retro mini-game like 2D Snake\nWhich one sounds interesting to you?";
+  }
+
+  // 5. Short affirmations & acknowledgments ("ok", "sure", "cool", "nice")
+  if (/^(ok|okay|k|kk|sure|got it|sounds good|alright|fine|yes|yep|yeah|bet|nice|cool|sweet)$/i.test(p)) {
+    return "Awesome! Take your time, and whenever you're ready, let me know what kind of app or feature you'd like to build.";
+  }
+
+  // 6. Casual slang & confusion ("wdym", "wtf", "wth", "bro", "dude")
+  if (/\b(wdym|wth|wtf|lol what|bro|dude|man|bruh)\b/i.test(p)) {
+    return "Haha my bad if that was confusing! What's on your mind? Feel free to ask anything or let me know whenever you want to start building.";
+  }
+
+  // 7. Explanations & questions about tech ("how does this work", "explain", "what is")
   if (/\b(explain|walk me through|how does|what is|why is|difference between|what tech|technologies)\b/i.test(p)) {
     return "I'm happy to explain how things work or walk through any concepts! What specific part would you like to explore?";
   }
-  if (/\b(wdym|wth|wtf|lol what|bro|dude|man)\b/i.test(p)) {
-    return "My bad if that was confusing! What's on your mind? Let me know whenever you want to start building or brainstorming.";
+
+  // 8. Single letter or keyboard mash noise ("asdf", "zzz", "s")
+  if (/^(s|a|z|x|d|c|asdf|qwerty|zzz+|hhh+|aaa+|xxx+|[?!\s]+)$/i.test(p) || (p.length <= 2 && !/^(ai|ui|ux|db|vr|ar|os|2d|3d)$/i.test(p))) {
+    return "Looks like an accidental keystroke! What would you like to work on today?";
   }
-  if (/\b(you know|you understand|smart|impressive|genius|cool|awesome|nice|wow|haha|lol|lmao|good job|well done)\b/i.test(p)) {
-    return "Haha, thanks! I'm ready whenever you want to start building something.";
-  }
-  if (/\b(didn'?t say|don'?t build|never said|not yet|wait|hold on|stop|not now|tell you to build|build when i|cancel that|undo)\b/i.test(p)) {
-    return "Got it, totally my bad! I'll hold off until you give the word. What would you like to plan or discuss first?";
-  }
-  if (/\b(how are you|how r u|how are u|how you doing|what's up|whats up)\b/i.test(p)) {
-    return "I'm doing great, thanks for asking! What kind of project are you thinking of creating today?";
-  }
-  if (/^(hello|hi|hey|greetings|howdy|sup|yo|gm|gn)\b/i.test(p)) {
-    return "Hey there! Ready to create something cool, or want to bounce some ideas around first?";
-  }
-  if (/^(s|a|z|x|d|c|asdf|qwerty|zzz+|hhh+|[?!\s]+)$/i.test(p) || (p.length <= 2 && !/^(ai|ui|ux|db|vr|ar|os|2d|3d)$/i.test(p))) {
-    return "Looks like an accidental keystroke or typo! Let me know what you'd like to work on whenever you're ready.";
-  }
-  return "Sounds good! Whenever you're ready, let me know what kind of app or feature you'd like to build.";
+
+  // Default natural rotating replies
+  const defaultReplies = [
+    "Sounds good! Whenever you're ready, let me know what kind of app or feature you'd like to build.",
+    "Got it! Take your time, I'm right here whenever you're ready to plan or start building.",
+    "All good! Feel free to ask questions, explore ideas, or describe what you want to create whenever you're ready."
+  ];
+  return defaultReplies[Math.abs(p.length) % defaultReplies.length];
 }
 
   // --- Smart guard (non-build mode): intercept conversational chatter, questions, indecision, and noise BEFORE creating projects or runs ---
@@ -4848,7 +4881,7 @@ function getConversationalFallback(prompt) {
       }
 
       if (!reply) {
-        reply = getConversationalFallback(prompt);
+        reply = getConversationalFallback(prompt, history);
       }
 
       if (project) {
@@ -5431,17 +5464,8 @@ app.post("/api/codeagent/build", codeAgentLimiter, async (req, res) => {
     /* Confirm before building — PLAN MODE ONLY.
 
        The plan card shows what the agent understood before it spends a
-       minute and some credits building it, which is worth having. It is
-       not worth having on every first message of every conversation,
-       which is where it used to appear: auto mode put a card with two
-       buttons between someone and the thing they had just asked for,
-       every single time, and the answer was "yes, build it" every single
-       time. That is a click, not a check.
-
-       So it is the mode's job now. Plan means plan — fresh builds and
-       edits alike, which is the one thing that mode turns on; auto and
-       power go straight to building. The client re-POSTs the same prompt
-       with confirmed:true, which lands here with the gate already passed. */
+       minute and some credits building it. Plan mode = always show plan/clarify first.
+       The client re-POSTs with confirmed:true, which lands here with the gate passed. */
     if (buildMode === "plan" && !(req.body && req.body.confirmed)) {
       const planType = String((req.body && req.body.buildType) || "website");
       let plan = null;
@@ -5455,8 +5479,27 @@ app.post("/api/codeagent/build", codeAgentLimiter, async (req, res) => {
       }
       if (plan) {
         try { if (plan.costUsd) await codeAgentUsage.recordSpend(owner, plan.costUsd); } catch (e) {}
+
+        // Model wants to ask clarifying questions before making a plan
+        if (plan.needsClarification && plan.questions && plan.questions.length) {
+          sseFrame(res, "clarify", {
+            questions: plan.questions,
+            prompt: prompt, buildType: planType
+          });
+          sseFrame(res, "done", {});
+          return res.end();
+        }
+
+        // Full rich plan — send the complete schema to the client
         sseFrame(res, "confirm", {
-          plan: { title: plan.title, summary: plan.summary, features: plan.features, assumptions: plan.assumptions || [] },
+          plan: {
+            title: plan.title,
+            overview: plan.overview,
+            phases: plan.phases || [],
+            screens: plan.screens || [],
+            tech: plan.tech || [],
+            assumptions: plan.assumptions || []
+          },
           prompt: prompt, buildType: planType
         });
         sseFrame(res, "done", {});

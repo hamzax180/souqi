@@ -3052,18 +3052,43 @@ async function reviewBuild(userPrompt, calls, opts) {
   }
 }
 
-const PLAN_SYSTEM_PROMPT = `You turn a build request into a SHORT plan the person confirms before any code is written. Respond with JSON only, no other text:
+const PLAN_SYSTEM_PROMPT = `You are a senior software architect. Turn a build request into a DETAILED plan that the person reviews before any code is written.
 
-{"title":"...","summary":"...","features":["...","...","..."],"assumptions":["..."]}
+Respond with JSON ONLY — no markdown, no prose outside the JSON. Use this exact schema:
 
-- title: 2-5 words naming the thing. Not a sentence.
-- summary: ONE sentence saying what gets built, in plain language.
-- features: 3-5 concrete things it will have. Each 3-8 words, no trailing punctuation. Name real screens/behaviours ("Add and edit expenses", "Split totals per person"), never vague ones ("Modern design", "Great UX").
-- assumptions: 0-3 choices you are making that the request did not specify, each phrased so the person can correct it ("Monthly totals rather than weekly"). Omit the key entirely if the request was specific enough that you are not guessing at anything.
+{
+  "title": "2-5 word app name",
+  "overview": "2-3 sentence description of the full scope and purpose",
+  "phases": [
+    {
+      "name": "Phase 1: Core UI",
+      "steps": ["Main layout and navigation", "Key screens scaffolded", "..."]
+    },
+    {
+      "name": "Phase 2: Data & Logic",
+      "steps": ["State management", "CRUD operations", "..."]
+    },
+    {
+      "name": "Phase 3: Polish",
+      "steps": ["Animations", "Dark mode", "Empty states", "..."]
+    }
+  ],
+  "screens": ["Dashboard", "Settings", "..."],
+  "tech": ["React", "Tailwind CSS", "localStorage", "..."],
+  "assumptions": ["No user accounts — single device only", "..."],
+  "clarify": []
+}
 
-Be honest about scope: this builds ONE React web app, so do not promise native apps, payments, real email, or a backend database.
+Rules:
+- phases: 2-4 phases, each with 2-4 concrete steps. Steps are 4-8 words each, no fluff.
+- screens: list every distinct view the user will see (2-5 screens max for a React app)
+- tech: list the actual libraries/APIs you will use. Always include "React" and "Tailwind CSS". Add others only if genuinely needed.
+- assumptions: 0-3 key choices you made that the request did not specify. Each phrased so the user can correct it. Omit if the request was fully specific.
+- clarify: ONLY if the prompt is genuinely too vague to plan (fewer than ~8 words with no specifics) — list 1-2 short questions to ask the user BEFORE showing a plan. If the prompt is clear enough, leave this as an empty array [].
 
-LANGUAGE: the person reads title, summary, features and assumptions verbatim, so write those VALUES in the same language and script they wrote the request in, not transliterated. Judge it from their words alone, not from the kind of business and not from any language named in these instructions. If it is genuinely unclear, use English. The JSON keys are always the English ones above.`;
+Be honest about scope: this builds ONE React web app. No native apps, no real payments, no email, no real backend database.
+
+LANGUAGE: Write title, overview, phases, screens, assumptions and clarify values in the SAME language as the user's request. JSON keys stay in English always.`;
 
 /**
  * The plan the user confirms before a build starts.
@@ -3082,11 +3107,8 @@ LANGUAGE: the person reads title, summary, features and assumptions verbatim, so
 async function buildPlan(prompt, buildType) {
   const clean = String(prompt || "").trim();
 
-  // Cached on the prose route. Every build
-  // asks for a plan, and the plan is a pure function of (prompt, build type) —
-  // so the second person to ask for "a landing page for a bakery" costs $0.
-  // buildType is in the key because it changes the fallback AND steers the
-  // model's features list; the two must not share an entry.
+  // Cached on the json route. The plan is a pure function of (prompt, build type).
+  // buildType is in the key because it steers the model's feature list.
   const key = cacheKey(clean, {
     kind: "plan", mode: buildType || "website",
     promptHash: promptFingerprint(PLAN_SYSTEM_PROMPT)
@@ -3095,42 +3117,57 @@ async function buildPlan(prompt, buildType) {
   if (cached) return Object.assign({}, cached, { cached: true, costUsd: 0 });
 
   const res = await client.chat({
-    /* THE PLANNER RUNS ON THE REASONING MODEL.
-
-       It used to route to prose for a good reason — the title, summary and
-       features are shown to the person verbatim, so the reply has to come
-       back in the language they wrote in. But deciding what to build is the
-       most reasoning-heavy call in the whole agent and the one whose mistakes
-       are most expensive: everything downstream is executed against this
-       plan, so a bad plan is a well-built wrong app.
-
-       assessPrompt deliberately stays on prose. That call produces the
-       clarifying QUESTION the person reads and answers, which is where
-       multilingual fluency actually matters; this one produces a structured
-       object that happens to contain prose. */
+    /* THE PLANNER RUNS ON THE REASONING MODEL — same rationale as before.
+       Deciding what to build is the most expensive mistake: a bad plan means
+       a well-built wrong app. The new schema is larger so we raise maxTokens. */
     route: "json", model: POWER_MODEL || undefined,
     messages: [
       { role: "system", content: PLAN_SYSTEM_PROMPT },
       { role: "user", content: clean.slice(0, MAX_USER_PROMPT_CHARS) }
     ],
     responseFormat: { type: "json_object" },
-    maxTokens: 400, temperature: 0.3, timeoutMs: 20000
+    maxTokens: 700, temperature: 0.3, timeoutMs: 25000
   });
 
   if (res.ok && res.message && typeof res.message.content === "string") {
     try {
       const p = JSON.parse(res.message.content);
-      if (p && typeof p.summary === "string" && Array.isArray(p.features) && p.features.length) {
+
+      // If the model wants to clarify before planning, return that first
+      if (p && Array.isArray(p.clarify) && p.clarify.length > 0) {
+        return {
+          needsClarification: true,
+          questions: p.clarify.slice(0, 2).map((q) => String(q).slice(0, 200)),
+          costUsd: res.costUsd || 0
+        };
+      }
+
+      const summaryText = typeof p.overview === "string" ? p.overview : (typeof p.summary === "string" ? p.summary : "");
+      const featuresList = Array.isArray(p.features) ? p.features.slice(0, 5).map(f => String(f).slice(0, 80)) : [];
+      const phasesList = Array.isArray(p.phases) && p.phases.length
+        ? p.phases.slice(0, 4).map((ph) => ({
+            name: String(ph.name || "Phase").slice(0, 60),
+            steps: Array.isArray(ph.steps)
+              ? ph.steps.slice(0, 4).map((s) => String(s).slice(0, 100))
+              : []
+          }))
+        : (featuresList.length ? [
+            { name: "Phase 1: Core Layout & Features", steps: featuresList.slice(0, 3) },
+            { name: "Phase 2: Refinements & Polish", steps: featuresList.slice(3) }
+          ].filter(ph => ph.steps.length) : []);
+
+      if (summaryText && (phasesList.length || featuresList.length)) {
         const plan = {
           title: String(p.title || clean).slice(0, 60),
-          summary: String(p.summary).slice(0, 240),
-          features: p.features.slice(0, 5).map((f) => String(f).slice(0, 80)),
+          summary: summaryText.slice(0, 240),
+          overview: summaryText.slice(0, 400),
+          features: featuresList.length ? featuresList : (phasesList.flatMap(ph => ph.steps).slice(0, 5)),
+          phases: phasesList,
+          screens: Array.isArray(p.screens) ? p.screens.slice(0, 6).map((s) => String(s).slice(0, 50)) : ["Main view"],
+          tech: Array.isArray(p.tech) ? p.tech.slice(0, 6).map((t) => String(t).slice(0, 50)) : ["React", "Tailwind CSS"],
           assumptions: Array.isArray(p.assumptions) ? p.assumptions.slice(0, 3).map((a) => String(a).slice(0, 120)) : [],
           generated: true
         };
-        // Only a real, well-formed plan is cached. The deterministic fallback
-        // below is not: it means the model was unreachable or spoke nonsense,
-        // and pinning that answer for 24h would outlast the reason for it.
         cacheSet(key, plan, res.costUsd || 0);
         return Object.assign({}, plan, { costUsd: res.costUsd || 0 });
       }
@@ -3139,6 +3176,7 @@ async function buildPlan(prompt, buildType) {
 
   return Object.assign(fallbackPlan(clean, buildType), { costUsd: res.costUsd || 0, generated: false });
 }
+
 
 // What each build type actually produces, in the same voice as a generated
 // plan. Keyed to CODEAGENT_TYPE_HINT's own types so the two cannot drift.
@@ -3157,15 +3195,37 @@ const PLAN_TYPE_FEATURES = {
 
 function fallbackPlan(prompt, buildType) {
   const type = String(buildType || "website").toLowerCase();
-  const features = PLAN_TYPE_FEATURES[type] || PLAN_TYPE_FEATURES.website;
-  const short = prompt.length > 58 ? prompt.slice(0, 58).trimEnd() + "…" : prompt;
+  const short = prompt.length > 58 ? prompt.slice(0, 58).trimEnd() + "\u2026" : prompt;
+  const typeFeatures = {
+    website:    { screens: ["Home", "About", "Contact"], steps1: ["Hero section and headline", "Content sections", "Footer with links"], steps2: ["Responsive layout", "Smooth scroll behaviour"] },
+    webapp:     { screens: ["Main view", "Empty state"], steps1: ["Main interactive view", "Add and edit items"], steps2: ["Local persistence", "State management"] },
+    dashboard:  { screens: ["Dashboard", "Detail view"], steps1: ["Stat tiles and KPIs", "Chart or data table"], steps2: ["Realistic example data", "Filter and sort"] },
+    portfolio:  { screens: ["Projects grid", "Project detail", "About"], steps1: ["Projects grid layout", "Project detail cards"], steps2: ["About section", "Contact footer"] },
+    game:       { screens: ["Game canvas", "Score/end screen"], steps1: ["Playable main loop", "Score tracking"], steps2: ["Keyboard or pointer controls", "Restart flow"] },
+    mobile:     { screens: ["Main screen", "Detail screen"], steps1: ["Single-column phone layout", "Touch controls"], steps2: ["Readable small typography", "Mobile nav"] },
+    landing:    { screens: ["Landing page"], steps1: ["Hero with call to action", "Features row"], steps2: ["Closing CTA section", "Footer"] },
+    storefront: { screens: ["Product grid", "Cart", "Checkout"], steps1: ["Product grid with prices", "Cart management"], steps2: ["Checkout summary", "Order confirmation"] },
+    catalog:    { screens: ["Browse list", "Item detail"], steps1: ["Browsable item list", "Search and filter"], steps2: ["Detail view per item"] },
+    booking:    { screens: ["Calendar", "Booking form", "Confirmation"], steps1: ["Date and time picker", "Booking form"], steps2: ["Confirmation view"] }
+  };
+  const tf = typeFeatures[type] || typeFeatures.website;
+  const legacyFeatures = PLAN_TYPE_FEATURES[type] || PLAN_TYPE_FEATURES.website;
   return {
     title: short || "Your app",
     summary: "A React web app for \u201c" + short + "\u201d, built as a " + type + ".",
-    features: features.slice(),
+    overview: "A React web app for \u201c" + short + "\u201d, built as a " + type + ". This plan is a starting point \u2014 you can edit the request before building.",
+    features: legacyFeatures.slice(),
+    phases: [
+      { name: "Phase 1: Core UI", steps: tf.steps1 },
+      { name: "Phase 2: Data & Interactions", steps: tf.steps2 },
+      { name: "Phase 3: Polish", steps: ["Loading and empty states", "Smooth transitions", "Dark mode"] }
+    ],
+    screens: tf.screens,
+    tech: ["React", "Tailwind CSS", "localStorage"],
     assumptions: ["Built as a " + type + " \u2014 pick a different type above to change that"]
   };
 }
+
 
 const MAX_CLARIFYING_QUESTIONS = 2;
 

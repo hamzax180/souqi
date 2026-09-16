@@ -21,6 +21,375 @@
 <link rel="stylesheet" href="/styles/pages/code.css?v=3.7">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
+<style id="ag-plan-style">
+/* ══════════════════════════════════════════════════════════════
+   PLAN MODE v2 — Claude-style plan card & clarify UI
+   ══════════════════════════════════════════════════════════════ */
+.ag-plan {
+  background: var(--surface, #fff);
+  border: 1px solid var(--line, rgba(0,0,0,.12));
+  border-radius: 14px;
+  padding: 0;
+  margin: 14px 0;
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0,0,0,.06), 0 1px 3px rgba(0,0,0,.04);
+  animation: sqFadeUp .25s var(--ease-snappy) both;
+}
+.ag-plan.done { opacity: .65; box-shadow: none; }
+
+.pl2-think {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line, rgba(0,0,0,.08));
+  font-size: .82rem;
+  color: var(--ink2, #777);
+  background: var(--surface2, rgba(0,0,0,.02));
+}
+.pl2-think-txt { margin-left: 2px; font-weight: 500; }
+.pl2-think-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--accent, #6366f1);
+  opacity: .7;
+  animation: pl2-pulse 1.2s ease infinite;
+}
+.pl2-think-dot:nth-child(2) { animation-delay: .15s; }
+.pl2-think-dot:nth-child(3) { animation-delay: .3s; }
+@keyframes pl2-pulse {
+  0%,80%,100% { transform: scale(1); opacity: .4; }
+  40% { transform: scale(1.4); opacity: 1; }
+}
+
+.pl2-head, .pl2-section, .pl2-actions {
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity .3s ease, transform .3s ease;
+}
+.ag-plan.pl2-revealed .pl2-head { opacity: 1; transform: translateY(0); }
+.ag-plan.pl2-revealed .pl2-section { opacity: 1; transform: translateY(0); }
+.ag-plan.pl2-revealed .pl2-actions { opacity: 1; transform: translateY(0); }
+
+.ag-plan.pl2-revealed .pl2-think {
+  opacity: 0; height: 0; padding: 0; border: 0;
+  overflow: hidden;
+  transition: opacity .2s ease, height .25s ease, padding .25s ease;
+}
+
+.pl2-head {
+  padding: 16px 20px 14px;
+  border-bottom: 1px solid var(--line, rgba(0,0,0,.07));
+}
+.pl2-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.pl2-icon {
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent, #6366f1) 12%, transparent);
+  display: flex; align-items: center; justify-content: center;
+  flex: none;
+}
+.pl2-icon svg { width: 16px; height: 16px; stroke: var(--accent, #6366f1); }
+.pl2-kicker {
+  display: block;
+  font-size: .67rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--accent, #6366f1);
+  margin-bottom: 2px;
+}
+.pl2-title {
+  display: block;
+  font-size: 1.05rem;
+  font-weight: 650;
+  color: var(--ink, #111);
+  line-height: 1.25;
+}
+.pl2-overview {
+  font-size: .83rem;
+  color: var(--ink2, #666);
+  line-height: 1.55;
+  margin: 0;
+}
+
+.pl2-section {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line, rgba(0,0,0,.06));
+}
+.pl2-sec-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: .7rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--ink2, #888);
+  margin-bottom: 10px;
+}
+.pl2-sec-label svg { width: 13px; height: 13px; flex: none; stroke: currentColor; }
+
+.pl2-phases { display: flex; flex-direction: column; gap: 0; }
+.pl2-phase {
+  display: flex;
+  gap: 12px;
+  position: relative;
+}
+.pl2-phase-line {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: none;
+  width: 14px;
+}
+.pl2-phase-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--accent, #6366f1);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent, #6366f1) 20%, transparent);
+  flex: none;
+  margin-top: 4px;
+}
+.pl2-phase-rail {
+  width: 2px;
+  flex: 1;
+  background: var(--line, rgba(0,0,0,.1));
+  margin: 4px 0;
+  min-height: 16px;
+}
+.pl2-phase-body {
+  flex: 1;
+  padding-bottom: 14px;
+}
+.pl2-phase.last .pl2-phase-body { padding-bottom: 0; }
+.pl2-phase-name {
+  font-size: .83rem;
+  font-weight: 620;
+  color: var(--ink, #111);
+  margin-bottom: 4px;
+}
+.pl2-steps {
+  list-style: none;
+  padding: 0; margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.pl2-steps li {
+  font-size: .78rem;
+  color: var(--ink2, #666);
+  line-height: 1.5;
+  padding-left: 12px;
+  position: relative;
+}
+.pl2-steps li::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 7px;
+  width: 4px; height: 4px;
+  border-radius: 50%;
+  background: var(--ink2, #aaa);
+}
+
+.pl2-row-section .pl2-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.pl2-chip {
+  font-size: .74rem;
+  font-weight: 500;
+  padding: 3px 9px;
+  border-radius: 6px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.pl2-chip-screen {
+  background: color-mix(in srgb, var(--accent, #6366f1) 10%, transparent);
+  color: var(--accent, #6366f1);
+  border: 1px solid color-mix(in srgb, var(--accent, #6366f1) 22%, transparent);
+}
+.pl2-chip-tech {
+  background: var(--surface2, rgba(0,0,0,.04));
+  color: var(--ink2, #555);
+  border: 1px solid var(--line, rgba(0,0,0,.1));
+}
+
+.pl2-assume-section {
+  background: color-mix(in srgb, #f59e0b 6%, transparent);
+}
+.pl2-assume-label { color: #d97706; }
+.pl2-assume-list {
+  list-style: none;
+  padding: 0; margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pl2-assume-list li {
+  font-size: .78rem;
+  color: var(--ink2, #666);
+  line-height: 1.45;
+  padding-left: 14px;
+  position: relative;
+}
+.pl2-assume-list li::before {
+  content: "•";
+  position: absolute;
+  left: 4px;
+  color: #d97706;
+}
+
+.pl2-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 20px;
+  background: var(--surface2, rgba(0,0,0,.02));
+  border-top: 1px solid var(--line, rgba(0,0,0,.07));
+}
+.pl2-go, .pl2-edit {
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font: inherit;
+  font-size: .82rem;
+  font-weight: 550;
+  cursor: pointer;
+  transition: all .15s ease;
+}
+.pl2-go {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #fff;
+  background: var(--accent, #6366f1);
+}
+.pl2-go svg { width: 14px; height: 14px; }
+.pl2-go:hover { filter: brightness(1.08); transform: translateY(-1px); }
+.pl2-edit {
+  color: var(--ink2, #666);
+  background: transparent;
+  border: 1px solid var(--line, rgba(0,0,0,.15));
+}
+.pl2-edit:hover { background: var(--surface2, rgba(0,0,0,.05)); }
+.pl2-chose {
+  font-size: .8rem;
+  color: var(--ink2, #888);
+  padding: 6px 0;
+}
+
+/* Clarifying questions card */
+.ag-clarify {
+  background: var(--surface, #fff);
+  border: 1px solid var(--line, rgba(0,0,0,.12));
+  border-radius: 14px;
+  padding: 0;
+  margin: 14px 0;
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0,0,0,.06);
+  animation: sqFadeUp .25s var(--ease-snappy) both;
+}
+.ag-clarify.done { opacity: .65; }
+.clr-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--line, rgba(0,0,0,.07));
+}
+.clr-icon {
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent, #6366f1) 12%, transparent);
+  display: flex; align-items: center; justify-content: center;
+  flex: none;
+}
+.clr-icon svg { width: 17px; height: 17px; stroke: var(--accent, #6366f1); }
+.clr-kicker {
+  display: block;
+  font-size: .85rem;
+  font-weight: 650;
+  color: var(--ink, #111);
+  margin-bottom: 2px;
+}
+.clr-sub {
+  font-size: .78rem;
+  color: var(--ink2, #888);
+  margin: 0;
+}
+.clr-qs {
+  padding: 14px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.clr-q {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: .83rem;
+  color: var(--ink, #111);
+  line-height: 1.45;
+}
+.clr-qn {
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: var(--accent, #6366f1);
+  color: #fff;
+  font-size: .62rem;
+  font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  flex: none;
+}
+.clr-form {
+  padding: 12px 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--line, rgba(0,0,0,.06));
+  background: var(--surface2, rgba(0,0,0,.02));
+}
+.clr-input {
+  width: 100%;
+  font: inherit;
+  font-size: .82rem;
+  padding: 8px 12px;
+  border: 1px solid var(--line, rgba(0,0,0,.15));
+  border-radius: 8px;
+  background: var(--surface, #fff);
+  color: var(--ink, #111);
+  outline: none;
+  box-sizing: border-box;
+}
+.clr-input:focus { border-color: var(--accent, #6366f1); }
+.clr-send {
+  align-self: flex-end;
+  border: 0;
+  border-radius: 7px;
+  padding: 7px 16px;
+  font: inherit;
+  font-size: .82rem;
+  font-weight: 550;
+  color: #fff;
+  background: var(--accent, #6366f1);
+  cursor: pointer;
+  transition: all .15s ease;
+}
+.clr-send:hover { filter: brightness(1.08); }
+.clr-chose {
+  font-size: .8rem;
+  color: var(--ink2, #888);
+  padding: 8px 20px;
+}
+</style>
 </head>
 <body><div class="ag-hist-backdrop" id="agHistBackdrop"></div>
 <!-- No "on" here, unlike /projects and /deployments. Hardcoding it open
@@ -1824,68 +2193,173 @@
     toBottom();
   }
 
-  /* ---------- build confirmation card ----------
-     Shown before a fresh build instead of after it. The two buttons are the
-     whole point: "Build it" re-runs the same prompt with confirmed:true, and
-     "Change something" hands the prompt back to the composer so it can be
-     edited rather than retyped. */
+  /* ---------- plan mode: clarifying questions ----------
+     Shown when the prompt is too vague — asks 1-2 questions
+     before generating the full plan. */
+  function showClarifyQuestions(payload) {
+    const questions = payload.questions || [];
+    const card = el("ag-clarify");
+    let html = '<div class="clr-head">'
+      + '<div class="clr-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg></div>'
+      + '<div><span class="clr-kicker">A couple of questions first</span>'
+      + '<p class="clr-sub">To make a great plan, I need a bit more detail.</p></div>'
+      + '</div>'
+      + '<div class="clr-qs">';
+    questions.forEach(function(q, i) {
+      html += '<div class="clr-q"><span class="clr-qn">' + (i + 1) + '</span><span>' + esc(q) + '</span></div>';
+    });
+    html += '</div>'
+      + '<div class="clr-form">'
+      + '<textarea class="clr-input" placeholder="Type your answers here…" rows="3"></textarea>'
+      + '<button type="button" class="clr-send">Continue →</button>'
+      + '</div>';
+    card.innerHTML = html;
+    agLog.appendChild(card);
+    toBottom();
+
+    const textarea = card.querySelector(".clr-input");
+    const sendBtn = card.querySelector(".clr-send");
+
+    function submitAnswers() {
+      const answer = (textarea.value || "").trim();
+      if (!answer) { textarea.focus(); return; }
+      card.classList.add("done");
+      card.querySelector(".clr-form").innerHTML = '<span class="clr-chose">\u2713 Answered</span>';
+      // Append answers to original prompt and re-run in plan mode
+      const enrichedPrompt = payload.prompt + "\n\nAdditional details: " + answer;
+      runTurn(enrichedPrompt, { confirmed: false });
+    }
+
+    sendBtn.addEventListener("click", submitAnswers);
+    textarea.addEventListener("keydown", function(e) {
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) submitAnswers();
+    });
+    setTimeout(function() { textarea.focus(); }, 80);
+  }
+
+  /* ---------- build confirmation card — Claude style ----------
+     Shown before a fresh build. "Looks good → Build it" re-runs
+     with confirmed:true, "Edit request" hands the prompt back. */
   function showPlan(payload) {
-    const plan = payload.plan || {};
+    const raw = payload.plan || {};
+    const plan = Object.assign({}, raw);
+    plan.overview = plan.overview || plan.summary || "A React application tailored to your specifications.";
+    if (!plan.phases || !plan.phases.length) {
+      if (plan.features && plan.features.length) {
+        plan.phases = [
+          { name: "Phase 1: Core Structure & Layout", steps: plan.features.slice(0, 3) },
+          { name: "Phase 2: Features & Interactions", steps: plan.features.slice(3) }
+        ].filter(function(p) { return p.steps && p.steps.length; });
+      } else {
+        plan.phases = [
+          { name: "Phase 1: Core Layout & Navigation", steps: ["Scaffold responsive structure", "Build key UI components"] },
+          { name: "Phase 2: State & Interactivity", steps: ["Interactive handlers", "Component state & styling"] }
+        ];
+      }
+    }
+    if (!plan.screens || !plan.screens.length) {
+      plan.screens = ["Main view", "Detail view"];
+    }
+    if (!plan.tech || !plan.tech.length) {
+      plan.tech = ["React", "Tailwind CSS", "TypeScript"];
+    }
     const card = el("ag-plan");
 
-    /* The badge and the section headings are the card's structure, not
-       decoration: a plan is a title, a shape, a list of what you get and a
-       list of what was guessed, and each of those should be findable at a
-       glance rather than run together as paragraphs. */
-    /* No badge and no head wrapper. A shield-with-a-tick announcing that a
-       plan is a plan is the least interesting thing on a card you asked
-       for; the title does that work, in words. */
-    let html = '<div class="pl-head">'
-      + '<span class="pl-kicker">Here\u2019s the plan</span>'
-      + '<b class="pl-title">' + esc(plan.title || "Your app") + '</b>'
-      + '</div>';
-    if (plan.summary) html += '<p class="pl-sum">' + esc(plan.summary) + '</p>';
+    // --- Thinking shimmer (always show for ≥800ms for UX feel) ---
+    let html = '<div class="pl2-think"><span class="pl2-think-dot"></span><span class="pl2-think-dot"></span><span class="pl2-think-dot"></span><span class="pl2-think-txt">Thinking\u2026</span></div>';
 
-    if (plan.features && plan.features.length) {
-      html += '<div class="pl-sec"><span class="pl-sec-h">What you\u2019ll get</span>'
-        + '<ul class="pl-list">' + plan.features.map(function (f) {
-        return '<li><i class="pl-tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></i><span>' + esc(f) + '</span></li>';
-      }).join("") + '</ul></div>';
+    // --- Title + overview ---
+    html += '<div class="pl2-head">'
+      + '<div class="pl2-title-row">'
+      + '<div class="pl2-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 8h10M7 12h10M7 16h6"/></svg></div>'
+      + '<div><span class="pl2-kicker">Here\u2019s the plan</span><b class="pl2-title">' + esc(plan.title || "Your app") + '</b></div>'
+      + '</div>';
+    if (plan.overview) {
+      html += '<p class="pl2-overview">' + esc(plan.overview) + '</p>';
     }
+    html += '</div>';
+
+    // --- Phases tree ---
+    if (plan.phases && plan.phases.length) {
+      html += '<div class="pl2-section"><div class="pl2-sec-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 18l6-6-6-6"/></svg>Build plan</div>';
+      html += '<div class="pl2-phases">';
+      plan.phases.forEach(function(ph, pi) {
+        const isLast = pi === plan.phases.length - 1;
+        html += '<div class="pl2-phase' + (isLast ? ' last' : '') + '">'
+          + '<div class="pl2-phase-line"><div class="pl2-phase-dot"></div>' + (isLast ? '' : '<div class="pl2-phase-rail"></div>') + '</div>'
+          + '<div class="pl2-phase-body">'
+          + '<div class="pl2-phase-name">' + esc(ph.name || "Phase") + '</div>';
+        if (ph.steps && ph.steps.length) {
+          html += '<ul class="pl2-steps">';
+          ph.steps.forEach(function(s) {
+            html += '<li>' + esc(s) + '</li>';
+          });
+          html += '</ul>';
+        }
+        html += '</div></div>';
+      });
+      html += '</div></div>';
+    }
+
+    // --- Screens ---
+    if (plan.screens && plan.screens.length) {
+      html += '<div class="pl2-section pl2-row-section"><div class="pl2-sec-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>Screens</div>';
+      html += '<div class="pl2-chips">';
+      plan.screens.forEach(function(s) {
+        html += '<span class="pl2-chip pl2-chip-screen">' + esc(s) + '</span>';
+      });
+      html += '</div></div>';
+    }
+
+    // --- Tech ---
+    if (plan.tech && plan.tech.length) {
+      html += '<div class="pl2-section pl2-row-section"><div class="pl2-sec-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>Tech</div>';
+      html += '<div class="pl2-chips">';
+      plan.tech.forEach(function(t) {
+        html += '<span class="pl2-chip pl2-chip-tech">' + esc(t) + '</span>';
+      });
+      html += '</div></div>';
+    }
+
+    // --- Assumptions ---
     if (plan.assumptions && plan.assumptions.length) {
-      html += '<div class="pl-assume"><span class="pl-assume-h">I\u2019m assuming</span><ul>'
-        + plan.assumptions.map(function (a) { return '<li>' + esc(a) + '</li>'; }).join("")
-        + '</ul></div>';
+      html += '<div class="pl2-section pl2-assume-section"><div class="pl2-sec-label pl2-assume-label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>I\u2019m assuming</div>';
+      html += '<ul class="pl2-assume-list">';
+      plan.assumptions.forEach(function(a) {
+        html += '<li>' + esc(a) + '</li>';
+      });
+      html += '</ul></div>';
     }
-    html += '<div class="pl-actions">'
-      + '<button type="button" class="pl-go">Build it'
-      + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>'
-      + '</button>'
-      + '<button type="button" class="pl-edit">Change something</button>'
+
+    // --- Actions ---
+    html += '<div class="pl2-actions">'
+      + '<button type="button" class="pl2-go"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Looks good \u2014 Build it</button>'
+      + '<button type="button" class="pl2-edit">Edit request</button>'
       + '</div>';
 
     card.innerHTML = html;
     agLog.appendChild(card);
     toBottom();
 
-    const go = card.querySelector(".pl-go");
-    const edit = card.querySelector(".pl-edit");
+    // Reveal plan content after thinking shimmer (800ms)
+    setTimeout(function() {
+      card.classList.add("pl2-revealed");
+    }, 820);
+
+    const go = card.querySelector(".pl2-go");
+    const edit = card.querySelector(".pl2-edit");
 
     function settle(label) {
-      // Collapse to a one-line record so a replayed transcript does not show
-      // a live-looking prompt for a decision already made.
       card.classList.add("done");
-      card.querySelector(".pl-actions").innerHTML = '<span class="pl-chose">' + label + '</span>';
+      card.querySelector(".pl2-actions").innerHTML = '<span class="pl2-chose">' + label + '</span>';
     }
 
-    go.addEventListener("click", function () {
+    go.addEventListener("click", function() {
       if (building) return;
       settle("Building\u2026");
-      // The plan read the whole request and named it; the server falls back
-      // to deriving a title from the prompt when this is absent.
       runTurn(payload.prompt, { confirmed: true, planTitle: plan.title || "" });
     });
-    edit.addEventListener("click", function () {
+    edit.addEventListener("click", function() {
       settle("Editing the request");
       agInput.value = payload.prompt;
       agInput.dispatchEvent(new Event("input"));
@@ -1893,6 +2367,7 @@
       try { agInput.setSelectionRange(agInput.value.length, agInput.value.length); } catch (e) {}
     });
   }
+
 
   async function runTurn(prompt, opts) {
     if (building) return;
@@ -2111,7 +2586,7 @@
 
       const reader = streamRes.body.getReader();
       const decoder = new TextDecoder();
-      let buf = "", errorMsg = "", clarifyReply = null, clarifyAction = "chat", clarifyOptions = null, chitchat = null, gate = null, publishRequested = false, confirmPlan = null;
+      let buf = "", errorMsg = "", clarifyReply = null, clarifyAction = "chat", clarifyOptions = null, chitchat = null, gate = null, publishRequested = false, confirmPlan = null, clarifyPlan = null;
       result = null;
       lastReceivedFiles = null;
       let lastSeq = 0;
@@ -2232,6 +2707,7 @@
           }
           else if (em[1] === "needsAnswer") { clarifyReply = payload.reply; clarifyAction = payload.action || "chat"; clarifyOptions = payload.options || null; }
           else if (em[1] === "confirm") confirmPlan = payload;
+          else if (em[1] === "clarify") clarifyPlan = payload;
           else if (em[1] === "chitchat") chitchat = payload.reply;
           else if (em[1] === "publishRequest") publishRequested = true;
           else if (em[1] === "authRequired") gate = { kind: "auth", message: payload.message, loginUrl: payload.loginUrl, signupUrl: payload.signupUrl };
@@ -2300,6 +2776,13 @@
         pendingPrompt = effectivePrompt;
         convo.push({ role: "agent", kind: clarifyAction, body: clarifyReply });
         showQuestions(clarifyReply, clarifyOptions);
+        return;
+      }
+      if (clarifyPlan) {
+        if (thinkPanel) thinkPanel.done();
+        finalizeThinking();
+        resetBootScreen();
+        showClarifyQuestions(clarifyPlan);
         return;
       }
       if (confirmPlan) { showPlan(confirmPlan); return; }

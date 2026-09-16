@@ -202,9 +202,9 @@ function isQuestionOrConversational(prompt) {
     }
   }
 
-  // 9. Short conversational expressions or greetings
+  // 9. Short conversational expressions or greetings (including elongated words like "heyyyy", "hiiii")
   const conversationalPhrases = [
-    /^(hello|hi|hey|greetings|howdy|sup|yo|gm|gn|good morning|good evening|good afternoon)\b/i,
+    /\b(h+e+y+|h+i+|h+e+l+l+o+|h+o+w+d+y+|y+o+|s+u+p+|g+m+|g+n+|g+r+e+e+t+i+n+g+s*|good morning|good evening|good afternoon)\b/i,
     /\b(how are you|how r u|how are u|how you doing|whats up|what's up|how's it going|hows it going)\b/i,
     /\b(who are you|what are you|what is your name)\b/i
   ];
