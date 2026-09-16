@@ -233,6 +233,197 @@ const FULL_ROUTES = {
     assert.strictEqual(res.timedOut, true);
   });
 
+  for (const byok of [false, true]) {
+    for (const status of [200, 503]) {
+      await check((byok ? "BYOK" : "shared") + " deadline includes a hanging " + status + " body after headers", async () => {
+        let signal;
+        client.init({ enabled: true, routes: FULL_ROUTES, fetchImpl: async (url, opts) => {
+          signal = opts.signal;
+          return { ok: status === 200, status, json: () => new Promise(() => {}) };
+        } });
+        const res = await client.chat({ route: "json", messages: [], timeoutMs: 20,
+          byok: byok ? { provider: "deepseek", apiKey: "test-key" } : undefined });
+        assert.strictEqual(res.ok, false);
+        assert.strictEqual(res.timedOut, true);
+        assert.strictEqual(res.cancelled, false);
+        assert.strictEqual(signal.aborted, true);
+        assert.strictEqual(client._debugState().breakers.json.failCount, byok ? 0 : 1);
+      });
+    }
+  }
+
+  await check("a cancelled request never reaches fetch or poisons the provider breaker", async () => {
+    let calls = 0;
+    client.init({ enabled: true, routes: FULL_ROUTES, fetchImpl: async () => { calls++; return okFetch()(); } });
+    const controller = new AbortController();
+    controller.abort();
+    for (let i = 0; i < 6; i++) {
+      const res = await client.chat({ route: "json", messages: [], signal: controller.signal });
+      assert.strictEqual(res.cancelled, true);
+      assert.strictEqual(res.timedOut, false);
+    }
+    assert.strictEqual(calls, 0);
+    assert.strictEqual(client._debugState().breakers.json.failCount, 0);
+    assert.strictEqual((await client.chat({ route: "json", messages: [] })).ok, true);
+  });
+
+  for (const byok of [false, true]) {
+    await check((byok ? "BYOK" : "shared") + " cancellation interrupts the body and removes the parent listener", async () => {
+      const controller = new AbortController();
+      let attached = 0, detached = 0;
+      const parentSignal = {
+        get aborted() { return controller.signal.aborted; },
+        addEventListener(...args) { attached++; controller.signal.addEventListener(...args); },
+        removeEventListener(...args) { detached++; controller.signal.removeEventListener(...args); }
+      };
+      client.init({ enabled: true, routes: FULL_ROUTES, fetchImpl: async () => ({
+        ok: true, json: () => {
+          controller.abort(new Error("run was stopped"));
+          return new Promise(() => {});
+        }
+      }) });
+      const res = await client.chat({ route: "json", messages: [], signal: parentSignal,
+        byok: byok ? { provider: "deepseek", apiKey: "test-key" } : undefined });
+      assert.strictEqual(res.cancelled, true);
+      assert.strictEqual(res.timedOut, false);
+      assert.strictEqual(attached, detached);
+      assert.strictEqual(client._debugState().breakers.json.failCount, 0);
+    });
+  }
+
+  await check("a late body cannot record spend or success after the deadline", async () => {
+    let complete;
+    client.init({ enabled: true, routes: FULL_ROUTES, fetchImpl: async () => ({
+      ok: true, json: () => new Promise(resolve => { complete = resolve; })
+    }) });
+    const res = await client.chat({ route: "json", messages: [], timeoutMs: 10 });
+    complete({ choices: [{ message: { role: "assistant", content: "late" } }], usage: { completion_tokens: 10000 } });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.strictEqual(res.timedOut, true);
+    assert.strictEqual(client.monthSpend("json"), 0);
+    assert.strictEqual(client._debugState().breakers.json.failCount, 1);
+  });
+
+  console.log("\n── DeepSeek wire contract ──────────────────────────");
+
+  await check("thinking and its effort reach DeepSeek in both shared and BYOK calls", async () => {
+    for (const byok of [false, true]) {
+      const sent = [];
+      client.init({ enabled: true, routes: FULL_ROUTES, fetchImpl: async (url, opts) => {
+        sent.push(JSON.parse(opts.body));
+        return okFetch()();
+      } });
+      const req = { route: "json", model: "deepseek-v4-pro", messages: [], thinking: true,
+        reasoningEffort: "max", toolChoice: "required",
+        byok: byok ? { provider: "deepseek", apiKey: "test-key", model: "deepseek-v4-pro" } : undefined };
+      assert.strictEqual((await client.chat(req)).ok, true);
+      assert.deepStrictEqual(sent[0].thinking, { type: "enabled" });
+      assert.strictEqual(sent[0].reasoning_effort, "max");
+      assert.strictEqual(sent[0].tool_choice, "auto");
+      assert.strictEqual(sent[0].temperature, undefined);
+      await client.chat({ ...req, thinking: false });
+      assert.deepStrictEqual(sent[1].thinking, { type: "disabled" });
+      assert.strictEqual(sent[1].reasoning_effort, undefined);
+      assert.strictEqual(sent[1].tool_choice, "required");
+    }
+  });
+
+  await check("DeepSeek default thinking avoids forced tools and canonicalizes effort aliases", async () => {
+    const sent = [];
+    client.init({ enabled: true, routes: FULL_ROUTES, fetchImpl: async (url, opts) => {
+      sent.push(JSON.parse(opts.body)); return okFetch()();
+    } });
+    await client.chat({ route: "json", model: "deepseek-flash", messages: [], toolChoice: { type: "function", function: { name: "write_file" } } });
+    assert.strictEqual(sent[0].tool_choice, "auto");
+    for (const [effort, canonical] of [["minimal", "low"], ["medium", "high"], ["xhigh", "high"], ["ultra", "max"]]) {
+      await client.chat({ route: "json", model: "deepseek-flash", messages: [], reasoningEffort: effort });
+      assert.strictEqual(sent.at(-1).reasoning_effort, canonical);
+    }
+  });
+
+  await check("invalid DeepSeek effort and thinking fail before billing or breaker changes", async () => {
+    let calls = 0;
+    client.init({ enabled: true, routes: FULL_ROUTES, fetchImpl: async () => { calls++; return okFetch()(); } });
+    for (const invalid of [{ reasoningEffort: "bogus" }, { reasoningEffort: "__proto__" }, { thinking: "enabled" }]) {
+      const res = await client.chat({ route: "json", model: "deepseek-flash", messages: [], ...invalid });
+      assert.strictEqual(res.badRequest, true);
+    }
+    assert.strictEqual(calls, 0);
+    assert.strictEqual(client._debugState().breakers.json.failCount, 0);
+  });
+
+  await check("DeepSeek parameters never leak into other providers", async () => {
+    let body;
+    client.init({ enabled: true, routes: FULL_ROUTES, fetchImpl: async (url, opts) => {
+      body = JSON.parse(opts.body); return okFetch()();
+    } });
+    await client.chat({ route: "json", messages: [], thinking: true, reasoningEffort: "max", toolChoice: "required" });
+    assert.strictEqual(body.thinking, undefined);
+    assert.strictEqual(body.reasoning_effort, undefined);
+    assert.strictEqual(body.tool_choice, "required");
+  });
+
+  await check("reasoning is preserved and counted when a tool continuation replays it", async () => {
+    const message = { role: "assistant", content: "", reasoning_content: "r".repeat(900), tool_calls: [] };
+    client.init({ enabled: true, routes: FULL_ROUTES, fetchImpl: async () => ({
+      ok: true, json: async () => ({ choices: [{ message, finish_reason: "length" }], usage: {} })
+    }) });
+    const res = await client.chat({ route: "json", messages: [] });
+    assert.strictEqual(res.message.reasoning_content, message.reasoning_content);
+    assert.strictEqual(res.finishReason, "length");
+    const without = { ...message }; delete without.reasoning_content;
+    assert.strictEqual(client.estimateTokens([message], []) - client.estimateTokens([without], []), 300);
+    assert.strictEqual(client.estimateTokens([message]), client.estimateTokens([without]));
+  });
+
+  await check("a malformed successful response is a provider error with usage still accounted", async () => {
+    client.init({ enabled: true, routes: FULL_ROUTES, fetchImpl: async () => ({
+      ok: true, json: async () => ({ choices: [], usage: { completion_tokens: 1000 } })
+    }) });
+    const res = await client.chat({ route: "json", messages: [] });
+    assert.strictEqual(res.ok, false);
+    assert.match(res.reason, /no completion message/);
+    assert.ok(res.costUsd > 0);
+    assert.ok(client.monthSpend("json") > 0);
+  });
+
+  console.log("\n── Anthropic BYOK cancellation ─────────────────────");
+  const sdkPath = require.resolve("@anthropic-ai/sdk");
+  const anthropicPath = require.resolve("../lib/ai/anthropic");
+  const originalSdk = require.cache[sdkPath];
+  const originalAnthropic = require.cache[anthropicPath];
+  let sdkSignal, onFinalMessage;
+  class FakeAnthropic {
+    constructor() {
+      this.messages = { stream(body, opts) {
+        sdkSignal = opts.signal;
+        return { finalMessage: () => onFinalMessage() };
+      } };
+    }
+  }
+  require.cache[sdkPath] = { id: sdkPath, filename: sdkPath, loaded: true, exports: FakeAnthropic };
+  delete require.cache[anthropicPath];
+  try {
+    await check("Anthropic streamed body obeys the total timeout", async () => {
+      onFinalMessage = () => new Promise(() => {});
+      const res = await client.chat({ messages: [], timeoutMs: 20, byok: { provider: "claude", apiKey: "fake" } });
+      assert.strictEqual(res.timedOut, true);
+      assert.strictEqual(res.cancelled, false);
+      assert.strictEqual(sdkSignal.aborted, true);
+    });
+    await check("Anthropic receives the run signal and reports cancellation distinctly", async () => {
+      const controller = new AbortController();
+      onFinalMessage = () => { controller.abort(); return new Promise(() => {}); };
+      const res = await client.chat({ messages: [], signal: controller.signal, byok: { provider: "claude", apiKey: "fake" } });
+      assert.strictEqual(res.cancelled, true);
+      assert.strictEqual(res.timedOut, false);
+      assert.strictEqual(sdkSignal.aborted, true);
+    });
+  } finally {
+    if (originalSdk) require.cache[sdkPath] = originalSdk; else delete require.cache[sdkPath];
+    if (originalAnthropic) require.cache[anthropicPath] = originalAnthropic; else delete require.cache[anthropicPath];
+  }
+
   console.log("\n── observability hook ──────────────────────────────");
 
   await check("recordSpend hook fires with (route, usd) on every successful call", async () => {

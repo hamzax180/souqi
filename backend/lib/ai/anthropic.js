@@ -171,6 +171,7 @@ function toFinishReason(stopReason) {
  * @returns {Promise<object>} same envelope as ai/client.js chat()
  */
 async function chat(req) {
+  if (req.signal && req.signal.aborted) return { ok: false, error: true, cancelled: true, timedOut: false, reason: "request cancelled", latencyMs: 0 };
   const Sdk = loadSdk();
   if (!Sdk) {
     return { ok: false, error: true, reason: "the Anthropic SDK is not installed on this server (npm i @anthropic-ai/sdk)" };
@@ -197,18 +198,45 @@ async function chat(req) {
     body.output_config = { effort: "high" };
   }
 
+  const timeoutMs = Number.isFinite(req.timeoutMs) && req.timeoutMs > 0
+    ? Math.min(req.timeoutMs, 2147483647) : 120000;
+  const controller = new AbortController();
+  let stoppedBy = null;
+  const stop = (cause) => {
+    if (stoppedBy) return;
+    stoppedBy = cause;
+    controller.abort();
+  };
+  const onParentAbort = () => stop("cancelled");
+  if (req.signal) {
+    if (req.signal.aborted) onParentAbort();
+    else req.signal.addEventListener("abort", onParentAbort, { once: true });
+  }
+  const timer = setTimeout(() => stop("timeout"), timeoutMs);
+  let onAbort;
+
   try {
+    if (controller.signal.aborted) throw new Error("request cancelled");
     const client = new Sdk({
       apiKey: req.apiKey,
-      timeout: req.timeoutMs || 120000,
+      timeout: timeoutMs,
       maxRetries: 1
     });
     // Streamed, then collected: a multi-file build routinely asks for tens of
     // thousands of output tokens, and the SDK requires streaming above ~21k
     // max_tokens to avoid an HTTP timeout. Nothing here consumes the
     // individual events — this call is one turn of a loop, not a chat UI.
-    const stream = client.messages.stream(body);
-    const resp = await stream.finalMessage();
+    const stream = client.messages.stream(body, { signal: controller.signal });
+    // The SDK's HTTP timeout can finish at headers. The owning run's
+    // deadline must also cover thinking and the rest of the streamed body.
+    const resp = await Promise.race([
+      stream.finalMessage(),
+      new Promise((resolve, reject) => {
+        onAbort = () => reject(new Error("request aborted"));
+        if (controller.signal.aborted) onAbort();
+        else controller.signal.addEventListener("abort", onAbort, { once: true });
+      })
+    ]);
 
     const usage = resp.usage || {};
     return {
@@ -227,6 +255,12 @@ async function chat(req) {
       latencyMs: Date.now() - t0
     };
   } catch (e) {
+    const cancelled = stoppedBy === "cancelled";
+    const timedOut = stoppedBy === "timeout" || (!cancelled && e && e.name === "APIConnectionTimeoutError");
+    if (cancelled || timedOut) {
+      return { ok: false, error: true, cancelled, timedOut,
+        reason: cancelled ? "request cancelled" : "Anthropic timed out after " + timeoutMs + "ms", latencyMs: Date.now() - t0 };
+    }
     const status = e && e.status;
     let reason = (e && e.message) || "Anthropic request failed";
     // A user's own key failing auth is the single most likely error here and
@@ -237,7 +271,11 @@ async function chat(req) {
     else if (status === 404) reason = "model \"" + model + "\" was not found on your Anthropic account";
     else if (status === 429) reason = "your Anthropic account is rate limited — try again shortly";
     else if (status === 400 && /credit|balance/i.test(reason)) reason = "your Anthropic account is out of credit";
-    return { ok: false, error: true, status: status, reason: reason, latencyMs: Date.now() - t0 };
+    return { ok: false, error: true, badRequest: !!status && status < 500 && status !== 429, status: status, reason: reason, latencyMs: Date.now() - t0 };
+  } finally {
+    clearTimeout(timer);
+    if (onAbort) controller.signal.removeEventListener("abort", onAbort);
+    if (req.signal) req.signal.removeEventListener("abort", onParentAbort);
   }
 }
 

@@ -184,6 +184,9 @@ function estimateTokens(messages, tools) {
       chars += String((c.function && c.function.arguments) || "").length +
                String((c.function && c.function.name) || "").length;
     }
+    // DeepSeek replays reasoning alongside tool exchanges. Ignoring it here
+    // let a seemingly small continuation overflow after several tool rounds.
+    if (tools && typeof m.reasoning_content === "string") chars += m.reasoning_content.length;
   }
   if (tools) chars += JSON.stringify(tools).length;
   return Math.ceil(chars / CHARS_PER_TOKEN) + count * MESSAGE_OVERHEAD_TOKENS;
@@ -353,6 +356,81 @@ function estimateCost(route, usage) {
   return inCost + outCost;
 }
 
+function requestScope(req) {
+  const controller = new AbortController();
+  const timeoutMs = Number.isFinite(req.timeoutMs) && req.timeoutMs > 0
+    ? Math.min(req.timeoutMs, 2147483647) : DEFAULT_TIMEOUT_MS;
+  let stoppedBy = null;
+  const stop = (cause) => {
+    if (stoppedBy) return;
+    stoppedBy = cause;
+    controller.abort();
+  };
+  const onParentAbort = () => stop("cancelled");
+  if (req.signal) {
+    if (req.signal.aborted) onParentAbort();
+    else req.signal.addEventListener("abort", onParentAbort, { once: true });
+  }
+  const timer = setTimeout(() => stop("timeout"), timeoutMs);
+  return {
+    signal: controller.signal,
+    // Both headers and the body consume the same deadline. Racing the abort
+    // also bounds custom transports that do not reject a pending body read.
+    run: (operation) => new Promise((resolve, reject) => {
+      const onAbort = () => reject(Object.assign(new Error("request aborted"), { name: "AbortError" }));
+      if (controller.signal.aborted) { onAbort(); return; }
+      controller.signal.addEventListener("abort", onAbort, { once: true });
+      Promise.resolve().then(() => {
+        if (controller.signal.aborted) throw Object.assign(new Error("request aborted"), { name: "AbortError" });
+        return operation();
+      }).then(resolve, reject).finally(() => controller.signal.removeEventListener("abort", onAbort));
+    }),
+    failure: (error, t0) => ({
+      ok: false, error: true, cancelled: stoppedBy === "cancelled", timedOut: stoppedBy === "timeout",
+      reason: stoppedBy === "cancelled" ? "request cancelled" : stoppedBy === "timeout"
+        ? "timed out after " + timeoutMs + "ms" : (error && error.message) || "provider request failed",
+      latencyMs: Date.now() - t0
+    }),
+    close: () => {
+      clearTimeout(timer);
+      if (req.signal) req.signal.removeEventListener("abort", onParentAbort);
+    }
+  };
+}
+
+function completionBody(req, model, baseUrl) {
+  const body = {
+    model, messages: req.messages, tools: req.tools || undefined,
+    tool_choice: req.toolChoice || undefined, response_format: req.responseFormat || undefined,
+    max_tokens: req.maxTokens || 900,
+    temperature: req.temperature !== null && req.temperature !== undefined ? req.temperature : 0.5
+  };
+  let deepseek = /^deepseek/i.test(model);
+  try { deepseek = deepseek || new URL(baseUrl).hostname === "api.deepseek.com"; } catch (_) { /* validated by fetch */ }
+  if (!deepseek) return { body };
+
+  if (req.thinking !== undefined && typeof req.thinking !== "boolean") {
+    return { ok: false, error: true, badRequest: true, reason: "thinking must be a boolean" };
+  }
+  const efforts = { none: "none", minimal: "low", low: "low", medium: "high", high: "high", xhigh: "high", max: "max", ultra: "max" };
+  const effort = req.reasoningEffort === undefined ? undefined
+    : Object.hasOwn(efforts, String(req.reasoningEffort)) ? efforts[String(req.reasoningEffort)] : undefined;
+  if (req.reasoningEffort !== undefined && !effort) {
+    return { ok: false, error: true, badRequest: true, reason: "unsupported DeepSeek reasoning effort" };
+  }
+  const thinking = req.thinking !== undefined ? req.thinking : effort !== undefined
+    ? effort !== "none" : !/^deepseek-chat$/i.test(model);
+  if (req.thinking !== undefined || effort !== undefined) body.thinking = { type: thinking ? "enabled" : "disabled" };
+  if (thinking) {
+    if (effort && effort !== "none") body.reasoning_effort = effort;
+    delete body.temperature;
+    // Forced tool choices get a 400 in DeepSeek's thinking mode. The loop
+    // must ask for a tool in its prompt and still handle an ordinary reply.
+    if (body.tool_choice && body.tool_choice !== "none" && body.tool_choice !== "auto") body.tool_choice = "auto";
+  }
+  return { body };
+}
+
 /**
  * @param {object} req
  * @param {"prose"|"json"} req.route
@@ -367,6 +445,8 @@ function estimateCost(route, usage) {
  *   this bypasses `route` entirely — different key, different endpoint,
  *   different billing party.
  * @param {boolean} [req.thinking]                extended reasoning, where the provider supports it
+ * @param {string} [req.reasoningEffort]          DeepSeek reasoning depth (low/high/max)
+ * @param {AbortSignal} [req.signal]              cancellation from the owning agent run
  * @returns {Promise<object>} always resolves — never throws for an operational failure
  */
 async function chat(req) {
@@ -427,47 +507,27 @@ async function chat(req) {
     };
   }
 
+  const request = completionBody(req, req.model || r.model, r.baseUrl);
+  if (!request.body) return request;
   const t0 = Date.now();
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), req.timeoutMs || DEFAULT_TIMEOUT_MS);
-  const onParentAbort = () => controller.abort();
-  if (req.signal) {
-    if (req.signal.aborted) controller.abort();
-    else req.signal.addEventListener("abort", onParentAbort, { once: true });
-  }
+  const scope = requestScope(req);
+  let failureRecorded = false;
   try {
-    const res = await CONFIG.fetchImpl(r.baseUrl.replace(/\/$/, "") + "/chat/completions", {
+    const res = await scope.run(() => CONFIG.fetchImpl(r.baseUrl.replace(/\/$/, "") + "/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": "Bearer " + r.key },
-      body: JSON.stringify({
-        /* req.model overrides the route's default, which is how tiering works
-           without a second route: deepseek-chat and deepseek-reasoner share a
-           base URL and a key, so the only thing that differs between an eco
-           build and a power one is this string. Duplicating the whole route to
-           change one field would mean a second copy of the key and a second
-           breaker, both of which should stay per-PROVIDER rather than
-           per-tier — a reasoner outage and a chat outage are the same outage.
-
-           Falls back to the route default, so a caller that names no model
-           behaves exactly as before. */
-        model: req.model || r.model,
-        messages: req.messages,
-        tools: req.tools || undefined,
-        tool_choice: req.toolChoice || undefined,
-        response_format: req.responseFormat || undefined,
-        max_tokens: req.maxTokens || 900,
-        temperature: (req.temperature !== null && req.temperature !== undefined) ? req.temperature : 0.5
-      }),
-      signal: controller.signal
-    });
+      body: JSON.stringify(request.body),
+      signal: scope.signal
+    }));
 
     if (!res.ok) {
       /* Only an outage advances the breaker — see countsAsProviderFailure.
          A 400 is this process sending something the model would not take. */
       const providerFault = countsAsProviderFailure(res.status);
-      if (providerFault) recordFailure(route);
       let detail = "";
-      try { detail = JSON.stringify(await res.json()).slice(0, 300); } catch (e) { /* not JSON */ }
+      try { detail = JSON.stringify(await scope.run(() => res.json())).slice(0, 300); }
+      catch (e) { if (scope.signal.aborted) throw e; /* not JSON */ }
+      if (providerFault) { recordFailure(route); failureRecorded = true; }
       return {
         ok: false, error: true, status: res.status,
         /* Lets a caller tell "try again later" from "this will fail the same
@@ -479,13 +539,18 @@ async function chat(req) {
       };
     }
 
-    const json = await res.json();
-    recordSuccess(route);
-    const usage = json.usage || {};
+    const json = await scope.run(() => res.json());
+    const usage = (json && json.usage) || {};
     const costUsd = estimateCost(route, usage);
     recordSpend(route, costUsd);
 
-    const choice = json.choices && json.choices[0];
+    const choice = json && json.choices && json.choices[0];
+    if (!choice || !choice.message || typeof choice.message !== "object") {
+      recordFailure(route);
+      failureRecorded = true;
+      return { ok: false, error: true, reason: "provider returned no completion message", usage, costUsd, latencyMs: Date.now() - t0 };
+    }
+    recordSuccess(route);
     return {
       ok: true,
       // Which route ran, so a caller (and the demo scripts) can tell that a
@@ -499,14 +564,11 @@ async function chat(req) {
       latencyMs: Date.now() - t0
     };
   } catch (e) {
-    recordFailure(route);
-    const timedOut = e.name === "AbortError";
-    return { ok: false, error: true, timedOut: timedOut, reason: timedOut ? "timed out after " + (req.timeoutMs || DEFAULT_TIMEOUT_MS) + "ms" : e.message, latencyMs: Date.now() - t0 };
+    const failure = scope.failure(e, t0);
+    if (!failure.cancelled && !failureRecorded) recordFailure(route);
+    return failure;
   } finally {
-    clearTimeout(timer);
-    if (req.signal && typeof req.signal.removeEventListener === "function") {
-      req.signal.removeEventListener("abort", onParentAbort);
-    }
+    scope.close();
   }
 }
 
@@ -529,36 +591,27 @@ async function chatByok(req) {
   if (p.kind === "anthropic") {
     return require("./anthropic").chat({
       apiKey: req.byok.apiKey, model: model, messages: req.messages, tools: req.tools,
-      maxTokens: req.maxTokens, timeoutMs: req.timeoutMs, thinking: req.thinking
+      maxTokens: req.maxTokens, timeoutMs: req.timeoutMs, thinking: req.thinking,
+      reasoningEffort: req.reasoningEffort, toolChoice: req.toolChoice, signal: req.signal
     });
   }
 
+  const request = completionBody(req, model, p.baseUrl);
+  if (!request.body) return request;
   const t0 = Date.now();
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), req.timeoutMs || DEFAULT_TIMEOUT_MS);
-  const onParentAbort = () => controller.abort();
-  if (req.signal) {
-    if (req.signal.aborted) controller.abort();
-    else req.signal.addEventListener("abort", onParentAbort, { once: true });
-  }
+  const scope = requestScope(req);
   try {
-    const res = await CONFIG.fetchImpl(p.baseUrl.replace(/\/$/, "") + "/chat/completions", {
+    const res = await scope.run(() => CONFIG.fetchImpl(p.baseUrl.replace(/\/$/, "") + "/chat/completions", {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": "Bearer " + req.byok.apiKey },
-      body: JSON.stringify({
-        model: model,
-        messages: req.messages,
-        tools: req.tools || undefined,
-        response_format: req.responseFormat || undefined,
-        max_tokens: req.maxTokens || 900,
-        temperature: (req.temperature !== null && req.temperature !== undefined) ? req.temperature : 0.5
-      }),
-      signal: controller.signal
-    });
+      body: JSON.stringify(request.body),
+      signal: scope.signal
+    }));
 
     if (!res.ok) {
       let detail = "";
-      try { detail = JSON.stringify(await res.json()).slice(0, 300); } catch (e) { /* not JSON */ }
+      try { detail = JSON.stringify(await scope.run(() => res.json())).slice(0, 300); }
+      catch (e) { if (scope.signal.aborted) throw e; /* not JSON */ }
       // Same reasoning as ai/anthropic.js: the user pasted this key, so a
       // rejection is almost always THEIR key and they can fix it — say so
       // in words, rather than surfacing a raw provider error body.
@@ -567,11 +620,14 @@ async function chatByok(req) {
       else if (res.status === 404) reason = "model \"" + model + "\" was not found on your " + p.label + " account";
       else if (res.status === 429) reason = "your " + p.label + " account is rate limited — try again shortly";
       else reason = p.label + " returned " + res.status + (detail ? ": " + detail : "");
-      return { ok: false, error: true, status: res.status, reason: reason, latencyMs: Date.now() - t0 };
+      return { ok: false, error: true, badRequest: !countsAsProviderFailure(res.status), status: res.status, reason: reason, latencyMs: Date.now() - t0 };
     }
 
-    const json = await res.json();
-    const choice = json.choices && json.choices[0];
+    const json = await scope.run(() => res.json());
+    const choice = json && json.choices && json.choices[0];
+    if (!choice || !choice.message || typeof choice.message !== "object") {
+      return { ok: false, error: true, reason: "provider returned no completion message", usage: (json && json.usage) || {}, costUsd: 0, latencyMs: Date.now() - t0 };
+    }
     return {
       ok: true,
       message: choice ? choice.message : null,
@@ -581,17 +637,9 @@ async function chatByok(req) {
       latencyMs: Date.now() - t0
     };
   } catch (e) {
-    const timedOut = e.name === "AbortError";
-    return {
-      ok: false, error: true, timedOut: timedOut,
-      reason: timedOut ? p.label + " timed out after " + (req.timeoutMs || DEFAULT_TIMEOUT_MS) + "ms" : e.message,
-      latencyMs: Date.now() - t0
-    };
+    return scope.failure(e, t0);
   } finally {
-    clearTimeout(timer);
-    if (req.signal && typeof req.signal.removeEventListener === "function") {
-      req.signal.removeEventListener("abort", onParentAbort);
-    }
+    scope.close();
   }
 }
 

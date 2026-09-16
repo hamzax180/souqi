@@ -30,7 +30,11 @@ function createMockDb() {
         async updateOne(query, update) {
           const match = docs.find((d) => {
             for (const [k, v] of Object.entries(query)) {
-              if (d[k] !== v) return false;
+              if (v && typeof v === "object" && Array.isArray(v.$in)) {
+                if (!v.$in.includes(d[k])) return false;
+              } else if (d[k] !== v) {
+                return false;
+              }
             }
             return true;
           });
@@ -57,7 +61,18 @@ function createMockDb() {
             async toArray() { return res.map((d) => Object.assign({}, d)); }
           };
         },
-        async createIndex() { return true; }
+        async createIndex() { return true; },
+        async deleteOne(query) {
+          const idx = docs.findIndex((d) => {
+            for (const [k, v] of Object.entries(query)) {
+              if (d[k] !== v) return false;
+            }
+            return true;
+          });
+          if (idx >= 0) { docs.splice(idx, 1); return { deletedCount: 1 }; }
+          return { deletedCount: 0 };
+        },
+        async deleteMany() { docs.length = 0; return { deletedCount: 0 }; }
       };
     }
     return collections[name];

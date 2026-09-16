@@ -85,4 +85,11 @@ async function close() {
   connecting = null;
 }
 
-module.exports = { connect, getDb, getMasterDb, close };
+async function withTransaction(fn) {
+  if (!client) throw new Error("Database not connected");
+  const session = client.startSession();
+  try { return await session.withTransaction(() => fn(db, session)); }
+  finally { await session.endSession(); }
+}
+
+module.exports = { connect, getDb, getMasterDb, close, withTransaction };

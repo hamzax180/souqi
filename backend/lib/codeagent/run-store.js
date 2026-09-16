@@ -1,227 +1,302 @@
-/* =================================================================
-   codeagent/run-store.js — MongoDB persistent store for Dynamic Agent
-   -----------------------------------------------------------------
-   Docs/DYNAMIC-AGENT-PLAN.md §7.
-   Provides durable state for agent runs, append-only event logging
-   for SSE replay/reconnection, and immutable source checkpoints.
-   ================================================================= */
+/* Durable agent runs, ordered replay events, and immutable checkpoints. */
 "use strict";
 
 const crypto = require("crypto");
-
+const ACTIVE = ["queued", "running", "waiting_for_check", "finalizing"];
+const TERMINAL = ["succeeded", "failed", "cancelled", "partial"];
 let getMasterDb = () => null;
+let indexPromises = new WeakMap();
+const eventQueues = new Map();
+const id = (prefix) => prefix + "_" + crypto.randomBytes(10).toString("base64url");
+const now = () => new Date().toISOString();
+const copy = (value) => structuredClone(value);
+
+function error(code, message, statusCode = 503) {
+  return Object.assign(new Error(message), { code, statusCode });
+}
 function init(deps) {
   if (deps && typeof deps.getMasterDb === "function") {
     getMasterDb = deps.getMasterDb;
+    indexPromises = new WeakMap();
   }
 }
-
-const id = (prefix) => prefix + "_" + crypto.randomBytes(10).toString("base64url");
-
-/* ---- collection helpers ------------------------------------------- */
-
-function col(name) {
+function dbRequired() {
   const db = getMasterDb();
-  return db ? db.collection(name) : null;
+  if (!db) throw error("AGENT_STORE_UNAVAILABLE", "Agent storage is unavailable. Please try again shortly.");
+  return db;
 }
-
 async function ensureIndexes() {
-  const db = getMasterDb();
-  if (!db) return;
-  try {
-    await db.collection("agent_runs").createIndex({ id: 1 }, { unique: true });
-    await db.collection("agent_runs").createIndex({ ownerAnonId: 1, updatedAt: -1 });
-    await db.collection("agent_runs").createIndex({ ownerUserId: 1, updatedAt: -1 });
-    await db.collection("agent_runs").createIndex({ projectId: 1, createdAt: -1 });
-    await db.collection("agent_events").createIndex({ runId: 1, seq: 1 }, { unique: true });
-    await db.collection("agent_checkpoints").createIndex({ id: 1 }, { unique: true });
-    await db.collection("agent_checkpoints").createIndex({ runId: 1, at: -1 });
-    await db.collection("agent_steps").createIndex({ runId: 1, stepIndex: 1 });
-  } catch (e) {
-    /* non-fatal index creation */
+  const db = dbRequired();
+  if (!indexPromises.has(db)) {
+    const ready = (async () => {
+      await db.collection("agent_runs").createIndex({ id: 1 }, { unique: true });
+      await db.collection("agent_runs").createIndex({ ownerAnonId: 1, updatedAt: -1 });
+      await db.collection("agent_runs").createIndex({ ownerUserId: 1, updatedAt: -1 });
+      await db.collection("agent_runs").createIndex({ projectId: 1, createdAt: -1 });
+      await db.collection("agent_runs").createIndex({ ownerKey: 1, idempotencyKey: 1 }, {
+        unique: true, partialFilterExpression: { idempotencyKey: { $type: "string" } }
+      });
+      for (const key of ["activeProjectId", "activeOwnerKey"]) {
+        await db.collection("agent_runs").createIndex({ [key]: 1 }, {
+          unique: true, partialFilterExpression: { [key]: { $type: "string" } }
+        });
+      }
+      await db.collection("agent_runs").createIndex({ status: 1, createdAt: 1 });
+      await db.collection("agent_runs").createIndex({ leaseExpiresAt: 1, status: 1 });
+      await db.collection("agent_events").createIndex({ runId: 1, seq: 1 }, { unique: true });
+      await db.collection("agent_checkpoints").createIndex({ id: 1 }, { unique: true });
+      await db.collection("agent_checkpoints").createIndex({ runId: 1, at: -1 });
+      await db.collection("agent_steps").createIndex({ runId: 1, stepIndex: 1 });
+      await db.collection("agent_workers").createIndex({ workerId: 1 }, { unique: true });
+      await db.collection("agent_workers").createIndex({ at: -1 });
+    })().catch((cause) => {
+      indexPromises.delete(db);
+      throw Object.assign(error("AGENT_STORE_UNAVAILABLE", "Agent storage indexes could not be initialized."), { cause });
+    });
+    indexPromises.set(db, ready);
   }
+  await indexPromises.get(db);
+  return db;
 }
-
 function owns(run, owner) {
   if (!run || !owner) return false;
-  if (run.ownerUserId) return !!owner.userId && run.ownerUserId === owner.userId;
+  if (run.ownerUserId) return !!owner.userId && String(run.ownerUserId) === String(owner.userId);
   return !!owner.anonId && run.ownerAnonId === owner.anonId;
 }
+function ownerKey(owner) {
+  if (owner && owner.userId) return "user:" + String(owner.userId);
+  if (owner && owner.anonId) return "anon:" + String(owner.anonId);
+  throw error("AGENT_OWNER_REQUIRED", "An agent run must have an owner.", 400);
+}
+function fenceQuery(fence) {
+  if (!fence) return {};
+  return { leaseOwner: fence.workerId, leaseGeneration: fence.generation, leaseExpiresAt: { $gt: now() } };
+}
+function asDocument(result) {
+  return result && Object.prototype.hasOwnProperty.call(result, "value") ? result.value : result;
+}
+function leaseDuration(value) {
+  return Math.max(1000, Math.min(600000, Number(value) || 60000));
+}
+async function getRunByIdempotency(owner, key, requestHash) {
+  if (!key) return null;
+  const existing = await dbRequired().collection("agent_runs").findOne(
+    { ownerKey: ownerKey(owner), idempotencyKey: key }, { projection: { _id: 0 } }
+  );
+  if (existing && existing.requestHash !== (requestHash || null)) {
+    throw error("IDEMPOTENCY_CONFLICT", "This request key has already been used for a different request.", 409);
+  }
+  return existing;
+}
 
-/* ---- run lifecycle ------------------------------------------------ */
-
-/**
- * Creates a persistent agent run record.
- * Status starts at "queued".
- */
-async function createRun({ projectId, owner, prompt, mode, effort, baseFiles, chatId }) {
-  const runId = id("run");
-  const now = new Date().toISOString();
-  const c = col("agent_runs");
-
+async function createRun({ projectId, owner, prompt, mode, effort, baseFiles, chatId,
+  context, idempotencyKey, requestHash, baseRevisionId, meta }) {
+  const db = await ensureIndexes();
+  const scope = ownerKey(owner);
+  const c = db.collection("agent_runs");
+  const existing = await getRunByIdempotency(owner, idempotencyKey, requestHash);
+  if (existing) return existing;
+  const at = now();
   const runDoc = {
-    id: runId,
-    projectId: projectId || null,
+    id: id("run"), projectId: projectId || null, ownerKey: scope, activeOwnerKey: scope,
     ownerAnonId: (owner && owner.anonId) || null,
-    ownerUserId: (owner && owner.userId) || null,
-    chatId: chatId || "",
-    prompt: String(prompt || "").trim(),
-    mode: mode || "auto",
-    effort: effort || "balanced",
-    status: "queued", // queued -> running -> waiting_for_check -> succeeded / failed / cancelled / partial
-    phase: "init",
-    createdAt: now,
-    updatedAt: now,
-    cancelled: false,
-    cancelReason: null,
-    latestCheckpointId: null,
-    latestError: null,
-    costUsd: 0
+    ownerUserId: (owner && owner.userId && String(owner.userId)) || null,
+    chatId: chatId || "", prompt: String(prompt || "").trim(),
+    mode: mode || "auto", effort: effort || "balanced", status: "queued", phase: "init",
+    createdAt: at, updatedAt: at, cancelled: false, cancelReason: null,
+    latestCheckpointId: null, latestError: null, costUsd: 0,
+    context: copy(context || {}), meta: copy(meta || {}), baseRevisionId: baseRevisionId || null,
+    requestHash: requestHash || null, leaseGeneration: 0
   };
-
-  if (c) {
-    await c.insertOne(runDoc);
+  if (idempotencyKey) runDoc.idempotencyKey = idempotencyKey;
+  if (projectId) runDoc.activeProjectId = projectId;
+  // A worker can claim immediately after insertion. Its baseline must already exist.
+  let baseline;
+  if (baseFiles && Object.keys(baseFiles).length) {
+    baseline = checkpointDoc(runDoc.id, baseFiles, "Initial project baseline");
+    await db.collection("agent_checkpoints").insertOne(copy(baseline));
+    runDoc.latestCheckpointId = baseline.id;
   }
-
-  // If initial base files exist, save checkpoint 0
-  if (baseFiles && Object.keys(baseFiles).length > 0) {
-    await saveCheckpoint(runId, baseFiles, "Initial project baseline");
+  try {
+    await c.insertOne(copy(runDoc));
+  } catch (cause) {
+    if (baseline) await db.collection("agent_checkpoints").deleteOne({ id: baseline.id });
+    if (cause.code === 11000) {
+      const retried = await getRunByIdempotency(owner, idempotencyKey, requestHash);
+      if (retried) return retried;
+      throw error("RUN_ALREADY_ACTIVE", "You already have an active agent run. Wait for it to finish or stop it before starting another.", 409);
+    }
+    throw cause;
   }
-
-  // Emit initial event
-  await appendEvent(runId, "run_created", { runId, status: "queued", prompt: runDoc.prompt });
-
+  await appendEvent(runDoc.id, "run_created", { runId: runDoc.id, status: "queued", prompt: runDoc.prompt });
   return runDoc;
 }
-
 async function getRun(runId, owner) {
-  const c = col("agent_runs");
-  if (!c) return null;
-  const run = await c.findOne({ id: runId }, { projection: { _id: 0 } });
-  if (!run) return null;
-  if (owner && !owns(run, owner)) return null;
-  return run;
+  const run = await dbRequired().collection("agent_runs").findOne({ id: runId }, { projection: { _id: 0 } });
+  return run && (!owner || owns(run, owner)) ? run : null;
 }
-
-async function updateRun(runId, updates) {
-  const c = col("agent_runs");
-  if (!c) return false;
-  const patch = Object.assign({}, updates, { updatedAt: new Date().toISOString() });
-  const res = await c.updateOne({ id: runId }, { $set: patch });
-  return res.modifiedCount > 0;
+async function updateRun(runId, updates, fence) {
+  const patch = copy(updates || {});
+  for (const key of ["id", "_id", "ownerKey", "ownerAnonId", "ownerUserId", "projectId", "createdAt",
+    "idempotencyKey", "requestHash", "activeProjectId", "activeOwnerKey", "latestCheckpointId", "leaseOwner", "leaseGeneration", "leaseExpiresAt", "cancelled"]) {
+    delete patch[key];
+  }
+  if (patch.status && !ACTIVE.includes(patch.status) && !TERMINAL.includes(patch.status)) {
+    throw error("INVALID_RUN_STATUS", "Unknown agent run status.", 400);
+  }
+  patch.updatedAt = now();
+  const update = { $set: patch };
+  if (TERMINAL.includes(patch.status)) update.$unset = { activeProjectId: "", activeOwnerKey: "", leaseExpiresAt: "" };
+  const result = await dbRequired().collection("agent_runs").updateOne(
+    Object.assign({ id: runId, status: { $in: ACTIVE } }, fenceQuery(fence)), update
+  );
+  return result.modifiedCount > 0;
 }
-
+async function claimRun(runId, updates = {}) {
+  const db = await ensureIndexes();
+  const at = now();
+  const result = await db.collection("agent_runs").updateOne(
+    { id: runId, status: "queued", cancelled: false },
+    { $set: { status: "running", phase: updates.phase || "planning", updatedAt: at, claimedAt: at } }
+  );
+  return result.modifiedCount > 0;
+}
+async function claimNext(workerId, leaseMs = 60000) {
+  if (!workerId) throw error("WORKER_ID_REQUIRED", "Worker identity is required.", 400);
+  const db = await ensureIndexes();
+  const at = now();
+  return asDocument(await db.collection("agent_runs").findOneAndUpdate(
+    { status: "queued", cancelled: false },
+    { $set: { status: "running", phase: "planning", leaseOwner: workerId,
+      leaseExpiresAt: new Date(Date.now() + leaseDuration(leaseMs)).toISOString(), claimedAt: at, updatedAt: at },
+    $inc: { leaseGeneration: 1 } },
+    { sort: { createdAt: 1, id: 1 }, returnDocument: "after", includeResultMetadata: false, projection: { _id: 0 } }
+  ));
+}
+async function renewLease(runId, workerId, generation, leaseMs = 60000) {
+  const result = await dbRequired().collection("agent_runs").updateOne(
+    Object.assign({ id: runId, status: { $in: ACTIVE } }, fenceQuery({ workerId, generation })),
+    { $set: { leaseExpiresAt: new Date(Date.now() + leaseDuration(leaseMs)).toISOString(), updatedAt: now() } }
+  );
+  return result.modifiedCount > 0;
+}
 async function cancelRun(runId, owner, reason) {
   const run = await getRun(runId, owner);
-  if (!run) return false;
-  if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") {
-    return false;
-  }
-  const c = col("agent_runs");
-  if (!c) return false;
-  const now = new Date().toISOString();
-  await c.updateOne({ id: runId }, {
-    $set: {
-      cancelled: true,
-      cancelReason: reason || "Cancelled by user",
-      status: "cancelled",
-      updatedAt: now
-    }
-  });
-  await appendEvent(runId, "run_cancelled", { runId, reason: reason || "Cancelled by user" });
+  if (!run || !owner) return false;
+  const cancelReason = String(reason || "Cancelled by user").slice(0, 1000);
+  const result = await dbRequired().collection("agent_runs").updateOne(
+    { id: runId, status: { $in: ACTIVE } },
+    { $set: { cancelled: true, cancelReason, status: "cancelled", updatedAt: now(),
+      result: { ok: false, cancelled: true, status: "cancelled", reason: cancelReason } },
+    $unset: { activeProjectId: "", activeOwnerKey: "", leaseExpiresAt: "" } }
+  );
+  if (!result.modifiedCount) return false;
+  await appendEvent(runId, "run_cancelled", { runId, reason: cancelReason });
   return true;
 }
 
-/* ---- events (append-only for SSE replay) --------------------------- */
-
 async function appendEvent(runId, type, payload) {
-  const c = col("agent_events");
-  const now = new Date().toISOString();
-
-  let seq = 1;
-  if (c) {
-    // Determine next sequence number
-    const last = await c.findOne({ runId }, { sort: { seq: -1 }, projection: { seq: 1, _id: 0 } });
-    if (last && typeof last.seq === "number") seq = last.seq + 1;
-    await c.insertOne({
-      runId,
-      seq,
-      type,
-      payload: payload || {},
-      at: now
-    });
-  }
-
-  return { runId, seq, type, payload, at: now };
+  const db = await ensureIndexes();
+  const previous = eventQueues.get(runId) || Promise.resolve();
+  const pending = previous.catch(() => {}).then(async () => {
+    const c = db.collection("agent_events");
+    // Increment-and-insert counters left gaps, allowing reconnect cursors to skip
+    // a late insert forever. Allocate only by inserting after the committed tail.
+    for (let retry = 0; retry < 64; retry++) {
+      const last = await c.findOne({ runId }, { sort: { seq: -1 }, projection: { seq: 1, _id: 0 } });
+      const event = { runId, seq: last ? last.seq + 1 : 1, type, payload: copy(payload || {}), at: now() };
+      try {
+        await c.insertOne(copy(event));
+        return event;
+      } catch (cause) {
+        if (cause.code !== 11000) throw cause;
+      }
+    }
+    throw error("AGENT_EVENT_CONTENTION", "Could not append an agent event after concurrent updates.");
+  });
+  eventQueues.set(runId, pending);
+  try { return await pending; }
+  finally { if (eventQueues.get(runId) === pending) eventQueues.delete(runId); }
 }
-
 async function getEvents(runId, afterSeq = 0) {
-  const c = col("agent_events");
-  if (!c) return [];
-  const events = await c.find(
-    { runId, seq: { $gt: Number(afterSeq) || 0 } },
+  const seq = Number(afterSeq);
+  return dbRequired().collection("agent_events").find(
+    { runId, seq: { $gt: Number.isSafeInteger(seq) && seq >= 0 ? seq : 0 } },
     { sort: { seq: 1 }, projection: { _id: 0 } }
   ).toArray();
-  return events;
 }
-
-/* ---- checkpoints (content-addressed snapshots) -------------------- */
-
-async function saveCheckpoint(runId, files, summary) {
-  const chkId = id("chk");
-  const now = new Date().toISOString();
-  const c = col("agent_checkpoints");
-
-  const doc = {
-    id: chkId,
-    runId,
-    files: Object.assign({}, files || {}),
-    fileCount: Object.keys(files || {}).length,
-    summary: summary || "",
-    at: now
-  };
-
-  if (c) {
-    await c.insertOne(doc);
-    const rc = col("agent_runs");
-    if (rc) {
-      await rc.updateOne({ id: runId }, { $set: { latestCheckpointId: chkId, updatedAt: now } });
+function checkpointDoc(runId, files, summary) {
+  return { id: id("chk"), runId, files: copy(files || {}), fileCount: Object.keys(files || {}).length,
+    summary: summary || "", at: now() };
+}
+async function saveCheckpoint(runId, files, summary, fence) {
+  const db = await ensureIndexes();
+  const run = await getRun(runId);
+  if (!run || !ACTIVE.includes(run.status)) return null;
+  const doc = checkpointDoc(runId, files, summary);
+  await db.collection("agent_checkpoints").insertOne(copy(doc));
+  const result = await db.collection("agent_runs").updateOne(
+    Object.assign({ id: runId, status: { $in: ACTIVE }, latestCheckpointId: run.latestCheckpointId }, fenceQuery(fence)),
+    { $set: { latestCheckpointId: doc.id, updatedAt: doc.at } }
+  );
+  if (!result.modifiedCount) {
+    await db.collection("agent_checkpoints").deleteOne({ id: doc.id });
+    return null;
+  }
+  return doc;
+}
+async function getLatestCheckpoint(runId) {
+  const run = await getRun(runId);
+  if (!run || !run.latestCheckpointId) return null;
+  return dbRequired().collection("agent_checkpoints").findOne(
+    { id: run.latestCheckpointId, runId }, { projection: { _id: 0 } }
+  );
+}
+async function recordStep(runId, stepData) {
+  const doc = Object.assign({}, copy(stepData), { runId, at: now() });
+  await dbRequired().collection("agent_steps").insertOne(copy(doc));
+  return doc;
+}
+async function workerHeartbeat(workerId, details = {}) {
+  const db = await ensureIndexes();
+  if (!workerId) throw error("WORKER_ID_REQUIRED", "Worker identity is required.", 400);
+  const doc = Object.assign({}, copy(details), { workerId, at: now() });
+  await db.collection("agent_workers").updateOne({ workerId }, { $set: doc }, { upsert: true });
+  return doc;
+}
+async function getWorkerHealth(maxAgeMs = 45000) {
+  const workers = await dbRequired().collection("agent_workers").find(
+    { ready: true, at: { $gt: new Date(Date.now() - maxAgeMs).toISOString() } },
+    { sort: { at: -1 }, projection: { _id: 0 } }
+  ).toArray();
+  return { healthy: workers.length > 0, workers, lastHeartbeatAt: workers.length ? workers[0].at : null };
+}
+async function recoverExpiredRuns() {
+  const db = await ensureIndexes();
+  const expired = await db.collection("agent_runs").find(
+    { status: { $in: ["running", "waiting_for_check", "finalizing"] }, leaseExpiresAt: { $lte: now() } }
+  ).toArray();
+  const recovered = [];
+  for (const run of expired) {
+    const checkpoint = await getLatestCheckpoint(run.id);
+    const status = checkpoint && checkpoint.fileCount ? "partial" : "failed";
+    const reason = "The agent worker stopped before finishing. Saved files are available; start a new turn to continue.";
+    const result = { ok: false, partial: status === "partial", interrupted: true, status, reason,
+      summary: reason, files: (checkpoint && checkpoint.files) || {}, costUsd: run.costUsd || 0 };
+    const updated = await db.collection("agent_runs").updateOne(
+      { id: run.id, status: run.status, leaseOwner: run.leaseOwner, leaseGeneration: run.leaseGeneration,
+        leaseExpiresAt: { $lte: now() } },
+      { $set: { status, phase: "interrupted", latestError: reason, result, updatedAt: now() },
+        $unset: { activeProjectId: "", activeOwnerKey: "", leaseExpiresAt: "" } }
+    );
+    if (updated.modifiedCount) {
+      await appendEvent(run.id, "result", result);
+      recovered.push(await getRun(run.id));
     }
   }
-
-  return doc;
+  return recovered;
 }
 
-async function getLatestCheckpoint(runId) {
-  const c = col("agent_checkpoints");
-  if (!c) return null;
-  const chk = await c.findOne({ runId }, { sort: { at: -1 }, projection: { _id: 0 } });
-  return chk;
-}
-
-/* ---- steps & telemetry -------------------------------------------- */
-
-async function recordStep(runId, stepData) {
-  const c = col("agent_steps");
-  const now = new Date().toISOString();
-  const doc = Object.assign({ runId, at: now }, stepData);
-  if (c) {
-    await c.insertOne(doc);
-  }
-  return doc;
-}
-
-module.exports = {
-  init,
-  ensureIndexes,
-  owns,
-  createRun,
-  getRun,
-  updateRun,
-  cancelRun,
-  appendEvent,
-  getEvents,
-  saveCheckpoint,
-  getLatestCheckpoint,
-  recordStep
-};
+module.exports = { init, ensureIndexes, owns, createRun, getRun, getRunByIdempotency, updateRun, claimRun, claimNext,
+  renewLease, cancelRun, appendEvent, getEvents, saveCheckpoint, getLatestCheckpoint, recordStep,
+  workerHeartbeat, getWorkerHealth, recoverExpiredRuns };
