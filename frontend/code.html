@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=3.9">
+<link rel="stylesheet" href="/styles/pages/code.css?v=4.0">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -612,7 +612,24 @@
    been, what it has spent, and what it is doing right now.
    ══════════════════════════════════════════════════════════════ */
 .th2 { margin: 6px 0 10px; }
-.th2-steps { display: flex; flex-direction: column; gap: 1px; }
+
+/* The three dots, leading. Their animation lives in code.css and is
+   driven off .ag-thinking:not(.done), so it stops on its own. */
+.th2-top { display: flex; align-items: center; gap: 2px; padding: 2px 0 6px; }
+.th2-title {
+  font-size: 1.05rem; font-weight: 600; color: var(--ink, #1b252b);
+  letter-spacing: -.01em;
+}
+/* While it runs, the word breathes with the dots rather than sitting
+   still beside them. */
+.ag-thinking:not(.done) .th2-title {
+  background: linear-gradient(90deg,
+    var(--ink, #1b252b) 0%, var(--mut, #8a8f91) 22%, var(--ink, #1b252b) 44%) 0 0 / 240% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; color: transparent;
+  animation: th2Sweep 2.6s linear infinite;
+}
+.th2-steps { display: flex; flex-direction: column; gap: 1px; padding-left: 2px; }
 
 .th2-step {
   display: flex; align-items: baseline; gap: 7px;
@@ -664,6 +681,9 @@
   .th2-step { animation: none; opacity: 1; transform: none; }
   .th2-step.busy .th2-step-text { animation: none; -webkit-text-fill-color: currentColor; color: var(--ink-2); }
   .th2-spark svg { animation: none; }
+  .ag-thinking:not(.done) .th2-title {
+    animation: none; -webkit-text-fill-color: currentColor; color: var(--ink);
+  }
 }
 </style>
 </head>
@@ -2097,9 +2117,17 @@
       });
       const phase = wrap.querySelector(".th2-phase") || wrap.querySelector(".ag-th-label");
       const time = wrap.querySelector(".th2-time") || wrap.querySelector(".ag-th-time");
+      const title = wrap.querySelector(".th2-title");
       if (!phase) return;
+      // The heading carries the summary in the new panel; the old one
+      // only ever had the one label, so it still carries both.
+      if (title && !title.textContent.startsWith("Thought for")) {
+        title.textContent = "Thought for " + ((time && time.textContent) || "a moment");
+      }
       if (statusText) {
         phase.textContent = statusText;
+      } else if (title) {
+        if (phase.textContent.endsWith("…")) phase.textContent = "Done";
       } else if (!phase.textContent.startsWith("Thought for")) {
         phase.textContent = "Thought for " + ((time && time.textContent) || "a moment");
       }
@@ -2130,6 +2158,16 @@
     clearEmpty();
     const wrap = el("ag-thinking th2");
     wrap.innerHTML =
+      /* The three dots lead, as they always have. They are the turn
+         itself being alive; the steps below are what it is doing and the
+         status line below those is what it has cost. Three registers,
+         top to bottom, rather than one thing trying to say all three. */
+      '<div class="th2-top">' +
+        '<span class="ag-th-gemini" aria-hidden="true">' +
+          '<span class="g-dot g-dot-1"></span><span class="g-dot g-dot-2"></span><span class="g-dot g-dot-3"></span>' +
+        '</span>' +
+        '<span class="th2-title">Thinking</span>' +
+      '</div>' +
       '<div class="th2-steps"></div>' +
       '<div class="th2-status">' +
         '<span class="th2-spark">' + TH2_SPARK + '</span>' +
@@ -2146,6 +2184,7 @@
     const tokEl = wrap.querySelector(".th2-tok");
     const tokSep = wrap.querySelector(".th2-tok-sep");
     const phaseEl = wrap.querySelector(".th2-phase");
+    const titleEl = wrap.querySelector(".th2-title");
 
     /* STEPS SETTLE ONE AT A TIME, EVEN WHEN THEY ARRIVE TOGETHER.
 
@@ -2263,8 +2302,13 @@
         wrap.classList.add("done");
         stepsEl.querySelectorAll(".th2-step.busy").forEach(function (row) { row.classList.remove("busy"); });
         const secs = Math.max(1, Math.round((Date.now() - t0) / 1000));
-        phaseEl.textContent = statusText ||
-          ("Thought for " + secs + (secs === 1 ? " second" : " seconds"));
+        const spent = secs < 60 ? secs + (secs === 1 ? " second" : " seconds")
+          : Math.floor(secs / 60) + "m " + (secs % 60) + "s";
+        /* The heading becomes the summary and the status line keeps the
+           numbers, so a finished turn reads as one sentence with its
+           receipt under it rather than saying the same thing twice. */
+        titleEl.textContent = "Thought for " + spent;
+        phaseEl.textContent = statusText || "Done";
         if (currentThinkPanel === handle) currentThinkPanel = null;
       }
     };
