@@ -343,6 +343,23 @@ function register(app, deps) {
       // is never rewritten under the same one.
       res.set("Cache-Control", "public, max-age=31536000, immutable");
       res.set("X-Content-Type-Options", "nosniff");
+      /* THE ONE HEADER THAT DECIDES WHETHER THE PHOTO RENDERS.
+
+         Everything else this app serves is same-origin by policy, so the
+         security middleware sends Cross-Origin-Resource-Policy:
+         same-origin site-wide. An uploaded image is the exception, and it
+         has to be: the preview runs the generated app inside a sandboxed
+         iframe with an OPAQUE origin, on purpose, so model-written code
+         cannot reach the platform that made it. Opaque is not same-origin,
+         so the browser refused the image and the hero rendered as alt
+         text — a build that had done everything right.
+
+         The same applies to a WebContainer preview on
+         *.webcontainer-api.io and to an exported site on the customer's
+         own host. Safe to relax here and nowhere else: the key is 128
+         bits of randomness, the bucket equivalent is public-read, and the
+         bytes are an image the uploader chose to publish. */
+      res.set("Cross-Origin-Resource-Policy", "cross-origin");
       if (meta.etag) res.set("ETag", meta.etag);
       if (meta.bytes) res.set("Content-Length", String(meta.bytes));
 

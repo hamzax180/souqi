@@ -276,10 +276,23 @@ check("uploaded images are served immutable by the route itself", () => {
   const routes = fs.readFileSync(path.join(__dirname, "..", "lib", "uploads-routes.js"), "utf8");
   const at = routes.indexOf('app.get("/api/img/*"');
   assert.ok(at > 0, "the image route is gone — every URL already baked into a published site now 404s");
-  const body = routes.slice(at, at + 2000);
+  // To the end of the handler, not a fixed window: a slice sized to
+  // today's comments starts failing the moment one is added, and the
+  // failure names a missing 304 rather than a short substring.
+  const end = routes.indexOf("\n  });", at);
+  const body = routes.slice(at, end > at ? end + 6 : at + 4000);
   assert.ok(/max-age=31536000, immutable/.test(body),
     "the image route no longer marks its response cacheable, so vercel.json's no-store is what ships");
   assert.ok(/if-none-match/.test(body), "the 304 path is gone, so every revalidation reads the bytes again");
+  /* The site-wide policy is Cross-Origin-Resource-Policy: same-origin, and
+     this route is the one deliberate exception. The preview runs the
+     generated app in a sandboxed iframe with an OPAQUE origin — which is
+     the point, so model-written code cannot reach the platform — and
+     opaque is not same-origin, so without this the browser refuses the
+     image and the hero renders as alt text on a build that did everything
+     right. Same for a WebContainer preview and for an export. */
+  assert.ok(/Cross-Origin-Resource-Policy["'\s,]+cross-origin/.test(body),
+    "the image route no longer relaxes CORP, so every uploaded photo is blocked in the preview");
   // Registered unconditionally: gating it on S3_PUBLIC_BASE_URL is what
   // would 404 every URL minted before a CDN was configured.
   const before = routes.slice(Math.max(0, at - 400), at);
