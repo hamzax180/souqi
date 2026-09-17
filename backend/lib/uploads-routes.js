@@ -142,10 +142,21 @@ function register(app, deps) {
     }
 
     const key = blobs.newKey(ext);
+    /* The origin this URL will be read from, baked in now because it is
+       baked in for ever: the string goes into generated source and into
+       published sites, and the code is never running on our own pages
+       when it is read. Same PUBLIC_BASE_URL-else-the-host pattern the
+       publish and export routes already use. */
+    const hdr = (n) => (typeof req.get === "function" ? req.get(n) : "") || "";
+    const host = hdr("host");
+    const origin = String(process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "") ||
+      // No host means no absolute URL worth writing; the relative form is
+      // still correct everywhere our own pages render it.
+      (host ? (hdr("x-forwarded-proto") || req.protocol || "https") + "://" + host : "");
     const row = await uploads.create({
       owner: owner,
       key: key,
-      url: blobs.publicUrl(key),
+      url: blobs.publicUrl(key, origin),
       name: String(body.name || "image." + ext),
       mime: type,
       ext: ext,

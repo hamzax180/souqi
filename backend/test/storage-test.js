@@ -162,6 +162,34 @@ ok("publicUrl prefers our own domain and falls back to the proxy", () => {
   assert.strictEqual(s3.publicUrl("u/a.png"), "/api/img/u/a.png");
 });
 
+/* The URL goes into GENERATED CODE, and that code never runs on our
+   pages. The preview serves the app from a WebContainer on
+   *.webcontainer-api.io and an export runs on the customer's own host, so
+   a relative "/api/img/…" resolves against their origin and 404s. The
+   model wrote exactly what it was told, the build compiled, and the photo
+   was a broken image in the only place anyone looks at it. */
+ok("an image URL bound for generated code is absolute", () => {
+  const saved = process.env.PUBLIC_BASE_URL;
+  delete process.env.PUBLIC_BASE_URL;
+
+  const fromRequest = s3.publicUrl("u/a.png", "https://souqi.site");
+  assert.strictEqual(fromRequest, "https://souqi.site/api/img/u/a.png",
+    "a relative URL here is a broken image in every preview and every export");
+  assert.strictEqual(s3.publicUrl("u/a.png", "https://souqi.site/"), "https://souqi.site/api/img/u/a.png",
+    "a trailing slash on the origin must not double up");
+
+  process.env.PUBLIC_BASE_URL = "https://souqi.site";
+  assert.strictEqual(s3.publicUrl("u/a.png"), "https://souqi.site/api/img/u/a.png",
+    "PUBLIC_BASE_URL is the override for hosts that cannot name themselves");
+
+  // A CDN still wins: it is the cheaper origin and the one we want baked in.
+  process.env.S3_PUBLIC_BASE_URL = "https://cdn.souqi.site";
+  assert.strictEqual(s3.publicUrl("u/a.png", "https://souqi.site"), "https://cdn.souqi.site/u/a.png");
+  delete process.env.S3_PUBLIC_BASE_URL;
+
+  if (saved === undefined) delete process.env.PUBLIC_BASE_URL; else process.env.PUBLIC_BASE_URL = saved;
+});
+
 ok("isConfigured is false when the bucket is unset", () => {
   assert.strictEqual(s3.isConfigured(), true);
   const saved = process.env.S3_BUCKET;

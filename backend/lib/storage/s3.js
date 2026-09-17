@@ -208,11 +208,26 @@ async function deleteObject(key) {
  * With it unset we fall back to proxying through the function, which is
  * correct for local development and wrong for production — every image
  * view becomes an invocation.
+ *
+ * ABSOLUTE, and that is not cosmetic. This returned "/api/img/<key>",
+ * which resolves against whatever origin is asking — and the one place
+ * the generated code is never running is ours. The preview serves the
+ * app from a WebContainer on *.webcontainer-api.io, so a relative URL
+ * became webcontainer-api.io/api/img/… and 404'd; an exported ZIP does
+ * the same on the customer's own host. The model had written exactly
+ * what it was told to write, the build compiled, and the photo was a
+ * broken image in the only place anyone looks at it.
+ *
+ * `origin` comes from the request (PUBLIC_BASE_URL, else the host that
+ * was called), so it is right in development and production without a
+ * second thing to configure. Omitting it keeps the old relative form,
+ * which is what the callers that only ever render on our own pages want.
  */
-function publicUrl(key) {
+function publicUrl(key, origin) {
   const s = conf();
   if (s.publicBase) return s.publicBase.replace(/\/+$/, "") + "/" + encodeKey(key);
-  return "/api/img/" + encodeKey(key);
+  const base = String(origin || process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
+  return base + "/api/img/" + encodeKey(key);
 }
 
 /* 128 bits of randomness: the key IS the access control, since the bucket

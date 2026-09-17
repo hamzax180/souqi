@@ -76,7 +76,12 @@ function makeApp() {
       send(b) { payload = b; return this; },
       end() { return this; }
     };
-    await handlers[key](Object.assign({ headers: {} }, req), res);
+    /* Modelled on express, headers included: the sign route reads Host to
+       bake an ABSOLUTE image URL, and a double without req.get() made a
+       route that works in production look broken in the suite. */
+    const base = Object.assign({ headers: {}, protocol: "https" }, req);
+    base.get = (n) => base.headers[String(n).toLowerCase()] || (String(n).toLowerCase() === "host" ? "souqi.test" : "");
+    await handlers[key](base, res);
     return { code, body: payload, headers };
   };
   return app;

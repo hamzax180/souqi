@@ -120,7 +120,7 @@ const partBytes = () => PART_BYTES;
    one minted against a bucket, so no stored row has to be rewritten when
    the bucket appears. */
 const newKey = (ext) => s3.newKey(ext);
-const publicUrl = (key) => s3.publicUrl(key);
+const publicUrl = (key, origin) => s3.publicUrl(key, origin);
 
 const etagOf = (sha) => '"' + String(sha || "").slice(0, 32) + '"';
 
