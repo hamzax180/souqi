@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=4.0">
+<link rel="stylesheet" href="/styles/pages/code.css?v=4.1">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -2220,6 +2220,17 @@
       stepsEl.appendChild(row); toBottom();
       let settled = false;
       return {
+        /* Rewrites the row in place. A turn is one line that keeps
+           getting truer, not a line per thing it happened to do. */
+        set(text, finished) {
+          if (settled || !text) return;
+          row.firstChild.textContent = text;
+          if (finished) {
+            settled = true;
+            row.classList.remove("busy");
+            row.lastChild.hidden = false;
+          }
+        },
         done(next) {
           if (settled) return;
           settled = true;
@@ -2278,6 +2289,9 @@
         if (headerLabel) handle.setPhase(headerLabel);
         const sub = addRow(label, cls);
         return {
+          // Not queued: this is the row correcting itself as it learns,
+          // not a step settling, and it should track the work live.
+          set: function (text, finished) { sub.set(text, finished); },
           done: function (next) { queueSettle(function () { sub.done(next); }); },
           fail: function (msg) { queueSettle(function () { sub.fail(msg); }); }
         };
@@ -3086,6 +3100,58 @@
     const handles = {};
     let thinkPanel = null;
     let filesSeen = 0;
+
+    /* A STEP IS A SENTENCE, NOT A COUNTER.
+       -----------------------------------------------------------------
+       The panel used to print the protocol: "Step 1 — Building
+       components…", "Step 1 completed (4 actions)", then one row per
+       file. Fourteen lines to say the agent wrote six files, in the
+       agent's own internal vocabulary — step numbers and action counts
+       are how the loop is built, not what it did.
+
+       Everything a turn does now collects here and leaves ONE line
+       saying it in words: "Created 6 files — types.ts, data.ts and 4
+       more". The row exists from the moment the turn starts and
+       rewrites itself as the work lands, so it is still live. */
+    let stepGroup = null;
+
+    const baseName = (p) => String(p || "").split("/").pop();
+
+    /** "a.ts, b.ts and 2 more" — names first, count only when it helps. */
+    function nameList(paths) {
+      const names = paths.map(baseName);
+      if (names.length === 1) return names[0];
+      if (names.length === 2) return names[0] + " and " + names[1];
+      if (names.length === 3) return names[0] + ", " + names[1] + " and " + names[2];
+      return names[0] + ", " + names[1] + " and " + (names.length - 2) + " more";
+    }
+
+    function summariseGroup(g, done) {
+      const parts = [];
+      if (g.created.length) {
+        parts.push((done ? "Created " : "Creating ") +
+          (g.created.length > 3 ? g.created.length + " files — " : "") + nameList(g.created));
+      }
+      if (g.edited.length) {
+        parts.push((parts.length ? "edited " : done ? "Edited " : "Editing ") + nameList(g.edited));
+      }
+      if (g.commands.length) {
+        parts.push((parts.length ? "ran " : done ? "Ran " : "Running ") +
+          (g.commands.length === 1 ? g.commands[0] : g.commands.length + " commands"));
+      }
+      if (!parts.length && g.reads) {
+        parts.push((done ? "Read " : "Reading ") + g.reads + " file" + (g.reads === 1 ? "" : "s"));
+      }
+      return parts.join(", ");
+    }
+
+    /** Repaint the active group's single row from what it has collected. */
+    function paintGroup(done) {
+      if (!stepGroup || !stepGroup.handle) return;
+      const text = summariseGroup(stepGroup, done);
+      if (!text) return;
+      stepGroup.handle.set(text, done);
+    }
     let result = null;
     /* Declared HERE, in runTurn's own scope, not inside the try below.
        errorMsg and its neighbours are `let` inside the stream block, so
@@ -3203,28 +3269,72 @@
       // preview) is a step inside ONE shared thinking panel for the turn —
       // created lazily on whichever stage arrives first.
       if (!thinkPanel) { thinkPanel = thinkingBlock(prompt); filesSeen = 0; }
+
+      const isTurn = /^turn-\d+$/.test(String(id || ""));
+      const isFile = String(id || "").indexOf("file-") === 0;
+      const isCheck = String(id || "").indexOf("check") === 0;
+
+      /* A turn opens one row and owns it until it closes. */
+      if (isTurn && state === "start") {
+        stepGroup = { id: id, created: [], edited: [], commands: [], reads: 0, handle: null };
+        stepGroup.handle = thinkPanel.addStep("Working on it…");
+        handles[id] = stepGroup.handle;
+        return;
+      }
+      if (isTurn && state !== "start") {
+        /* "Step 1 completed (4 actions)" is the loop describing its own
+           shape. If the turn did anything nameable, say that instead;
+           if it genuinely did nothing visible, let the row go rather
+           than leave a number standing in for an answer. */
+        if (stepGroup && stepGroup.id === id) {
+          const text = summariseGroup(stepGroup, true);
+          if (text) stepGroup.handle.set(text, true);
+          else stepGroup.handle.done("Thought it through");
+          stepGroup = null;
+        } else if (handles[id]) { handles[id].done(); }
+        return;
+      }
+
+      /* Files fold into the open turn instead of each taking a row. */
+      if (isFile && state !== "start") {
+        const path = String(id).slice(5);
+        const wasEdit = /^Edited/.test(String(detail || ""));
+        if (stepGroup) {
+          const bucket = wasEdit ? stepGroup.edited : stepGroup.created;
+          if (bucket.indexOf(path) < 0) bucket.push(path);
+          filesSeen += 1;
+          paintGroup(false);
+          return;
+        }
+        // No turn open (the non-durable /build path): one row, in words.
+        if (!handles[id]) {
+          handles[id] = thinkPanel.addStep((wasEdit ? "Edited " : "Created ") + baseName(path), "is-file");
+          handles[id].done();
+        }
+        return;
+      }
+
+      if (isCheck && state !== "start") {
+        if (!handles[id]) {
+          handles[id] = thinkPanel.addStep(
+            /fail|error/i.test(String(detail || "")) ? "The build did not compile" : "Verified the build");
+          handles[id].done();
+        }
+        return;
+      }
+
       if (state === "start") { handles[id] = thinkPanel.addStep(detail || STAGE_LABEL[id] || id); return; }
       if (handles[id]) { handles[id].done(detail); return; }
       // round-N events only ever arrive as "done" — no matching "start" was
       // sent (proposeWithRepair only reports once a round's build finished),
       // so show them as an already-completed step rather than a spinner
       // that never appeared.
-      const isFile = String(id || "").indexOf("file-") === 0;
-      if (isFile) filesSeen += 1;
-      const h = thinkPanel.addStep(
-        detail,
-        isFile ? "is-file" : "",
-        // A path in the header would just be the last one to arrive. The
-        // count is what is actually changing, and it is the only thing on
-        // screen while the panel is collapsed.
-        isFile ? "Writing your app \u00b7 " + filesSeen + " file" + (filesSeen === 1 ? "" : "s") : undefined
-      );
       /* Remembered, so a second `done` for the same id settles this row
          instead of adding another. A written file reports twice \u2014 once
          as file_written and once as the stage carrying the same id \u2014 so
-         every file in every build was listed twice, and counted twice
-         by filesSeen. Invisible while the panel was collapsed behind a
-         chevron; the first thing you see now that the steps are. */
+         every file in every build was listed twice. Files no longer
+         reach here, but round-N and the rest still can. */
+      const h = thinkPanel.addStep(detail);
       handles[id] = h;
       h.done();
     }
@@ -3491,6 +3601,20 @@
             else if (em[1] === "assistant_delta") thinkPanel.setPhase("Waiting for Souqi…");
             else if (em[1] === "tool_result") thinkPanel.setPhase("Thinking…");
             else if (em[1] === "context") thinkPanel.setPhase("Making room in context…");
+          }
+
+          /* Reads and commands are work too, and the only work a turn
+             that writes nothing has to show for itself. Without them
+             such a turn could only say "Step 2 completed (3 actions)". */
+          if (stepGroup) {
+            if (em[1] === "tool_result" && payload.ok &&
+                ["read_file", "list_files", "search_code"].indexOf(payload.tool) >= 0) {
+              stepGroup.reads += 1;
+              paintGroup(false);
+            } else if (em[1] === "command" && payload.state === "start" && payload.command) {
+              stepGroup.commands.push(String(payload.command).split(/\s+/).slice(0, 3).join(" "));
+              paintGroup(false);
+            }
           }
 
           if (em[1] === "stage") onStage(payload.id, payload.state, payload.detail);
