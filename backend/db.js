@@ -30,10 +30,11 @@ function resolveDbName(uri) {
     const name = path.split("?")[0];
     if (name) return decodeURIComponent(name);
   } catch (e) { /* fall through to the default */ }
-  // Deliberately still the legacy name: changing a default database name
-  // doesn't move any data, it just points at a different (empty) one —
-  // which presents as "everything disappeared", not as a rename.
-  return "merveks_sap";
+  // Changed from the legacy "merveks_sap" only once every document had
+  // been copied across and counted against the original. On its own this
+  // line moves nothing: it points at a different, empty database, which
+  // presents as "everything disappeared" rather than as a rename.
+  return "souqi";
 }
 
 async function connect() {
