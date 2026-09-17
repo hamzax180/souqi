@@ -258,7 +258,15 @@ check("the WebContainer preview is left alone", () => {
    no-store: nothing breaks, nothing logs, and every view of every image
    on every published site becomes a function invocation plus a full read
    of the bytes out of the database. That is exactly the kind of config
-   drift this file exists to catch. */
+   drift this file exists to catch.
+
+   This assertion is also the only place the reasoning can live. JSON has
+   no comments, and Vercel validates vercel.json against a schema that
+   permits exactly source/headers/has/missing — a "_comment" key there is
+   not ignored, it fails the deploy with "Schema verification failed".
+
+   Vary: Cookie is dropped for this path on purpose: an image that varies
+   by cookie is one a CDN is not allowed to cache, and this one does not. */
 check("the image cache header survives the /api no-store rule", () => {
   const v = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "vercel.json"), "utf8"));
   const list = v.headers || [];
