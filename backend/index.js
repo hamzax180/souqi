@@ -2601,7 +2601,7 @@ app.post("/api/projects/:key/micro-claim", microClaimLimiter, verifyCaptcha(), v
    are the next thing the model needs, and dom-snapshot.js is the original
    blank-page check — the one just rebuilt in the browser. Deleting them
    would mean writing them again. */
-const { proposeChanges, proposeWithRepair, proposeWithClientBuild, repairProposal, assessPrompt, buildPlan, buildCodebaseContext, buildImagesBlock, codeBudgetChars, effortFor, EFFORT, PROMPT_VERSION, quickAssess } = require("./lib/codeagent/model-loop");
+const { proposeChanges, proposeWithRepair, proposeWithClientBuild, repairProposal, assessPrompt, buildPlan, buildCodebaseContext, buildImagesBlock, codeBudgetChars, effortFor, EFFORT, PROMPT_VERSION, quickAssess, buildHistory } = require("./lib/codeagent/model-loop");
 const diffstat = require("./lib/codeagent/diffstat");
 const codeMemory = require("./lib/codeagent/memory");
 const codeAgentUsage = require("./lib/codeagent/usage");
@@ -4914,7 +4914,10 @@ function getConversationalFallback(prompt, history) {
       }
 
       if (!reply) {
-        reply = getConversationalFallback(prompt, history);
+        /* One argument. The second was an undeclared `history`, which
+           is a ReferenceError every time this line is reached — and the
+           function ignores a second argument anyway. */
+        reply = getConversationalFallback(prompt);
       }
 
       if (project) {
@@ -5698,13 +5701,38 @@ app.post("/api/codeagent/build", codeAgentLimiter, async (req, res) => {
        The plan card shows what the agent understood before it spends a
        minute and some credits building it. Plan mode = always show plan/clarify first.
        The client re-POSTs with confirmed:true, which lands here with the gate passed. */
-    if (buildMode === "plan" && !(req.body && req.body.confirmed)) {
+    /* A QUESTION ABOUT AN EXISTING APP IS NOT A PLAN.
+
+       "what should we do next" on a finished project came back as a plan
+       card for a brand new website — Phase 1: Core UI, hero section,
+       footer with links — because this gate ran before anything asked
+       whether the person was requesting work at all.
+
+       The answer already exists two hundred lines below: a follow-up
+       that reads as a question is answered conversationally, with the
+       thread as context. It was simply unreachable in plan mode, since
+       this returned first. Skipping the gate lets it through. */
+    const planIsForWork = !(isFollowUp && agentRunner.isQuestionOrConversational(prompt));
+
+    if (buildMode === "plan" && !(req.body && req.body.confirmed) && planIsForWork) {
       const planType = String((req.body && req.body.buildType) || "website");
       let plan = null;
       try {
         // Same reason as the assessment: a plan card that does not mention
         // the photos reads as though they were ignored.
-        plan = await buildPlan(imagesBlock ? imagesBlock + prompt : prompt, planType);
+        /* What the app already is, so the plan is a change to it rather
+           than a proposal for a new one. Read here because the full tree
+           is not materialised until well after this gate, and only for a
+           follow-up — a fresh build has nothing to describe. */
+        let existing = null;
+        if (isFollowUp) {
+          try {
+            const head = await projects.head(project.id);
+            const paths = Object.keys((head && head.config && head.config.files) || {});
+            if (paths.length) existing = { title: project.title || "", paths: paths };
+          } catch (e) { /* plan without it rather than not at all */ }
+        }
+        plan = await buildPlan(imagesBlock ? imagesBlock + prompt : prompt, planType, existing);
       } catch (e) {
         // The confirm step must never become a new way for a build to die.
         plan = null;
@@ -5961,16 +5989,47 @@ app.post("/api/codeagent/build", codeAgentLimiter, async (req, res) => {
 
     if (isFollowUp && agentRunner.isQuestionOrConversational(prompt)) {
       sseFrame(res, "stage", { id: "question", state: "done", detail: "Thinking..." });
+
+      /* What the app IS, so the answer can be about it.
+
+         Asked "what should we do next" this had the question, the thread
+         and nothing else — it had never been shown the project it was
+         being asked about, so the best it could do was ask which part
+         you meant. The file list is cheap and is most of what "what
+         next" needs. */
+      let appContext = "";
+      try {
+        const head = await projects.head(project.id);
+        const paths = Object.keys((head && head.config && head.config.files) || {})
+          .filter((f) => /^src\/|\.html$/.test(f)).slice(0, 40);
+        if (paths.length) {
+          appContext = "\n\nThe app you are being asked about" +
+            (project.title ? ", \"" + String(project.title).slice(0, 80) + "\"" : "") +
+            ", is built from these files:\n" + paths.join("\n") +
+            "\n\nIf they are asking what to do next, suggest two or three concrete " +
+            "improvements that fit what is already there, and say why each one. " +
+            "Be specific to this app, never generic advice.";
+        }
+      } catch (e) { /* answer without it rather than not at all */ }
+
       const answerRes = await aiClient.chat({
         route: "prose",
         messages: [
           {
             role: "system",
-            content: "You are an intelligent, helpful human software engineer assisting a user with their web application. The user is asking a question or explanation about what you did, how the code works, or what an error was. Answer them clearly, accurately, and naturally in markdown. Do NOT write code blocks unless explaining a specific snippet."
+            content: "You are an intelligent, helpful human software engineer assisting a user with their web application. The user is asking a question or explanation about what you did, how the code works, or what an error was. Answer them clearly, accurately, and naturally in markdown. Do NOT write code blocks unless explaining a specific snippet." + appContext
           }
         ].concat(
-          buildHistory(convo),
-          [{ role: "user", content: effectivePrompt }]
+          /* Read here rather than reused: the `convo` this once named is
+             declared inside the fresh-prompt branch above and has never
+             been in scope at this point, so the whole call threw. */
+          buildHistory(Array.isArray(req.body && req.body.conversation)
+            ? req.body.conversation.slice(-12) : []),
+          /* The question as asked. effectivePrompt carries a paragraph of
+             build-time instruction about what language the finished app's
+             UI copy must be in, which is nothing to do with answering a
+             question and was the last thing the model read. */
+          [{ role: "user", content: prompt }]
         ),
         timeoutMs: 45000
       });

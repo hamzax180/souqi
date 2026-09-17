@@ -3192,12 +3192,33 @@ LANGUAGE: Write title, overview, phases, screens, assumptions and clarify values
  * is a canned string, so a non-English user hitting an outage gets an
  * English plan rather than no plan.
  */
-async function buildPlan(prompt, buildType) {
+/**
+ * @param existing  For a follow-up: the app this plan is a CHANGE to.
+ *   `{ title, paths }`. Absent on a fresh build, which is what this was
+ *   written for and the only case it ever handled — a plan for an
+ *   existing project was built from the request alone, so asking for a
+ *   dark mode on a finished shop planned a brand new website with a hero
+ *   and a footer. The model cannot plan a change to something it has not
+ *   been shown.
+ */
+async function buildPlan(prompt, buildType, existing) {
     const clean = String(prompt || "").trim();
-    // Cached on the json route. The plan is a pure function of (prompt, build type).
-    // buildType is in the key because it steers the model's feature list.
+    const paths = (existing && Array.isArray(existing.paths) ? existing.paths : [])
+        .filter((f) => /^src\/|\.html$/.test(String(f)))
+        .slice(0, 40);
+    const context = paths.length
+        ? "This is a CHANGE to an app that already exists" +
+            (existing.title ? ", called \"" + String(existing.title).slice(0, 80) + "\"" : "") +
+            ". Do not plan it from scratch and do not re-list what it already has — " +
+            "plan only what this request changes or adds, in terms of these files:\n" +
+            paths.join("\n") + "\n\nThe request:\n"
+        : "";
+    // Cached on the json route. buildType is in the key because it steers the
+    // model's feature list; the file list is, because a plan for an existing
+    // app and a plan for a fresh one are different answers to the same words.
     const key = cacheKey(clean, {
         kind: "plan", mode: buildType || "website",
+        existing: paths.join(","),
         promptHash: promptFingerprint(PLAN_SYSTEM_PROMPT)
     });
     const cached = cacheGet(key);
@@ -3210,7 +3231,7 @@ async function buildPlan(prompt, buildType) {
         route: "json", model: POWER_MODEL || undefined,
         messages: [
             { role: "system", content: PLAN_SYSTEM_PROMPT },
-            { role: "user", content: clean.slice(0, MAX_USER_PROMPT_CHARS) }
+            { role: "user", content: context + clean.slice(0, MAX_USER_PROMPT_CHARS) }
         ],
         responseFormat: { type: "json_object" },
         maxTokens: 700, temperature: 0.3, timeoutMs: 25000
