@@ -17,6 +17,7 @@
 
 const fsp = require("fs/promises");
 const path = require("path");
+const { spawn } = require("child_process");
 const engine = require("../docker/engine");
 const capacity = require("../monitor/capacity");
 const { cfg } = require("../config");
@@ -49,6 +50,41 @@ async function writeTree(root, files) {
     await fsp.writeFile(full, String(contents ?? ""), "utf8");
   }
   return root;
+}
+
+/**
+ * Stream a staged directory into the sandbox's /work.
+ *
+ * `tar -cf -` on this side, `tar -xf -` inside the container, joined by
+ * a pipe. spawn without a shell on both ends: the container name and
+ * the staging path are arguments, never a command line.
+ */
+function copyTreeInto(name, staging) {
+  return new Promise((resolve, reject) => {
+    const src = spawn("tar", ["-cf", "-", "-C", staging, "."], { stdio: ["ignore", "pipe", "pipe"] });
+    const dst = spawn("docker", ["exec", "-i", name, "tar", "-xf", "-", "-C", "/work"],
+      { stdio: ["pipe", "ignore", "pipe"] });
+
+    let err = "";
+    src.stderr.on("data", (b) => { err += String(b); });
+    dst.stderr.on("data", (b) => { err += String(b); });
+
+    const timer = setTimeout(() => {
+      try { src.kill("SIGKILL"); } catch (_) { /* gone */ }
+      try { dst.kill("SIGKILL"); } catch (_) { /* gone */ }
+      reject(new Error("timed out copying the source in"));
+    }, 60000);
+
+    src.on("error", reject);
+    dst.on("error", reject);
+    src.stdout.pipe(dst.stdin);
+
+    dst.on("close", (code) => {
+      clearTimeout(timer);
+      if (code === 0) return resolve();
+      reject(new Error("could not copy the source in: " + err.slice(0, 300)));
+    });
+  });
 }
 
 /** Structured errors from the build output, same shape the agent's own
@@ -129,18 +165,27 @@ async function check({ checkId, runId, files, sourceHash }) {
     }
     created = true;
 
-    /* Staged to disk and copied in, rather than bind-mounted.
+    /* Staged to disk, then streamed in as a tar. Not bind-mounted, and
+       not `docker cp` either.
 
        A bind mount would put a host path inside a container whose whole
-       isolation argument is that it has no route to anything, and it
-       would be writable by the build. `docker cp` is a one-way
-       snapshot: what goes in is what we wrote, and nothing the build
-       does reaches back out. The staging directory is removed in the
+       isolation argument is that it has no route to anything.
+
+       `docker cp` was the obvious alternative and it does not work
+       here: the daemon refuses it outright for a container with a
+       read-only rootfs — "container rootfs is marked read-only" — even
+       when the destination is a writable tmpfs. That is only
+       discoverable by running it against a real daemon, which is what
+       happened. A tar over `docker exec -i` writes through the
+       container's own filesystem view instead, so the tmpfs accepts it
+       and the rootfs stays immutable.
+
+       Piped process-to-process with no shell, so nothing in a path can
+       be read as a command. The staging directory is removed in the
        finally below whatever happens. */
     staging = path.join(cfg.buildRoot, "agent-check-" + name);
     await writeTree(staging, files);
-    const copied = await engine.docker(["cp", staging + "/.", name + ":/work"], { timeoutMs: 60000 });
-    if (!copied.ok) throw new Error("could not copy the source in: " + (copied.stderr || "").slice(0, 300));
+    await copyTreeInto(name, staging);
 
     const beganAt = Date.now();
     const run = await engine.docker(
@@ -212,4 +257,4 @@ function state() {
   return { inFlight: inFlight.size, slots: slots() };
 }
 
-module.exports = { check, reapOrphans, state, parseErrors, slots, writeTree };
+module.exports = { check, reapOrphans, state, parseErrors, slots, writeTree, copyTreeInto };
