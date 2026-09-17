@@ -68,7 +68,16 @@ const CSP = [
   "frame-src 'self' blob: " + WEBCONTAINER_HOST + " " + STRIPE_FRAME + " " + APP_PREVIEW_FRAME,
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com",
-  "img-src 'self' data: blob: https:",
+  /* http: alongside https:, and it costs nothing where it matters.
+
+     The preview runs the generated app in an OPAQUE origin, so 'self'
+     matches nothing there and every image it shows — including the photo
+     the person just uploaded — is judged by scheme alone. On souqi.site
+     the page is https and the browser blocks http subresources as mixed
+     content whatever this says, so the only thing this unblocks is a
+     developer running the server on http://localhost, where the hero was
+     rendering as alt text. */
+  "img-src 'self' data: blob: https: http:",
   "connect-src 'self' https: blob: data:",
   "frame-ancestors 'self'",
   "base-uri 'self'",

@@ -16,7 +16,7 @@
         },
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://cdn.tailwindcss.com https://cdnjs.cloudflare.com https://unpkg.com https://js.stripe.com; worker-src 'self' blob:; child-src 'self' blob: https://*.webcontainer-api.io https://stackblitz.com; frame-src 'self' blob: https://*.webcontainer-api.io https://stackblitz.com https://js.stripe.com https://hooks.stripe.com https://*.souqi.site https://souqi.site; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https:; connect-src 'self' https: blob: data:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'"
+          "value": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://cdn.tailwindcss.com https://cdnjs.cloudflare.com https://unpkg.com https://js.stripe.com; worker-src 'self' blob:; child-src 'self' blob: https://*.webcontainer-api.io https://stackblitz.com; frame-src 'self' blob: https://*.webcontainer-api.io https://stackblitz.com https://js.stripe.com https://hooks.stripe.com https://*.souqi.site https://souqi.site; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob: https: http:; connect-src 'self' https: blob: data:; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'"
         },
         {
           "key": "Cross-Origin-Opener-Policy",
