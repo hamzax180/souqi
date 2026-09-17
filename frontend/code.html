@@ -475,6 +475,73 @@
 .ask-send svg { width: 13px; height: 13px; }
 .ask-hint { font-size: .75rem; color: var(--ink2, #888); }
 .ask-chose { font-size: .8rem; color: var(--ink2, #888); padding: 8px 18px 14px; display: block; }
+
+/* ---------- the agent's terminal ----------
+   Everything the run actually did, as it does it. The stage events were
+   already rendered as a tidy checklist, which is the right summary and
+   the wrong thing to read when something has gone sideways — it shows
+   what step the agent is on and not what it TRIED. tool_start,
+   tool_denied, command and context were being emitted and dropped on
+   the floor entirely.
+
+   It stays after the run ends, deliberately. A terminal whose history
+   is cleared on completion answers "what is it doing" and never "what
+   did it do", and the second question is the one asked after the fact. */
+.ag-term {
+  background: var(--term-bg, #0d1117);
+  border: 1px solid var(--term-line, rgba(255,255,255,.1));
+  border-radius: 12px;
+  margin: 14px 0;
+  overflow: hidden;
+  font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  animation: sqFadeUp .25s var(--ease-snappy) both;
+}
+.term-head {
+  display: flex; align-items: center; gap: 9px;
+  padding: 9px 13px;
+  border-bottom: 1px solid var(--term-line, rgba(255,255,255,.1));
+  background: rgba(255,255,255,.03);
+  cursor: pointer;
+  user-select: none;
+}
+.term-dots { display: flex; gap: 5px; flex: 0 0 auto; }
+.term-dot { width: 9px; height: 9px; border-radius: 50%; background: rgba(255,255,255,.18); }
+.term-title {
+  font-size: .76rem; font-weight: 600; letter-spacing: .01em;
+  color: rgba(255,255,255,.72); flex: 1;
+}
+.term-meta { font-size: .7rem; color: rgba(255,255,255,.4); font-variant-numeric: tabular-nums; }
+.term-caret { color: rgba(255,255,255,.4); transition: transform var(--dur-chill, .2s); }
+.ag-term.collapsed .term-caret { transform: rotate(-90deg); }
+.ag-term.collapsed .term-body { display: none; }
+
+/* A live run breathes; a finished one does not. */
+.term-dot.live { background: #3fb950; animation: termPulse 1.4s ease-in-out infinite; }
+.term-dot.failed { background: #f85149; }
+@keyframes termPulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+.term-body {
+  max-height: 320px; overflow-y: auto;
+  padding: 10px 13px 12px;
+  font-size: .76rem; line-height: 1.65;
+}
+.term-line { display: flex; gap: 8px; white-space: pre-wrap; word-break: break-word; }
+.term-mark { flex: 0 0 auto; width: 11px; text-align: center; opacity: .85; }
+.term-text { flex: 1; color: rgba(255,255,255,.8); }
+.term-dim { color: rgba(255,255,255,.42); }
+.term-ok { color: #3fb950; }
+.term-bad { color: #f85149; }
+.term-warn { color: #d29922; }
+.term-cmd { color: #79c0ff; }
+.term-path { color: #a5d6ff; }
+/* Command output, verbatim and indented under its command. */
+.term-out {
+  margin: 2px 0 6px 19px; padding: 6px 9px;
+  border-left: 2px solid rgba(255,255,255,.12);
+  color: rgba(255,255,255,.55); font-size: .72rem; white-space: pre-wrap;
+  max-height: 160px; overflow-y: auto;
+}
+.term-empty { color: rgba(255,255,255,.35); font-style: italic; }
 </style>
 </head>
 <body><div class="ag-hist-backdrop" id="agHistBackdrop"></div>
@@ -2323,6 +2390,139 @@
     setTimeout(function() { textarea.focus(); }, 80);
   }
 
+  /* ---------- the agent's terminal ----------
+     One block per run, appended to as the events arrive, left in place
+     when the run ends. Created lazily: a turn that only answers a
+     question never opens one, and an empty terminal is worse than none.
+
+     Deliberately NOT a replacement for the stage checklist above it.
+     That says which step the run is on; this says what it tried,
+     including the parts that were refused — which is the half nobody
+     could see, because tool_start, tool_denied, command and context
+     were emitted by the runner and dropped by this file. */
+  let agTerm = null;
+
+  function termOpen(runId) {
+    if (agTerm && agTerm.runId === runId) return agTerm;
+    const card = el("ag-term");
+    card.innerHTML =
+      '<div class="term-head">'
+        + '<span class="term-dots"><span class="term-dot live"></span>'
+        + '<span class="term-dot"></span><span class="term-dot"></span></span>'
+        + '<span class="term-title">agent</span>'
+        + '<span class="term-meta"></span>'
+        + '<svg class="term-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" '
+        + 'stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">'
+        + '<path d="m6 9 6 6 6-6"/></svg>'
+      + '</div>'
+      + '<div class="term-body"></div>';
+    agLog.appendChild(card);
+    const body = card.querySelector(".term-body");
+    const head = card.querySelector(".term-head");
+    head.addEventListener("click", function () { card.classList.toggle("collapsed"); });
+
+    agTerm = {
+      runId: runId,
+      card: card,
+      body: body,
+      meta: card.querySelector(".term-meta"),
+      startedAt: Date.now(),
+      lines: 0,
+      failed: false,
+      failure: null,
+      /** Appends one line. `cls` colours the text, `mark` is the gutter. */
+      write: function (mark, text, cls) {
+        const line = document.createElement("div");
+        line.className = "term-line";
+        line.innerHTML = '<span class="term-mark ' + (cls || "term-dim") + '">' + esc(mark) + '</span>'
+          + '<span class="term-text ' + (cls || "") + '">' + esc(text) + '</span>';
+        body.appendChild(line);
+        agTerm.lines++;
+        // Only follow the tail if the reader is already at it.
+        if (body.scrollHeight - body.scrollTop - body.clientHeight < 60) body.scrollTop = body.scrollHeight;
+        return line;
+      },
+      /** Verbatim output, indented under the line that produced it. */
+      out: function (text) {
+        const pre = document.createElement("div");
+        pre.className = "term-out";
+        pre.textContent = String(text || "").replace(/\s+$/, "");
+        body.appendChild(pre);
+        if (body.scrollHeight - body.scrollTop - body.clientHeight < 200) body.scrollTop = body.scrollHeight;
+      }
+    };
+    toBottom();
+    return agTerm;
+  }
+
+  /** Close the block off. It stays in the log — that is the history.
+      Takes no arguments on purpose: the caller is a `finally` in a
+      different block from where the stream's `errorMsg` is declared, so
+      reading it there is a ReferenceError. The terminal knows whether
+      it saw an error, because it is the thing that rendered it. */
+  function termClose() {
+    if (!agTerm) return;
+    const ok = !agTerm.failed;
+    const note = agTerm.failure || null;
+    const dot = agTerm.card.querySelector(".term-dot");
+    dot.classList.remove("live");
+    if (!ok) dot.classList.add("failed");
+    const secs = Math.max(1, Math.round((Date.now() - agTerm.startedAt) / 1000));
+    agTerm.meta.textContent = (agTerm.lines || 0) + " steps · " + secs + "s";
+    if (note) agTerm.write(ok ? "✓" : "✗", note, ok ? "term-ok" : "term-bad");
+    /* Collapsed once it is history: a finished run is something you
+       open when you want it, not something that keeps a screen of
+       scrollback in front of the next question. */
+    agTerm.card.classList.add("collapsed");
+    agTerm = null;
+  }
+
+  /** One agent event -> zero or more terminal lines. */
+  function termEvent(kind, p, runId) {
+    if (!runId) return;
+    const t = termOpen(runId);
+
+    if (kind === "tool_start") {
+      const a = p.args || {};
+      const detail = a.path || a.query || a.dir || a.command || a.reason || "";
+      t.write("›", p.tool + (detail ? "  " + detail : ""), "term-cmd");
+    } else if (kind === "tool_denied") {
+      /* The half that was invisible. A refused write is the single most
+         useful line in here when an agent is behaving oddly. */
+      t.write("⨯", String(p.reason || "refused").replace(/^Error:\s*/, ""), "term-bad");
+    } else if (kind === "command") {
+      if (p.state === "start") {
+        t.write("$", p.command, "term-cmd");
+      } else {
+        const okc = p.state === "done";
+        t.write(okc ? "✓" : "✗",
+          "exit " + (p.exitCode === undefined ? (okc ? 0 : 1) : p.exitCode)
+            + (p.ms ? "  (" + Math.round(p.ms / 1000) + "s)" : ""),
+          okc ? "term-ok" : "term-bad");
+        if (p.output) t.out(p.output);
+      }
+    } else if (kind === "file_written") {
+      t.write("+", p.path + (p.bytes ? "  " + p.bytes + "b" : ""), "term-path");
+    } else if (kind === "file_edited") {
+      t.write("~", p.path, "term-path");
+    } else if (kind === "check_needed") {
+      t.write("⟳", "verifying the build", "term-warn");
+    } else if (kind === "context") {
+      /* Worth showing rather than hiding: when a long run starts losing
+         detail, this is the only place that says so. */
+      t.write("…", p.detail || p.step, "term-dim");
+    } else if (kind === "question") {
+      t.write("?", "asked " + ((p.questions || []).length || 1) + " question(s) — waiting", "term-warn");
+    } else if (kind === "error") {
+      t.failed = true;
+      t.failure = String(p.error || "the run failed");
+      t.write("✗", t.failure, "term-bad");
+    } else if (kind === "stage" && p.detail) {
+      if (p.state === "failed") t.write("✗", p.detail, "term-bad");
+      else if (p.state === "start") t.write("•", p.detail, "term-dim");
+    }
+  }
+
   /* ---------- the agent asked something ----------
      Rendered from the `question` SSE event, which the run emits when it
      calls ask_user_question and parks itself. The run is ALREADY
@@ -2940,6 +3140,13 @@
             }
             continue;
           }
+          /* Mirrored into the terminal before the branch below decides
+             what to DO with it. Every event goes past here, including
+             the four this chain has no branch for — tool_start,
+             tool_denied, command and context were being dropped
+             entirely, which is why a refused write was invisible. */
+          termEvent(em[1], payload, runId);
+
           if (em[1] === "stage") onStage(payload.id, payload.state, payload.detail);
           else if (em[1] === "file_written") onStage("file-" + payload.path, "done", "Wrote " + payload.path);
           else if (em[1] === "file_edited") onStage("file-" + payload.path, "done", "Edited " + payload.path);
@@ -3128,6 +3335,11 @@
         try { thinkPanel.done(); } catch (e) {}
       }
       finalizeThinking();
+      /* Closed, not cleared. The block stays in the log as the record of
+         what this run did — collapsed, so it is there when it is wanted
+         and not in the way when it is not. */
+      try { termClose(); }
+      catch (e) { /* a terminal that cannot close must not fail the turn */ }
       activeRunId = null;
       try { sessionStorage.removeItem("sapo_active_run"); } catch (e) {}
       building = false;
