@@ -82,6 +82,42 @@ function declaredNames(code) {
  * identifier-shaped run of characters is not a reference to that binding:
  * inside a string, inside a comment, after a dot, or as an object key.
  */
+/**
+ * Index of the `}` that closes the `${` opening at `openIdx`.
+ *
+ * Braces are counted, and quotes and nested templates are stepped over
+ * whole so that a `}` sitting in text cannot close the expression early.
+ * An unterminated one returns the end of the source, which renames what
+ * is there rather than dropping the tail.
+ */
+function endOfInterpolation(code, openIdx) {
+  let depth = 0;
+  let i = openIdx;
+  while (i < code.length) {
+    const c = code[i];
+    if (c === "\\") { i += 2; continue; }
+    if (c === '"' || c === "'" || c === "`") {
+      const quote = c;
+      i++;
+      while (i < code.length) {
+        if (code[i] === "\\") { i += 2; continue; }
+        if (code[i] === quote) { i++; break; }
+        // A template inside the expression may interpolate again.
+        if (quote === "`" && code[i] === "$" && code[i + 1] === "{") {
+          i = endOfInterpolation(code, i + 1) + 1;
+          continue;
+        }
+        i++;
+      }
+      continue;
+    }
+    if (c === "{") { depth++; i++; continue; }
+    if (c === "}") { depth--; if (!depth) return i; i++; continue; }
+    i++;
+  }
+  return code.length;
+}
+
 function renameTopLevel(code, from, to) {
   const isWord = (ch) => /[\w$]/.test(ch);
   const NL = String.fromCharCode(10);
@@ -90,8 +126,8 @@ function renameTopLevel(code, from, to) {
   while (i < code.length) {
     const ch = code[i];
 
-    // string and template literals: copied through untouched
-    if (ch === '"' || ch === "'" || ch === "`") {
+    // quoted strings: copied through untouched
+    if (ch === '"' || ch === "'") {
       const quote = ch;
       out += ch;
       i++;
@@ -99,6 +135,35 @@ function renameTopLevel(code, from, to) {
         if (code[i] === "\\") { out += code.slice(i, i + 2); i += 2; continue; }
         out += code[i];
         if (code[i] === quote) { i++; break; }
+        i++;
+      }
+      continue;
+    }
+
+    /* Template literals: the text is left alone, but `${...}` is code and
+       has to be renamed like any other.
+
+       It used to be copied through whole, with the quoted strings. So a
+       component that declared `const me` and read it back inside a
+       template kept the reference while the declaration was renamed
+       around it, and the bundle threw "me is not defined" on the first
+       render — a black preview with nothing in #root. Found in a Facebook
+       clone whose composer said `${me.name.split(' ')[0]}`, where four
+       components each had their own `me` and three of them were renamed. */
+    if (ch === "`") {
+      out += ch;
+      i++;
+      while (i < code.length) {
+        if (code[i] === "\\") { out += code.slice(i, i + 2); i += 2; continue; }
+        if (code[i] === "`") { out += code[i]; i++; break; }
+        if (code[i] === "$" && code[i + 1] === "{") {
+          const end = endOfInterpolation(code, i + 1);
+          // Recursive, so a template nested inside an interpolation works too.
+          out += "${" + renameTopLevel(code.slice(i + 2, end), from, to) + "}";
+          i = end + 1;
+          continue;
+        }
+        out += code[i];
         i++;
       }
       continue;

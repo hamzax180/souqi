@@ -145,6 +145,39 @@ check("renaming leaves strings, properties and keys alone", () => {
   assert.ok(/\{\s*tone:\s*5\s*\}/.test(r.code), "an object key was rewritten");
 });
 
+/* A template literal's text is a string; its `${...}` is code. Copying the
+   whole thing through left the reference behind while the declaration moved,
+   and the bundle threw "me is not defined" on first render — a black preview
+   with an empty #root. A Facebook clone whose composer read
+   `${me.name.split(' ')[0]}`, four components each with their own `me`. */
+check("an identifier inside a template interpolation is renamed with its declaration", () => {
+  /* Dependencies are emitted first, so the DEP keeps the name and the
+     entry is the one renamed — the template has to live in the entry. */
+  const r = inlineModules("src/App.tsx", {
+    "src/c.tsx": [
+      "const me = { name: 'dep' };",
+      "export default function C(){ return me.name; }"
+    ].join(NEWLINE),
+    "src/App.tsx": [
+      'import C from "./c";',
+      "const me = { name: 'entry' };",
+      "const greet = `hi ${me.name.split(' ')[0]}, ${`deep ${me.name}`}`;",
+      'const plain = "hi ${me.name}";',
+      "export default function App(){ return greet + plain + me.name + C(); }"
+    ].join(NEWLINE)
+  });
+  const renamed = (/const\s+(me\$\w+)\s*=\s*\{\s*name:\s*'entry'/.exec(r.code) || [])[1];
+  assert.ok(renamed, "the colliding declaration was not renamed");
+  assert.ok(r.code.includes("`hi ${" + renamed + ".name.split(' ')[0]}"),
+    "an interpolation kept the old name");
+  assert.ok(r.code.includes("`deep ${" + renamed + ".name}`"),
+    "a template nested inside an interpolation kept the old name");
+  assert.ok(/=\s*"hi \$\{me\.name\}"/.test(r.code),
+    "a quoted string that merely looks like an interpolation was rewritten");
+  assert.ok(/return greet \+ plain \+ me\$\w+\.name/.test(r.code),
+    "an ordinary reference in the renamed module kept the old name");
+});
+
 // Found in production: a generated src/data.ts carried `export interface`
 // and `export type`. The strip rule only covered function/class/const/let/
 // var, so those survived — and because this output is evaluated as a
