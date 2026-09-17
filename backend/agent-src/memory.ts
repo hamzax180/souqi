@@ -1,0 +1,128 @@
+/* =================================================================
+   memory.ts — what this project has already got wrong, kept across turns
+   -----------------------------------------------------------------
+   Nothing in the system remembered anything. Every turn is assembled from
+   the palette, the current files and the new sentence, and the model
+   re-derives the project from scratch each time — which is deliberate and
+   right for STATE, because the files are the truth and a remembered
+   summary of them goes stale. It is wrong for MISTAKES.
+
+   A project that imports a helper it has not written, every single turn,
+   looked exactly like one that got it right first time: the loop repaired
+   it, returned repaired:true, and dropped what it had repaired. So the
+   same lesson was paid for again on the next message, and the one after.
+
+   WHAT IS KEPT, AND WHY IT IS NOT EVERYTHING.
+
+   Only structural failures — the kinds of mistake, not the instances.
+   "Cannot find name 'foo'" is a typo; it carries nothing into next week
+   and a list of them is noise that costs context and teaches nothing. An
+   import of a file that was never written, a package that does not exist,
+   a nav link to a missing page, an app with no entry point: those are
+   habits, and a habit is worth naming.
+
+   Counted rather than listed, because three occurrences of one habit says
+   something a list of three lines does not.
+   ================================================================= */
+
+export interface Failure {
+  code?: string;
+  message?: string;
+  file?: string;
+  line?: number;
+}
+
+export interface Lesson {
+  code: string;
+  message: string;
+  hits: number;
+  at: string | null;
+}
+
+export interface ProjectMemory {
+  lessons: Lesson[];
+}
+
+/** Failure codes that describe a KIND of mistake rather than an instance. */
+export const STRUCTURAL = new Set([
+  "NO_ENTRY",              // wrote the leaves and stopped before the app
+  "UNRESOLVED_IMPORT",     // imported a helper it never wrote
+  "PACKAGE_NOT_INSTALLED", // invented a dependency
+  "MISSING_PAGE",          // a nav promising a page nobody wrote
+  "INCOMPLETE"             // the reviewer: built, but not what was asked
+]);
+
+/* Six is the cap because this is injected into every later turn, and a
+   list long enough to skim is a list the model skims. */
+export const MAX_LESSONS = 6;
+const MAX_MESSAGE = 160;
+
+/** Is this worth carrying past the turn that fixed it? */
+export function isStructural(failure: Failure | null | undefined): boolean {
+  return !!(failure && STRUCTURAL.has(String(failure.code || "")));
+}
+
+/**
+ * Fold this turn's repaired failures into what the project already knew.
+ *
+ * Pure: returns a new object and never mutates the one passed in, so a
+ * caller that fails to persist it has changed nothing. Returns null when
+ * there is nothing worth storing, which keeps a project that has never
+ * made a structural mistake free of an empty memory field.
+ */
+export function merge(
+  existing: ProjectMemory | null | undefined,
+  failures: Failure[] | null | undefined
+): ProjectMemory | null {
+  const prior = (existing && Array.isArray(existing.lessons)) ? existing.lessons : [];
+  const lessons: Lesson[] = prior.map((l) => ({
+    code: String(l.code || ""),
+    message: String(l.message || "").slice(0, MAX_MESSAGE),
+    hits: Number(l.hits) || 1,
+    at: l.at || null
+  }));
+
+  let changed = false;
+  for (const f of failures || []) {
+    if (!isStructural(f)) continue;
+    const code = String(f.code);
+    const message = String(f.message || "").trim().slice(0, MAX_MESSAGE);
+    if (!message) continue;
+    /* Matched on CODE, not on message. The message names this instance —
+       which file, which import — and keying on it would store one lesson
+       per filename and never once show a count above 1, which is the only
+       part of this that carries information. */
+    const hit = lessons.find((l) => l.code === code);
+    if (hit) {
+      hit.hits += 1;
+      hit.message = message;   // the most recent example reads best
+      hit.at = new Date().toISOString();
+    } else {
+      lessons.push({ code, message, hits: 1, at: new Date().toISOString() });
+    }
+    changed = true;
+  }
+  if (!changed && !prior.length) return null;
+
+  /* Most-repeated first, and the tail is dropped rather than the head:
+     a mistake made five times matters more than the one made once, however
+     recently. */
+  lessons.sort((a, b) => (b.hits - a.hits) || String(a.code).localeCompare(String(b.code)));
+  return { lessons: lessons.slice(0, MAX_LESSONS) };
+}
+
+/**
+ * The block a later turn reads. Empty string when there is nothing to say.
+ *
+ * Phrased as this project's own history rather than as instructions. The
+ * model already has rules; what it does not have is the knowledge that in
+ * THIS project it has made the same mistake three times.
+ */
+export function promptBlock(memory: ProjectMemory | null | undefined): string {
+  const lessons = (memory && Array.isArray(memory.lessons)) ? memory.lessons : [];
+  const worth = lessons.filter((l) => l && l.message);
+  if (!worth.length) return "";
+  return "Builds in this project have failed on these before — check each one before you finish:\n" +
+    worth.map((l) => "  - " + l.message + (l.hits > 1 ? "  (has happened " + l.hits + " times)" : "")).join("\n") +
+    "\n\n";
+}

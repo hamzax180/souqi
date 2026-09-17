@@ -1,0 +1,170 @@
+/* =================================================================
+   codeagent/tools.ts — the seven tools, strictly validated
+   -----------------------------------------------------------------
+   docs/CODE-AGENT-PLAN.md §2. Deliberately small: every tool here is
+   a place a caller (today a hardcoded script, from Phase 3 onward a
+   model) can fail, so there are seven and no more.
+
+   Argument validation happens HERE, not in the runtime — the runtime
+   only knows about paths and argv. This is also where §9's command
+   allowlist lives: `run` accepts a single command string but it is
+   tokenised and checked against the allowlist BEFORE it ever becomes
+   an argv array, and it is always spawned with shell:false semantics
+   (see runtimes/local-runtime.js) so there is no shell to inject into
+   even for an allowed command.
+
+   NOT THE LIVE TOOL SURFACE. The model-facing tools are the seven in
+   tool-registry.ts, which run against an in-memory file map and call
+   model-loop's validators. This file is required only by the phase
+   demos — nothing under backend/index.js reaches it. Two consequences
+   worth stating rather than discovering: it has no path containment of
+   its own (the header above says validation happens here, and for
+   paths it does not — it is delegated to whatever runtime it is handed),
+   and reviving it would mean fixing that first.
+   ================================================================= */
+
+import { parseBuildErrors, type BuildError } from "./build-parser";
+import { domSnapshot as domSnapshotImpl, type DomSnapshot } from "./dom-snapshot";
+import type { RunResult, RuntimeImpl, Workspace } from "./runtime";
+
+export const ALLOWED_COMMANDS: Record<string, Set<string>> = {
+  npm: new Set(["install", "ci", "run", "i"]),
+  npx: new Set(["tsc"]),
+  git: new Set(["init", "add", "commit", "log", "status", "diff", "config"])
+};
+
+/** Quote-aware tokenizer — good enough for the bounded command set above,
+    and the reason `run` never falls back to a naive .split(" "): a commit
+    message with spaces must not silently become extra argv entries. */
+export function tokenize(cmd: string | null | undefined): string[] {
+  const out: string[] = [];
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(String(cmd || "")))) out.push((m[1] ?? m[2] ?? m[3]) as string);
+  return out;
+}
+
+export function assertAllowed(argv: string[]): void {
+  const [bin, sub] = argv;
+  const subs = ALLOWED_COMMANDS[bin as string];
+  if (!subs) throw new Error("command not allowlisted: \"" + bin + "\" (see codeagent/tools.ts ALLOWED_COMMANDS)");
+  if (!subs.has(sub as string)) {
+    throw new Error("\"" + bin + " " + sub + "\" is not allowlisted (allowed: " + [...subs].join(", ") + ")");
+  }
+}
+
+function str(v: unknown, name: string): string {
+  if (typeof v !== "string") throw new Error(name + " must be a string, got " + typeof v);
+  return v;
+}
+
+function optInt(v: unknown, name: string): number | undefined {
+  if (v === null || v === undefined) return undefined;
+  if (!Number.isInteger(v)) throw new Error(name + " must be an integer, got " + typeof v);
+  return v as number;
+}
+
+export interface BuildToolResult {
+  ok: boolean;
+  code: number;
+  timedOut: boolean;
+  errors: BuildError[];
+  raw: string;
+}
+
+export interface SandboxTools {
+  list_files(dir?: string | null): Promise<string[]>;
+  read_file(path: string, fromLine?: number | null, toLine?: number | null): Promise<string>;
+  write_file(path: string, content: string): Promise<{ ok: true }>;
+  edit_file(path: string, find: string, replace: string): Promise<{ ok: true }>;
+  run(cmd: string, timeoutMs?: number | null): Promise<RunResult>;
+  build(timeoutMs?: number | null): Promise<BuildToolResult>;
+  dom_snapshot(url: string, timeoutMs?: number | null): Promise<DomSnapshot>;
+}
+
+/**
+ * @param runtime  the registered runtime impl (create/read/write/run/...)
+ * @param ws       the workspace handle those verbs operate on
+ */
+export function makeTools(runtime: RuntimeImpl, ws: Workspace): SandboxTools {
+  return {
+    async list_files(dir) {
+      if (dir != null) str(dir, "dir");
+      return runtime.listFiles(ws, dir ?? undefined);
+    },
+
+    async read_file(path, fromLine, toLine) {
+      str(path, "path");
+      const from = optInt(fromLine, "fromLine");
+      const to = optInt(toLine, "toLine");
+      return runtime.readFile(ws, path, from, to);
+    },
+
+    async write_file(path, content) {
+      str(path, "path");
+      str(content, "content");
+      await runtime.writeFile(ws, path, content);
+      return { ok: true };
+    },
+
+    /** Exact-match only, and errors on ambiguity — a silent "replaced the
+        wrong one of three matches" is worse than a loud failure the caller
+        (eventually the repair loop) can react to. */
+    async edit_file(path, find, replace) {
+      str(path, "path");
+      str(find, "find");
+      str(replace, "replace");
+      const text = await runtime.readFile(ws, path);
+      const count = text.split(find).length - 1;
+      if (count === 0) throw new Error("edit_file: no match for the given text in " + path);
+      if (count > 1) {
+        throw new Error("edit_file: \"" + find.slice(0, 40) + "…\" matches " + count +
+          " times in " + path + " — give a more specific range");
+      }
+      const next = text.replace(find, replace);
+      await runtime.writeFile(ws, path, next);
+      return { ok: true };
+    },
+
+    async run(cmd, timeoutMs) {
+      str(cmd, "cmd");
+      const ms = optInt(timeoutMs, "timeoutMs");
+      const argv = tokenize(cmd);
+      if (!argv.length) throw new Error("run: empty command");
+      assertAllowed(argv);
+      return runtime.run(ws, argv, ms || 120000);
+    },
+
+    /** `npm run build` already runs `tsc --noEmit && vite build` (see
+        scaffold/package.json) — one call gets type errors AND bundle
+        errors, in the order a human would want to see them fixed. */
+    async build(timeoutMs) {
+      const ms = optInt(timeoutMs, "timeoutMs");
+      const result = await runtime.run(ws, ["npm", "run", "build"], ms || 180000);
+      const errors = result.code === 0 ? [] : parseBuildErrors(result.stdout + "\n" + result.stderr);
+      return {
+        ok: result.code === 0, code: result.code, timedOut: result.timedOut,
+        errors, raw: result.code === 0 ? "" : (result.stdout + result.stderr).slice(-4000)
+      };
+    },
+
+    /** The screenshot substitute (docs/CODE-AGENT-PLAN.md §4): proves a
+        route actually rendered content, not just that the build succeeded.
+        A blank white page compiles clean — this is the check that catches it.
+
+        Prefers the RUNTIME's own implementation when it has one — Daytona's
+        sandboxes ship Chromium pre-installed and can dump the DOM entirely
+        inside the isolated Linux container (see daytona-runtime.js), which
+        sidesteps depending on a working browser stack on whatever host the
+        orchestrator itself happens to run on. Falls back to the orchestrator-
+        side Puppeteer path (dom-snapshot.ts) for runtimes without their own —
+        today, that's local-runtime.js, which is Phase 2's proof surface, not
+        somewhere a model's output ever actually runs. */
+    async dom_snapshot(url, timeoutMs) {
+      str(url, "url");
+      const ms = optInt(timeoutMs, "timeoutMs");
+      if (typeof runtime.domSnapshot === "function") return runtime.domSnapshot(ws, url, ms || 15000);
+      return domSnapshotImpl(url, ms || 15000);
+    }
+  };
+}
