@@ -431,6 +431,9 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
   };
 
   let totalCostUsd = 0;
+  /* Reported to the UI, which until now could show elapsed time and
+     nothing else about what a turn was actually costing. */
+  let totalTokens = 0;
   let calls = 0;
 
   let messages: client.ChatMessage[] = [
@@ -693,6 +696,16 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
        not after each call. */
     if (callOpts.onDelta) await (callOpts.onDelta as any).done();
     totalCostUsd += aiRes.costUsd || 0;
+    // Both spellings, because the block is the provider's and they differ.
+    totalTokens += Number(aiRes.usage && (aiRes.usage.total_tokens ?? aiRes.usage.totalTokens)) || 0;
+    /* One per model call, not per token: this is a number in a status
+       line, and a run that wrote its own token counter a thousand times
+       would cost more to read back than the counter is worth. */
+    if (totalTokens) {
+      await runStore.appendEvent(runId, "usage", {
+        turn, tokens: totalTokens, costUsd: Number(totalCostUsd.toFixed(6))
+      });
+    }
 
     if (!aiRes.ok) {
       await runStore.appendEvent(runId, "error", { error: aiRes.reason || "Model call failed" });

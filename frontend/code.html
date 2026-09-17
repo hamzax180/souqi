@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=3.8">
+<link rel="stylesheet" href="/styles/pages/code.css?v=3.9">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -598,6 +598,73 @@
   max-height: none; overflow: visible;
 }
 .term-empty { color: rgba(255,255,255,.35); font-style: italic; }
+
+/* ══════════════════════════════════════════════════════════════
+   THINKING v2 — the turn narrating itself
+   --------------------------------------------------------------
+   The old panel was a collapsed box with a header: you got a label
+   and a clock, and the steps were behind a chevron. It read as a
+   receipt for work already done rather than as work happening.
+
+   This is the same data laid out as a running account — each step a
+   line as it happens, and one live status line underneath carrying
+   the three things worth knowing while you wait: how long it has
+   been, what it has spent, and what it is doing right now.
+   ══════════════════════════════════════════════════════════════ */
+.th2 { margin: 6px 0 10px; }
+.th2-steps { display: flex; flex-direction: column; gap: 1px; }
+
+.th2-step {
+  display: flex; align-items: baseline; gap: 7px;
+  padding: 3px 0;
+  font-size: .92rem; line-height: 1.5;
+  color: var(--ink-2, #6b7076);
+  opacity: 0; transform: translateY(3px);
+  animation: th2In .34s cubic-bezier(.16,1,.3,1) forwards;
+}
+@keyframes th2In { to { opacity: 1; transform: none; } }
+.th2-step-text { min-width: 0; }
+/* The chevron is an affordance, not decoration: it marks the rows
+   that carry a detail the step replaced itself with. */
+.th2-step-chev { flex: none; opacity: .5; font-size: .85em; transform: translateY(-1px); }
+.th2-step.busy .th2-step-text {
+  /* A sweep rather than a spinner. The row IS the progress indicator,
+     so a second spinning thing beside it is two answers to one
+     question. */
+  background: linear-gradient(90deg,
+    var(--ink-2, #6b7076) 0%, var(--ink, #1b252b) 18%, var(--ink-2, #6b7076) 36%) 0 0 / 220% 100%;
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; color: transparent;
+  animation: th2Sweep 1.9s linear infinite;
+}
+@keyframes th2Sweep { to { background-position: -220% 0; } }
+.th2-step.failed { color: #e0616d; }
+
+/* The status line. */
+.th2-status {
+  display: flex; align-items: center; gap: 9px;
+  padding: 5px 0 2px;
+  font-size: .88rem; color: var(--mut, #8a8f91);
+}
+.th2-spark { flex: none; width: 15px; height: 15px; display: block; color: #e08a42; }
+.th2-spark svg { width: 100%; height: 100%; display: block; transform-origin: 50% 50%;
+  animation: th2Spin 2.6s cubic-bezier(.5,0,.5,1) infinite, th2Pulse 1.5s ease-in-out infinite; }
+@keyframes th2Spin { to { transform: rotate(180deg); } }
+@keyframes th2Pulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
+.th2-sep { opacity: .45; }
+.th2-phase { transition: opacity .2s ease; }
+.th2-num { font-variant-numeric: tabular-nums; }
+
+/* Finished: the spark stops, the line becomes the summary. */
+.th2.done .th2-spark svg { animation: none; opacity: .45; }
+.th2.done .th2-step.busy .th2-step-text {
+  animation: none; -webkit-text-fill-color: currentColor; color: var(--ink-2, #6b7076);
+}
+@media (prefers-reduced-motion: reduce) {
+  .th2-step { animation: none; opacity: 1; transform: none; }
+  .th2-step.busy .th2-step-text { animation: none; -webkit-text-fill-color: currentColor; color: var(--ink-2); }
+  .th2-spark svg { animation: none; }
+}
 </style>
 </head>
 <body><div class="ag-hist-backdrop" id="agHistBackdrop"></div>
@@ -2014,75 +2081,81 @@
   }
   let currentThinkPanel = null;
 
+  /* The safety net: any panel still running when a turn ends by a route
+     that did not go through handle.done() — a replayed history, a throw,
+     a cancel. It works on the DOM rather than the handle because by then
+     there may not be one. */
   function finalizeThinking(statusText) {
     document.querySelectorAll(".ag-thinking").forEach((wrap) => {
       wrap.classList.add("done");
       wrap.classList.remove("taking-longer");
-      wrap.querySelectorAll(".ag-think.busy, .ag-think").forEach((row) => {
-        row.classList.remove("busy");
-        const ic = row.querySelector(".ic");
-        if (ic) {
-          ic.style.animation = "none";
-          if (!ic.querySelector("svg")) ic.innerHTML = ICON.check;
-        }
+      wrap.querySelectorAll(".th2-step.busy, .ag-think.busy").forEach((row) => row.classList.remove("busy"));
+      // The old markup is still out there in replayed history.
+      wrap.querySelectorAll(".ag-think .ic").forEach((ic) => {
+        ic.style.animation = "none";
+        if (!ic.querySelector("svg")) ic.innerHTML = ICON.check;
       });
-      const label = wrap.querySelector(".ag-th-label");
-      const time = wrap.querySelector(".ag-th-time");
-      if (statusText && label) {
-        label.textContent = statusText;
-      } else if (label && !label.textContent.startsWith("Thought for")) {
-        const elapsed = time ? time.textContent : "";
-        label.textContent = "Thought for " + (elapsed || "a moment");
+      const phase = wrap.querySelector(".th2-phase") || wrap.querySelector(".ag-th-label");
+      const time = wrap.querySelector(".th2-time") || wrap.querySelector(".ag-th-time");
+      if (!phase) return;
+      if (statusText) {
+        phase.textContent = statusText;
+      } else if (!phase.textContent.startsWith("Thought for")) {
+        phase.textContent = "Thought for " + ((time && time.textContent) || "a moment");
       }
-      if (time) time.remove();
+      // The clock stops but stays: how long it took is the useful part.
+      if (time && !wrap.classList.contains("th2")) time.remove();
     });
   }
 
+  /* One turn, narrated.
+     -----------------------------------------------------------------
+     Same handle as before — addStep(label, cls, headerLabel) and
+     done(statusText) — because onStage and half a dozen other callers
+     are written against it and none of them should have to care what
+     this looks like.
+
+     What changed is the reading. It was a collapsed box with a header:
+     a label, a clock, and the steps hidden behind a chevron, which is
+     a receipt for work already finished. This is the steps themselves
+     as they happen, over one live line carrying the three things worth
+     knowing while you wait — how long, what it has spent, and what it
+     is doing right now. */
+  const TH2_SPARK =
+    '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+    '<path d="M12 1.6l1.65 6.02 4.42-4.42-2.77 5.53 6.02-1.65-5.53 2.77 5.53 2.77-6.02-1.65 2.77 5.53-4.42-4.42L12 22.4l-1.65-6.02-4.42 4.42 2.77-5.53-6.02 1.65 5.53-2.77-5.53-2.77 6.02 1.65-2.77-5.53 4.42 4.42z"/>' +
+    '</svg>';
+
   function thinkingBlock(promptText) {
     clearEmpty();
-    const wrap = el("ag-thinking");
+    const wrap = el("ag-thinking th2");
     wrap.innerHTML =
-      '<button class="ag-th-head" type="button">' +
-        '<span class="ag-th-gemini" aria-hidden="true">' +
-          '<span class="g-dot g-dot-1"></span><span class="g-dot g-dot-2"></span><span class="g-dot g-dot-3"></span>' +
-        '</span>' +
-        '<span class="ag-th-label">Thinking</span>' +
-        '<span class="ag-th-time">0s</span>' +
-        '<svg class="ag-th-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>' +
-      '</button><div class="ag-th-body"></div>';
+      '<div class="th2-steps"></div>' +
+      '<div class="th2-status">' +
+        '<span class="th2-spark">' + TH2_SPARK + '</span>' +
+        '<span class="th2-num th2-time">0s</span>' +
+        '<span class="th2-sep th2-tok-sep" hidden>·</span>' +
+        '<span class="th2-num th2-tok" hidden></span>' +
+        '<span class="th2-sep">·</span>' +
+        '<span class="th2-phase">Thinking…</span>' +
+      '</div>';
     agLog.appendChild(wrap); toBottom();
 
-    const head = wrap.querySelector(".ag-th-head"), timeEl = wrap.querySelector(".ag-th-time"),
-      bodyEl = wrap.querySelector(".ag-th-body"), labelEl = wrap.querySelector(".ag-th-label");
-    let userToggled = false;
-    head.addEventListener("click", () => { userToggled = true; wrap.classList.toggle("collapsed"); });
+    const stepsEl = wrap.querySelector(".th2-steps");
+    const timeEl = wrap.querySelector(".th2-time");
+    const tokEl = wrap.querySelector(".th2-tok");
+    const tokSep = wrap.querySelector(".th2-tok-sep");
+    const phaseEl = wrap.querySelector(".th2-phase");
 
     /* STEPS SETTLE ONE AT A TIME, EVEN WHEN THEY ARRIVE TOGETHER.
 
        The opening stages are reported as facts, not as work in progress,
        and the server says why: by the time it can speak, reading the
-       request and folding the conversation into a brief have both already
-       run. So `read` and `brief` arrive as `done` in the same tick as each
-       other, the client adds its own "Understanding …" beside them, and
-       three ticks used to paint on the same frame. That is a receipt, not
-       a process — nothing on screen showed one thing following another.
-
-       Nothing here invents a step or slows the build down. Every row still
-       appears the instant its event does; only the CHECK is queued, one
-       every 240ms, in arrival order. What changes is the reading, from
-       three things that were already true to three things becoming true.
-
-       Every completion goes through this queue, including genuinely
-       in-flight steps finishing for real, and that is the point: the queue
-       is what guarantees the order on screen is the order that happened. A
-       fast step that lands while the queue is draining takes its place at
-       the back instead of ticking ahead of something that finished before
-       it.
-
-       Flushed, never waited on, when the turn ends. A finished turn must
-       not sit there showing spinners because a cosmetic timer has 400ms
-       left to run — see done() below, which drains the queue in one go
-       before it finalises. */
+       request and folding the conversation into a brief have both
+       already run. Three rows painting on one frame is a receipt, not a
+       process. Nothing here invents a step or slows the build down —
+       only the CHECK is queued, in arrival order, so what you read is
+       the order things actually happened in. */
     const SETTLE_MS = 240;
     let settleQueue = [], settleTimer = null;
     function pumpSettles() {
@@ -2090,9 +2163,7 @@
       const next = settleQueue.shift();
       if (!next) return;
       next();
-      if (settleQueue.length) {
-        settleTimer = setTimeout(pumpSettles, settleQueue.length > 3 ? 90 : SETTLE_MS);
-      }
+      if (settleQueue.length) settleTimer = setTimeout(pumpSettles, settleQueue.length > 3 ? 90 : SETTLE_MS);
     }
     function queueSettle(fn) {
       settleQueue.push(fn);
@@ -2103,59 +2174,104 @@
       while (settleQueue.length) settleQueue.shift()();
     }
 
-    const firstStep = think("Understanding “" + promptGist(promptText) + "”", bodyEl);
+    function addRow(label, cls) {
+      const row = el("th2-step busy" + (cls ? " " + cls : ""),
+        '<span class="th2-step-text"></span><span class="th2-step-chev" hidden>›</span>');
+      row.firstChild.textContent = label;
+      stepsEl.appendChild(row); toBottom();
+      let settled = false;
+      return {
+        done(next) {
+          if (settled) return;
+          settled = true;
+          row.classList.remove("busy");
+          if (next) {
+            row.firstChild.textContent = next;
+            // The chevron marks a row whose detail replaced its label.
+            row.lastChild.hidden = false;
+          }
+        },
+        fail(msg) {
+          if (settled) return;
+          settled = true;
+          row.classList.remove("busy");
+          row.classList.add("failed");
+          if (msg) row.firstChild.textContent = msg;
+        }
+      };
+    }
+
+    const firstStep = addRow("Understanding “" + promptGist(promptText) + "”");
     queueSettle(function () { firstStep.done(); });
 
+    /* What it is doing, said by the events rather than guessed from a
+       timer. The timer only escalates while nothing else is talking —
+       a run that has gone quiet for two minutes should not still be
+       claiming it is running tools. */
     const t0 = Date.now();
-    const clockTimer = setInterval(() => {
-      if (wrap.classList.contains("done")) {
-        clearInterval(clockTimer);
-        return;
+    let phase = "Thinking…";
+    let phaseAt = t0;
+    let stopped = false;
+
+    function paintPhase() {
+      const idleFor = Date.now() - phaseAt;
+      let text = phase;
+      if (idleFor > 12000) {
+        const total = Date.now() - t0;
+        text = total > 75000 ? "Almost done thinking…"
+          : total > 20000 ? "Still thinking…" : "Thinking…";
       }
-      const elapsed = Math.round((Date.now() - t0) / 1000);
-      if (timeEl) timeEl.textContent = elapsed + "s";
-      if (elapsed >= 3 && !wrap.classList.contains("taking-longer")) {
-        wrap.classList.add("taking-longer");
-      }
+      if (phaseEl.textContent !== text) phaseEl.textContent = text;
+    }
+
+    const clockTimer = setInterval(function () {
+      if (stopped) { clearInterval(clockTimer); return; }
+      const s = Math.round((Date.now() - t0) / 1000);
+      timeEl.textContent = s < 60 ? s + "s" : Math.floor(s / 60) + "m " + (s % 60) + "s";
+      paintPhase();
     }, 500);
 
     const handle = {
+      /* `headerLabel` was the text the collapsed header showed — "Writing
+         your app · 3 files". There is no header any more, but that was
+         the most useful summary on screen, so it becomes the phase. */
       addStep(label, cls, headerLabel) {
-        const h = headerLabel === undefined ? label : headerLabel;
-        if (h) labelEl.textContent = h;
-        const subHandle = think(label, bodyEl, cls);
+        if (headerLabel) handle.setPhase(headerLabel);
+        const sub = addRow(label, cls);
         return {
-          done: function (next) { queueSettle(function () { subHandle.done(next); }); },
-          fail: function (msg) { queueSettle(function () { subHandle.fail(msg); }); }
+          done: function (next) { queueSettle(function () { sub.done(next); }); },
+          fail: function (msg) { queueSettle(function () { sub.fail(msg); }); }
         };
+      },
+      /** Said by an event: "Running tools…", "Waiting for Souqi…". */
+      setPhase(text) {
+        if (stopped || !text) return;
+        phase = text; phaseAt = Date.now();
+        paintPhase();
+      },
+      /** Cumulative tokens for the turn, from the server's usage event. */
+      setTokens(n) {
+        const tokens = Number(n) || 0;
+        if (!tokens || stopped) return;
+        tokEl.textContent = (tokens >= 1000 ? (tokens / 1000).toFixed(1).replace(/\.0$/, "") + "k" : tokens) + " tokens";
+        tokEl.hidden = false; tokSep.hidden = false;
       },
       done(statusText) {
         flushSettles();
+        stopped = true;
         clearInterval(clockTimer);
-        wrap.classList.remove("taking-longer");
         wrap.classList.add("done");
-        wrap.querySelectorAll(".ag-think.busy, .ag-think").forEach((row) => {
-          row.classList.remove("busy");
-          const ic = row.querySelector(".ic");
-          if (ic) {
-            ic.style.animation = "none";
-            if (!ic.querySelector("svg")) ic.innerHTML = ICON.check;
-          }
-        });
+        stepsEl.querySelectorAll(".th2-step.busy").forEach(function (row) { row.classList.remove("busy"); });
         const secs = Math.max(1, Math.round((Date.now() - t0) / 1000));
-        if (statusText) {
-          labelEl.textContent = statusText;
-        } else {
-          labelEl.textContent = "Thought for " + secs + (secs === 1 ? " second" : " seconds");
-        }
-        if (timeEl) timeEl.remove();
-        if (!userToggled) wrap.classList.add("collapsed");
+        phaseEl.textContent = statusText ||
+          ("Thought for " + secs + (secs === 1 ? " second" : " seconds"));
         if (currentThinkPanel === handle) currentThinkPanel = null;
       }
     };
     currentThinkPanel = handle;
     return handle;
   }
+
 
   function worked(seconds) {
     const row = el("ag-worked", '<span class="ic">' + ICON.clock + "</span><span></span>");
@@ -3059,6 +3175,13 @@
         // screen while the panel is collapsed.
         isFile ? "Writing your app \u00b7 " + filesSeen + " file" + (filesSeen === 1 ? "" : "s") : undefined
       );
+      /* Remembered, so a second `done` for the same id settles this row
+         instead of adding another. A written file reports twice \u2014 once
+         as file_written and once as the stage carrying the same id \u2014 so
+         every file in every build was listed twice, and counted twice
+         by filesSeen. Invisible while the panel was collapsed behind a
+         chevron; the first thing you see now that the steps are. */
+      handles[id] = h;
       h.done();
     }
 
@@ -3310,6 +3433,21 @@
              tool_denied, command and context were being dropped
              entirely, which is why a refused write was invisible. */
           termEvent(em[1], payload, runId);
+
+          /* The status line is told what is happening rather than
+             inferring it from a timer. Each of these is a different
+             kind of waiting and they take different amounts of time,
+             so saying "Thinking…" through all of them is the one
+             thing that would make the line worth ignoring. */
+          if (thinkPanel) {
+            if (em[1] === "usage") thinkPanel.setTokens(payload.tokens);
+            else if (em[1] === "tool_intent" || em[1] === "tool_start") thinkPanel.setPhase("Running tools…");
+            else if (em[1] === "command" && payload.state === "start") thinkPanel.setPhase("Running a command…");
+            else if (em[1] === "check_needed") thinkPanel.setPhase("Verifying the build…");
+            else if (em[1] === "assistant_delta") thinkPanel.setPhase("Waiting for Souqi…");
+            else if (em[1] === "tool_result") thinkPanel.setPhase("Thinking…");
+            else if (em[1] === "context") thinkPanel.setPhase("Making room in context…");
+          }
 
           if (em[1] === "stage") onStage(payload.id, payload.state, payload.detail);
           else if (em[1] === "file_written") onStage("file-" + payload.path, "done", "Wrote " + payload.path);

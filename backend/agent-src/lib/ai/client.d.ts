@@ -55,7 +55,23 @@ export interface ChatResponse {
   costUsd?: number;
   route?: string;
   servedFallback?: boolean;
-  usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
+  /* The provider's own usage block, passed through verbatim — so these
+     are the provider's names. Declared camelCase here and never
+     matched anything at runtime: a live call returns
+     {prompt_tokens, completion_tokens, total_tokens, ...}, which is
+     what estimateCost has always read. The camelCase names are kept
+     as optional because nothing has ever verified no provider sends
+     them, and an index signature because DeepSeek adds its own
+     (prompt_cache_hit_tokens, reasoning_tokens). */
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+    [k: string]: unknown;
+  };
   /* Three distinct reasons a call did not happen, kept apart because
      none of them is a code defect and a repair round spent on one is a
      round spent on nothing. */
