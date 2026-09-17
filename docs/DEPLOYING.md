@@ -91,3 +91,46 @@ Two known gaps, neither caused by the restructure:
 - `npm run ci` used to die at step one on a generator whose inputs were
   deleted. That step is gone, so the chain runs now — expect to find failures
   it had been hiding.
+
+
+## The agent's build sandbox
+
+The code agent verifies its own work in a disposable container on the
+container plane. Two of `MAX_CONTAINERS` are held back for it
+(`AGENT_SANDBOX_CONTAINERS`, default 2), so with the host's current
+`MAX_CONTAINERS=10` that is eight deployments and two sandboxes.
+
+It lives in the **worker**, because the worker is the only thing holding
+a Docker socket. The worker's internal server is not published, so the
+api forwards to it — the same way it already forwards runtime logs.
+
+Reaching it from Vercel therefore needs **three** variables on the app,
+and two tokens on every request, because there are two gates guarding
+different things:
+
+| Variable | Value | Gate it passes |
+|---|---|---|
+| `AGENT_VERIFIER_URL` | `https://<control-domain>/internal/agent/` | — |
+| `AGENT_VERIFIER_TOKEN` | the plane's `INTERNAL_TOKEN` | the route |
+| `DEPLOY_PLATFORM_TOKEN` | the plane's `DEPLOY_PLATFORM_TOKEN` | the control **hostname**, app-wide, before any route |
+
+Sending only the internal token gets a 401 from the hostname gate and
+never reaches the route at all. The trailing slash on the URL matters:
+paths are joined relative to it, and `new URL("/health", base)` would
+discard the path and hit the plane's own public `/health` instead —
+reading a healthy plane as a healthy verifier.
+
+Until these are set, `run_command` and server-side `check_project` reply
+"no build sandbox is configured for this run" rather than pretending a
+command ran and printed nothing. That is the honest degraded mode, and
+the browser's WebContainer check still works as it did.
+
+Confirm it end to end without deploying anything:
+
+```bash
+ssh ubuntu@148.113.174.192 'cd /opt/platform/stack   && TOK=$(grep -E "^INTERNAL_TOKEN=" .env | cut -d= -f2)   && PT=$(grep -E "^DEPLOY_PLATFORM_TOKEN=" .env | cut -d= -f2)   && CD=$(grep -E "^CONTROL_DOMAIN=" .env | cut -d= -f2)   && curl -s -H "x-internal-token: $TOK" -H "x-platform-token: $PT"        "https://${CD}/internal/agent/health"'
+```
+
+`{"ok":true,...,"slots":2}` means a check can run. `ok:false` carries the
+reason, and "the worker is not reachable" and "Docker is down" are kept
+apart on purpose — they have completely different fixes.

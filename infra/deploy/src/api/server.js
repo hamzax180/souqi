@@ -159,6 +159,55 @@ app.get("/capacity", requireUser, async (req, res, next) => {
  * possible route to a Let-s-Encrypt rate limit that would then block real
  * customers. 200 means issue; anything else means refuse.
  */
+/* ── the code agent's build verifier, proxied ─────────────────────
+   The verifier itself lives in the WORKER, because the worker is the
+   only thing on the platform with a Docker socket. But the worker's
+   internal server is not published — nothing outside the platform
+   network can reach it — and the agent that wants a build checked runs
+   on Vercel, which is very much outside.
+
+   So the api forwards, exactly as it already does for runtime logs and
+   the database tools. Internal token on both hops; the caller's is
+   checked here, and the api presents its own going on.
+   ------------------------------------------------------------------ */
+async function toWorker(path, init) {
+  return fetch(cfg.workerUrl + path, Object.assign({
+    headers: { "x-internal-token": cfg.internalToken, "Content-Type": "application/json" },
+    signal: AbortSignal.timeout(200000)
+  }, init || {}));
+}
+
+app.get("/internal/agent/health", auth.requireInternal, async (req, res) => {
+  try {
+    const r = await toWorker("/internal/agent/health", { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return res.json({ ok: false, reason: "the worker refused the request (HTTP " + r.status + ")" });
+    res.json(await r.json());
+  } catch (e) {
+    /* "Cannot reach the worker" and "the worker says Docker is down"
+       have completely different fixes, so they are never collapsed into
+       one answer here. */
+    res.json({ ok: false, reason: "the worker is not reachable — " + (e && e.message) });
+  }
+});
+
+app.post("/internal/agent/check", auth.requireInternal, express.json({ limit: "24mb" }), async (req, res) => {
+  try {
+    /* A build is minutes, not milliseconds, and the timeout has to be
+       longer than the sandbox's own or the api gives up on a check that
+       is still running and the caller retries it into a second slot. */
+    const r = await toWorker("/internal/agent/check", {
+      method: "POST", body: JSON.stringify(req.body || {})
+    });
+    const text = await r.text();
+    res.status(r.status).type("application/json").send(text);
+  } catch (e) {
+    res.status(503).json({
+      ok: false, infra: true, attested: false,
+      reason: "the build service is not reachable — " + (e && e.message)
+    });
+  }
+});
+
 app.get("/internal/tls-ask", auth.requireInternal, async (req, res) => {
   const domain = String(req.query.domain || "").toLowerCase();
   if (!domain) return res.status(400).end();

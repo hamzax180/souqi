@@ -38,7 +38,17 @@ function createVerifier({ url, token, fetchImpl = globalThis.fetch }) {
         const base = endpoint.href.endsWith("/") ? endpoint.href : endpoint.href + "/";
         const response = await fetchImpl(new URL(String(path).replace(/^\//, ""), base), {
             method: body ? "POST" : "GET", redirect: "error", signal,
-            headers: { "x-internal-token": token, "Content-Type": "application/json" },
+            /* TWO tokens, because there are two gates guarding different
+               things. The deploy plane's control hostname is fenced app-wide
+               by x-platform-token (auth.js requirePlatformToken) before any
+               route is reached; the verifier route is then fenced by
+               x-internal-token. Sending only the second gets a 401 from the
+               hostname gate and never reaches the route — which is exactly
+               what happened the first time this was pointed at production.
+      
+               DEPLOY_PLATFORM_TOKEN is the variable lib/deployplane.js
+               already uses for the same hop, so there is one name for it. */
+            headers: Object.assign({ "x-internal-token": token, "Content-Type": "application/json" }, process.env.DEPLOY_PLATFORM_TOKEN ? { "x-platform-token": process.env.DEPLOY_PLATFORM_TOKEN } : {}),
             body: body ? JSON.stringify(body) : undefined
         });
         if (!response.ok)
