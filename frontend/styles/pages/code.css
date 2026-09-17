@@ -760,25 +760,56 @@
      explained them — and the list is a receipt, not the point of the turn.
      max-content keeps it exactly as wide as its longest path. */
   .ag-card{margin:0 0 16px 35px;background:var(--card);border:1px solid var(--line);
-    border-radius:12px;padding:4px 4px 5px;
-    width:max-content;max-width:100%}
+    border-radius:12px;padding:0 0 4px;
+    width:max-content;max-width:100%;min-width:min(420px,100%)}
+  /* A HEADING, AND A RULE UNDER IT.
+     The card began straight into the list, so the size of a change was
+     something you worked out by counting rows. It says how many now, and
+     whether they were written or changed, before you read any of them.
+     min-width above is what stops a one-file card from shrinking to the
+     width of its own filename and leaving the heading wrapped. */
+  .ag-card-top{display:flex;align-items:center;gap:12px;
+    padding:9px 12px 8px;border-bottom:1px solid var(--line)}
+  .ag-card-top .ttl{font-size:.8rem;font-weight:600;color:var(--ink);
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ag-card-view{margin-inline-start:auto;flex:none;cursor:pointer;
+    border:1px solid var(--line);background:var(--paper);color:var(--ink-2);
+    border-radius:7px;padding:3px 9px;font:inherit;font-size:.72rem;font-weight:500;
+    transition:background .18s,border-color .18s,color .18s}
+  .ag-card-view:hover{background:var(--paper-2);border-color:var(--line-hover);color:var(--ink)}
   /* ONE ROW PER FILE, WITH WHAT IT COST.
      These were pills carrying a path and nothing else, so a one-word copy
      fix and a rewritten component were the same object on screen — a wrapped
      hedge of identical grey lozenges you had to read word by word to find
      anything in. A build is a list of changes, and the thing that makes a
      list of changes scannable is the number beside each line. */
-  .ag-card .files{display:flex;flex-direction:column;gap:0;margin:0 0 4px}
-  .ag-file{display:flex;align-items:center;gap:14px;padding:1px 8px;border-radius:6px;
-    font-size:.7rem;line-height:1.62;
+  .ag-card .files{display:flex;flex-direction:column;gap:0;margin:4px 4px 0}
+  .ag-file{display:flex;align-items:center;gap:10px;padding:3px 8px;border-radius:6px;
+    font-size:.72rem;line-height:1.7;
     font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
     min-width:0}
   .ag-file:hover{background:var(--paper-2)}
+  /* The glyph that says "this is a file of code", at the weight of the text
+     rather than competing with it. */
+  .ag-file .ic{flex:none;width:13px;height:13px;color:var(--mut);opacity:.85;display:block}
+  .ag-file .ic svg{width:100%;height:100%;display:block}
+  /* Last column, and always there: a chevron that appears only on some rows
+     makes the counts beside it stop lining up. */
+  .ag-file .chev{flex:none;width:13px;height:13px;color:var(--mut);opacity:.5;display:block}
+  .ag-file .chev svg{width:100%;height:100%;display:block}
   /* The directory is context and the filename is the answer, so they are not
      the same colour. At a glance you read a column of filenames; the paths
      are there when you need to tell two Header.tsx apart. */
-  .ag-file .p{min-width:0;flex:1 1 auto;overflow-wrap:anywhere;color:var(--mut)}
-  .ag-file .p b{font-weight:600;color:var(--ink-2)}
+  .ag-file .p{min-width:0;flex:1 1 auto;display:flex;align-items:baseline;gap:7px;
+    overflow:hidden;color:var(--mut)}
+  .ag-file .p b{font-weight:500;color:var(--ink);white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis}
+  /* Folded away until asked for. The filename is what the column is FOR;
+     the directory only matters when two files share a name, which is
+     exactly when the button in the heading earns its place. */
+  .ag-file .p .dir{display:none;flex:none;font-size:.66rem;opacity:.75;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ag-card.paths-open .ag-file .p .dir{display:block}
   /* Fixed width and tabular figures so the counts form a column that can be
      compared down the list rather than a ragged edge that cannot. */
   .ag-file .d{flex:none;display:flex;justify-content:flex-end;gap:6px;min-width:62px;

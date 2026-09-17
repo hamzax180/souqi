@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=7.3">
+<link rel="stylesheet" href="/styles/pages/code.css?v=7.4">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -3291,28 +3291,78 @@
    * alone, and a turn replayed from history has only the names, so the row
    * renders without counts rather than not at all.
    */
+  /* The small chevron on a file row, and the code glyph before its name.
+     Inline SVG rather than a character: "›" renders at a different weight
+     in every font on the three platforms this ships to, and the row is a
+     line of monospace where that difference is obvious. */
+  const IC_FILE_CODE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="m8 8-4 4 4 4"/><path d="m16 8 4 4-4 4"/></svg>';
+  const IC_FILE_CHEV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>';
+
   function renderCard(files, costUsd, stats) {
     const card = el("ag-card");
     const list = el("files");
     const byPath = {};
     (stats || []).forEach((s) => { if (s && s.path) byPath[s.path] = s; });
 
-    (files || []).forEach((f) => {
-      const path = typeof f === "string" ? f : (f && f.path) || "";
-      if (!path) return;
+    const paths = (files || [])
+      .map((f) => (typeof f === "string" ? f : (f && f.path) || ""))
+      .filter(Boolean);
+
+    /* A heading that counts, because the card used to start straight into
+       a list and you had to count the rows yourself to know how big the
+       change was. "Created" when every file is new, "Edited" otherwise —
+       a build that touched one existing file among nine new ones is an
+       edit, and calling it a creation would be the less true of the two. */
+    const newOnes = paths.filter((p) => byPath[p] && byPath[p].isNew).length;
+    const verb = newOnes === paths.length && paths.length ? "Created" : "Edited";
+    const top = el("ag-card-top");
+    const ttl = document.createElement("span");
+    ttl.className = "ttl";
+    ttl.textContent = verb + " " + paths.length + " file" + (paths.length === 1 ? "" : "s");
+    top.appendChild(ttl);
+
+    /* Reveals the directory each file sits in. It is NOT a diff: what is
+       stored per file is a pair of counts, not the text that changed, so a
+       button labelled for a diff would be a promise this card cannot keep.
+       Telling two Header.tsx apart is the thing you actually come here
+       for, and that is a path. */
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "ag-card-view";
+    toggle.textContent = "View paths";
+    toggle.addEventListener("click", function () {
+      const open = card.classList.toggle("paths-open");
+      toggle.textContent = open ? "Hide paths" : "View paths";
+    });
+    if (paths.some((p) => p.indexOf("/") >= 0)) top.appendChild(toggle);
+    card.appendChild(top);
+
+    paths.forEach((path) => {
       const row = el("ag-file");
       const cut = path.lastIndexOf("/");
       const dir = cut >= 0 ? path.slice(0, cut + 1) : "";
       const name = cut >= 0 ? path.slice(cut + 1) : path;
 
+      const ic = document.createElement("span");
+      ic.className = "ic";
+      ic.innerHTML = IC_FILE_CODE;
+      row.appendChild(ic);
+
       const p = document.createElement("span");
       p.className = "p";
       // textContent for both halves: a path is model output, and the one
       // thing it must never be is markup.
-      if (dir) p.appendChild(document.createTextNode(dir));
       const b = document.createElement("b");
       b.textContent = name;
       p.appendChild(b);
+      if (dir) {
+        // After the name, not before it: the filename is the answer and the
+        // directory is the footnote, so the column reads as filenames.
+        const d = document.createElement("span");
+        d.className = "dir";
+        d.textContent = dir.replace(/\/$/, "");
+        p.appendChild(d);
+      }
       row.appendChild(p);
 
       const st = byPath[path];
@@ -3340,6 +3390,14 @@
         }
         row.appendChild(d);
       }
+
+      // Always present, so every row ends on the same column whether or
+      // not its counts happen to be there.
+      const chev = document.createElement("span");
+      chev.className = "chev";
+      chev.innerHTML = IC_FILE_CHEV;
+      row.appendChild(chev);
+
       list.appendChild(row);
     });
 
