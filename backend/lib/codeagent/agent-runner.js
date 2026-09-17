@@ -196,8 +196,44 @@ async function executeRun(runId, opts = {}) {
     });
     const effort = (0, model_loop_1.effortFor)(run.effort, run.mode);
     const isPower = effort.tier === "power";
-    const maxTurns = effort.id === "fast" ? 5 : effort.id === "balanced" ? 8 : effort.id === "smart" ? 12 : 16;
+    /* Turns scale with the same ladder rather than a second one written
+       here. EFFORT.rounds is 1/2/3/4 repair passes for the single-shot
+       engine; this loop spends a turn per tool batch, so it gets four
+       turns per round — derived, so the two cannot drift apart the way a
+       hardcoded ternary beside them would. */
+    const maxTurns = Math.max(4, effort.rounds * 4);
+    /* The reply ceiling follows the effort ladder, as a SHARE of the
+       window rather than as the ladder's absolute number.
+  
+       It used to be 2500 here whatever the user chose — "max" got 5000
+       against the ladder's 64000, and "fast" and "balanced" were the same
+       2500 as each other, so the slider moved and almost nothing moved
+       with it. A ceiling that is too low TRUNCATES, and unlike the
+       single-shot engine this loop has no retry-at-double-the-budget to
+       catch it: a write_file whose content ran out mid-file is a broken
+       file nobody is told about.
+  
+       But the ladder's numbers cannot be used raw. EFFORT.maxTokens goes
+       up to 64000 and the configured window is 32768 — reserving the
+       ladder's top for the reply asks for twice the whole window, and
+       client.chat refuses it locally before spending a round trip. So the
+       ladder sets WHERE IN the window the reply sits: its top is 40% of
+       whatever the model actually has, and the rest of the rungs scale
+       from that. Ordering is preserved at any window size, and it is
+       always feasible. */
+    const windowTokens = client.windowFor("json", isPower ? process.env.AI_JSON_POWER_MODEL : undefined);
+    const LADDER_TOP = 64000; // EFFORT's own ceiling; the share is relative to it
+    const MAX_REPLY_SHARE = 0.4;
+    const replyTokens = Math.max(1500, Math.min(effort.maxTokens, Math.floor(windowTokens * MAX_REPLY_SHARE * (effort.maxTokens / LADDER_TOP))));
+    /* Budgets asked BEFORE each call rather than recorded after. A run
+       whose allowance is gone is exactly the run most likely to keep
+       going — a loop that is failing makes more calls, not fewer. */
+    const ceiling = {
+        maxCostUsd: Number(run.context && run.context.maxCostUsd) || 0,
+        maxCalls: maxTurns
+    };
     let totalCostUsd = 0;
+    let calls = 0;
     let messages = [
         {
             role: "system",
@@ -330,7 +366,7 @@ async function executeRun(runId, opts = {}) {
             route: "json",
             tools: toolsForTurn,
             model: isPower ? process.env.AI_JSON_POWER_MODEL : undefined,
-            maxTokens: effort.id === "max" ? 5000 : effort.id === "smart" ? 4000 : 2500,
+            maxTokens: replyTokens,
             temperature: 0.3,
             timeoutMs: 90000
         };
@@ -356,6 +392,18 @@ async function executeRun(runId, opts = {}) {
                 usedTokens: prepared.after.usedTokens, usableTokens: prepared.after.usableTokens
             });
         }
+        const verdict = contextManager.budget.canSpend({ costUsd: totalCostUsd, calls }, ceiling);
+        if (!verdict.ok) {
+            await runStore.appendEvent(runId, "stage", {
+                id: "turn-" + turn, state: "failed", detail: verdict.detail || "This run reached its limit."
+            });
+            await runStore.updateRun(runId, { status: "partial", phase: "budget", latestError: verdict.detail });
+            return {
+                ok: false, stopReason: verdict.reason, reason: verdict.detail,
+                files: currentFiles, costUsd: totalCostUsd
+            };
+        }
+        calls++;
         const aiRes = await client.chat(Object.assign({}, callOpts, { messages }));
         totalCostUsd += aiRes.costUsd || 0;
         if (!aiRes.ok) {
