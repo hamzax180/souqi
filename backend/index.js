@@ -4948,12 +4948,40 @@ function getConversationalFallback(prompt, history) {
      Skipped for an approved plan. "add a dark mode?" reads as a question,
      and refusing to build it after the user has approved a plan that says
      exactly that would be the guard working against itself. */
+  /* Resolved BEFORE the guard below, because whether a photo is attached
+     changes what the message means — and this used to be read a hundred
+     lines further down, where the guard had already answered and returned. */
+  const attachedImages = await uploads.listForOwner(
+    Array.isArray(req.body && req.body.imageIds) ? req.body.imageIds : [], owner
+  );
+  const imagesBlock = buildImagesBlock(attachedImages);
+
   if (!isBuildMode && !approval.ok) {
     const isConv = agentRunner.isQuestionOrConversational(prompt);
     const quick = quickAssess(prompt);
     const isNoiseOrGreeting = quick && !quick.clear;
 
-    if (isConv || isNoiseOrGreeting) {
+    /* AN ATTACHED PHOTO IS INTENT.
+
+       "can you see this pic make it one of the slides" starts with "can
+       you", which rule 7 of the classifier reads as a question about our
+       capabilities — correctly, on the text alone. It cannot see that a
+       file came with it. So the message was answered by the chat branch,
+       which never receives the images, and the reply was "I don't see the
+       pic on my end" about a photo sitting on screen directly above it.
+
+       Nobody attaches a file to make small talk. The one exception is
+       being told to hold off — "wait, don't build yet" with a logo
+       attached still means wait — so that class keeps its veto and
+       everything else defers to the attachment.
+
+       A bare greeting is still a greeting, though: two words and a photo
+       is someone showing us something, not commissioning a build. */
+    const words = prompt.split(/\s+/).filter(Boolean).length;
+    const attachmentMeansWork = attachedImages.length > 0 &&
+      words >= 3 && !agentRunner.isStopOrCorrection(prompt);
+
+    if (!attachmentMeansWork && (isConv || isNoiseOrGreeting)) {
       let reply = "";
       /* What the answer actually cost. This branch calls the model like
          any other and the provider returns a usage block; it was simply
@@ -4980,7 +5008,17 @@ function getConversationalFallback(prompt, history) {
                 "- If they make a casual remark or compliment ('you know when to build now, wow', 'cool', 'nice'): respond warmly like a teammate.\n" +
                 "- If they type an accidental keystroke or typo (like 's', 'asdf'): acknowledge it playfully with good humor ('Looks like an accidental keystroke! What's on your mind?').\n" +
                 "- If they say 'i didn't say build yet', 'wait', or 'stop': warmly apologize, reassure them you are waiting for their instructions, and ask what they'd like to plan or discuss.\n" +
-                "- Keep your answer short (1 to 3 sentences). Never write code blocks or markdown backticks."
+                "- Keep your answer short (1 to 3 sentences). Never write code blocks or markdown backticks." +
+                /* The photo, described. This branch used to be handed the
+                   text and nothing else, so when someone attached an image
+                   and asked about it the honest answer the model could give
+                   was "I don't see the pic on my end" — while the thumbnail
+                   sat on screen immediately above the reply. It was not
+                   hallucinating; it had genuinely been shown nothing. */
+                (imagesBlock
+                  ? "\n\nThe user HAS attached the following image(s) to this message. You can see them — " +
+                    "never say you cannot, and never ask them to upload again.\n" + imagesBlock
+                  : "")
             }
           ].concat(
             history.slice(-6).map(t => ({
@@ -5090,11 +5128,6 @@ function getConversationalFallback(prompt, history) {
   }
 
   const effort = effortFor(req.body && req.body.effort, buildMode);
-
-  const attachedImages = await uploads.listForOwner(
-    Array.isArray(req.body && req.body.imageIds) ? req.body.imageIds : [], owner
-  );
-  const imagesBlock = buildImagesBlock(attachedImages);
 
   /* Reap stale runs BEFORE createRun can be refused by the single-active
      constraint.

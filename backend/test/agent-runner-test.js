@@ -432,6 +432,37 @@ async function check(name, fn) {
     }
   });
 
+  /* An attached photo is intent, and the route needs exactly one question
+     answered to know when it is not: is the user telling us to hold off?
+
+     "can you see this pic make it one of the slides" is read as a question
+     about our capabilities by rule 7, correctly, on the text alone — the
+     classifier cannot see that a file came with it. The route overrides it
+     when there is an attachment, EXCEPT for this class, because "wait,
+     don't build yet" with a logo attached still means wait. */
+  await check("isStopOrCorrection isolates 'hold off' from every other kind of chat", async () => {
+    const holdOff = [
+      "wait", "hold on", "stop", "not yet", "i didnt say build yet",
+      "dont build", "don't touch that", "i didn't ask for that", "no wait"
+    ];
+    for (const prompt of holdOff) {
+      assert.strictEqual(agentRunner.isStopOrCorrection(prompt), true,
+        `${prompt} must keep its veto over an attachment`);
+    }
+
+    // Conversational, but NOT telling us to hold off — so an attachment
+    // is allowed to carry the turn into a real build.
+    const notHoldOff = [
+      "can you see this pic make it the one of the slides",
+      "what do you think of this", "how are you", "idk", "nice", "asdf",
+      "use this as the hero image", "make this the logo"
+    ];
+    for (const prompt of notHoldOff) {
+      assert.strictEqual(agentRunner.isStopOrCorrection(prompt), false,
+        `${prompt} is not a hold-off and must not veto an attachment`);
+    }
+  });
+
   /* The four below are the tests that were missing when the durable
      worker shipped. worker-service built a finalizer, passed it in opts,
      and executeRun never called it — so a worker run marked itself

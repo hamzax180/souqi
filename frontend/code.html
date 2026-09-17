@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=7.2">
+<link rel="stylesheet" href="/styles/pages/code.css?v=7.3">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -2276,6 +2276,67 @@
   // Delay is capped so a long paragraph finishes revealing in well under a
   // second rather than making the reader wait through 40 words at 16ms
   // each — everything past the cap arrives together on the last beat.
+  /* Text that arrives in lumps, shown as if it were being written.
+
+     The narration streams as assistant_delta, but the server coalesces it
+     on a 600ms timer — so appending it straight to the element made the
+     paragraph land in four or five blocks, each one a jump. The final
+     reply had a word-by-word reveal (revealWords, .rv-w) and the running
+     narration had nothing, which is why one animated and the other did
+     not.
+
+     So the text goes into a queue and is drained a word at a time. The
+     pace is set by how much is waiting rather than by a fixed delay: the
+     queue is always spread over the next ~500ms, which is the interval
+     the next lump arrives in, so it keeps up with a fast model without
+     racing ahead of a slow one and leaving the element empty.
+
+     One span per word, the same shape and the same keyframes the reply
+     already uses — a paragraph is ~100 nodes, which is what revealWords
+     has always produced. */
+  const DRAIN_FRAMES = 30;                 // ~500ms at 60fps
+
+  function typerFor(el) {
+    if (!el.__typer) el.__typer = { queue: [], raf: 0 };
+    return el.__typer;
+  }
+
+  function appendWord(el, word) {
+    if (/^\s+$/.test(word)) { el.appendChild(document.createTextNode(word)); return; }
+    const span = document.createElement("span");
+    span.className = "rv-w";
+    span.textContent = word;
+    el.appendChild(span);
+  }
+
+  function typeInto(el, text) {
+    const t = typerFor(el);
+    // Split on whitespace but KEEP it, or the paragraph loses its spaces.
+    for (const part of String(text).split(/(\s+)/)) if (part) t.queue.push(part);
+    if (t.raf) return;
+
+    const step = function () {
+      const take = Math.max(1, Math.ceil(t.queue.length / DRAIN_FRAMES));
+      for (let i = 0; i < take && t.queue.length; i++) appendWord(el, t.queue.shift());
+      toBottom();
+      t.raf = t.queue.length ? requestAnimationFrame(step) : 0;
+    };
+    /* Reduced motion, a restore, or a hidden tab: rAF never fires in the
+       last case, and a paragraph that never appears is worse than one
+       that appears at once. */
+    if (agRestoreHost || document.hidden ||
+        matchMedia("(prefers-reduced-motion: reduce)").matches) { flushTyper(el); return; }
+    t.raf = requestAnimationFrame(step);
+  }
+
+  /** Everything still queued, now — the turn ended or the block closed. */
+  function flushTyper(el) {
+    const t = el && el.__typer;
+    if (!t) return;
+    if (t.raf) { cancelAnimationFrame(t.raf); t.raf = 0; }
+    while (t.queue.length) appendWord(el, t.queue.shift());
+  }
+
   function revealWords(container) {
     // Rebuilding history is not the agent speaking; it already spoke.
     if (agRestoreHost) return;
@@ -2534,9 +2595,23 @@
         out.push({ tokens: [tText(/fail|error/i.test(String(p.detail || "")) ? "The build did not compile" : "Verified the build")] });
         continue;
       }
-      if (p.state === "start" && p.detail) out.push({ tokens: [tText(p.detail)] });
+      /* The preamble is dropped here too, the same way the live panel
+         drops it — a replayed turn has to read like the turn that was
+         watched, or the transcript and the run disagree about what
+         happened. Marked rather than skipped outright, because a run that
+         never got as far as saying anything should still show why. */
+      if (p.state === "start" && p.detail) {
+        out.push({ tokens: [tText(p.detail)], preamble: id === "planning" || id === "building" });
+      }
     }
     flush();
+    /* Whatever the model said supersedes the placeholder that stood in
+       for it. Only the FIRST prose counts: a later paragraph is the turn
+       continuing, not the answer arriving. */
+    const firstProse = out.findIndex((s) => s && s.prose !== undefined);
+    if (firstProse > 0) {
+      for (let i = 0; i < firstProse; i++) if (out[i] && out[i].preamble) { out.splice(i, 1); break; }
+    }
     return out;
   }
 
@@ -3058,7 +3133,12 @@
           row.classList.remove("busy");
           row.classList.add("failed");
           if (msg) row.firstChild.textContent = msg;
-        }
+        },
+        /* Taken back out of the panel entirely. Only the preamble uses
+           this: every other row is a record of something that happened
+           and has to stay, whereas "Analyzing requirements…" is a
+           placeholder for an answer that has now arrived. */
+        drop() { if (row.parentNode) row.parentNode.removeChild(row); settled = true; }
       };
     }
 
@@ -3071,6 +3151,13 @@
        claiming it is running tools. */
     const t0 = Date.now();
     let saidEl = null;
+    let preambleRow = null;
+    function dropPreamble() {
+      if (!preambleRow) return;
+      const r = preambleRow;
+      preambleRow = null;              // cleared first: drop() must not re-enter
+      try { r.drop(); } catch (e) { /* a row already gone is the wanted state */ }
+    }
     let phase = "Thinking…";
     let phaseAt = t0;
     let stopped = false;
@@ -3105,7 +3192,10 @@
           // not a step settling, and it should track the work live.
           set: function (text, finished, stats) { sub.set(text, finished, stats); },
           done: function (next) { queueSettle(function () { sub.done(next); }); },
-          fail: function (msg) { queueSettle(function () { sub.fail(msg); }); }
+          fail: function (msg) { queueSettle(function () { sub.fail(msg); }); },
+          /* Marks this row as standing in for an answer that has not
+             arrived. say() removes it the moment one does. */
+          markPreamble: function () { preambleRow = sub; }
         };
       },
       /* The agent's own words, streamed in and kept.
@@ -3118,7 +3208,7 @@
          narration ran into one block — "...the right entry point.Empty
          scaffold — good" — because the row that used to separate them is
          now created lazily and may not exist yet. */
-      breakSay() { saidEl = null; },
+      breakSay() { if (saidEl) flushTyper(saidEl); saidEl = null; },
       say(text) {
         if (stopped || !text) return;
         if (!saidEl || saidEl !== stepsEl.lastChild) {
@@ -3126,7 +3216,15 @@
           saidEl.className = "th2-said";
           stepsEl.appendChild(saidEl);
         }
-        saidEl.textContent += text;
+        /* The preamble goes when the real answer starts.
+
+           "Analyzing requirements…" is a placeholder for the seconds
+           before the model says anything. It arrives as a stage with no
+           matching "done", so once it had served its purpose it simply
+           stayed — sitting above the paragraph that replaced it for the
+           rest of the turn, and into the transcript afterwards. */
+        dropPreamble();
+        typeInto(saidEl, text);
         toBottom();
       },
       /** Said by an event: "Running tools…", "Waiting for Souqi…". */
@@ -4208,7 +4306,17 @@
         return;
       }
 
-      if (state === "start") { handles[id] = thinkPanel.addStep(detail || STAGE_LABEL[id] || id); return; }
+      if (state === "start") {
+        handles[id] = thinkPanel.addStep(detail || STAGE_LABEL[id] || id);
+        /* "Analyzing requirements…" / "Building components…" are the only
+           stages that stand in for an answer rather than reporting work:
+           they arrive at the top of the run with no matching "done", so
+           they used to sit above the paragraph that superseded them for
+           the rest of the turn. Marked here, removed by the first words
+           the model actually says. */
+        if (id === "planning" || id === "building") handles[id].markPreamble();
+        return;
+      }
       if (handles[id]) { handles[id].done(detail); return; }
       // round-N events only ever arrive as "done" — no matching "start" was
       // sent (proposeWithRepair only reports once a round's build finished),

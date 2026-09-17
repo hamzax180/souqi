@@ -186,6 +186,25 @@ export function reportCheckResult(runId: string, checkResult: any): boolean {
  * indecision, acknowledgment, or conversational remark rather than an imperative
  * directive to build or edit code.
  */
+/* "wait", "don't build yet", "i didn't say build" — the user telling us
+   NOT to act. Hoisted out of isQuestionOrConversational so the route can
+   ask this one question on its own, because it is the only class of
+   conversational message that should still win when a file is attached. */
+const STOP_OR_CORRECTION = /\b(didn'?t say|don'?t build|don'?t touch|dont touch|never said|not yet|wait|hold on|stop|not now|why are you building|i didn'?t ask|i haven'?t|no wait|dont build|tell you build|when i tell|only when i|build when i|build after|tell you to build|who said build|did i say build|before i told you|before you were asked|without asking)\b/i;
+
+/**
+ * Is the user telling us to hold off?
+ *
+ * Attaching a photo is a deliberate act and almost always means "use
+ * this" — so an attachment overrides the question and greeting classes
+ * below. It must NOT override this one: "wait, don't build yet" with a
+ * logo attached still means wait.
+ */
+export function isStopOrCorrection(prompt: string): boolean {
+  if (!prompt || typeof prompt !== "string") return false;
+  return STOP_OR_CORRECTION.test(prompt.trim().toLowerCase());
+}
+
 export function isQuestionOrConversational(prompt: string): boolean {
   if (!prompt || typeof prompt !== "string") return false;
   const p = prompt.trim().toLowerCase();
@@ -199,8 +218,7 @@ export function isQuestionOrConversational(prompt: string): boolean {
 
   // 2. Disclaimers, corrections, or telling the agent when to build or not to build:
   // e.g. "build when i tell you build", "i didnt say build yet", "don't build yet", "wait", "hold on", "not yet", "stop"
-  const stopOrCorrection = /\b(didn'?t say|don'?t build|don'?t touch|dont touch|never said|not yet|wait|hold on|stop|not now|why are you building|i didn'?t ask|i haven'?t|no wait|dont build|tell you build|when i tell|only when i|build when i|build after|tell you to build|who said build|did i say build|before i told you|before you were asked|without asking)\b/i;
-  if (stopOrCorrection.test(p)) return true;
+  if (STOP_OR_CORRECTION.test(p)) return true;
 
   // 3. Indecision, lack of ideas, or asking for suggestions:
   const indecision = /\b(idk|i don'?t know|not sure|dunno|no idea|have no idea|undecided|any ideas?|suggest something|recommend something|help me decide|what should i build|what do you suggest|give me ideas)\b/i;
