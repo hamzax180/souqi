@@ -172,6 +172,20 @@
      width the conversation could have had. */
   :root{--ag-inset:clamp(20px,2.4vw,28px)}
   @media (max-width:640px){ :root{--ag-inset:12px} }
+  /* How long the composer takes to travel from the middle of the new-chat
+     screen down to the conversation, and the curve it travels on.
+
+     Declared once because five things are choreographed against it — the
+     bar itself, the hero clones dissolving upward, the first message
+     arriving underneath, and two JS timeouts that tear the flight down.
+     They were five separate numbers and the JS ones were authoritative,
+     so editing the stylesheet alone changed nothing visible. code.html
+     reads these off the element rather than repeating them.
+
+     Slow on purpose. At .62s this was over before the eye had followed
+     it, which reads as the layout snapping and something sliding after
+     the fact rather than as one thing being carried to a new place. */
+  .ag{--ag-travel:1.15s;--ag-travel-ease:cubic-bezier(.34,.05,.16,1)}
   .ag{text-align:left;display:flex;flex-direction:column;min-width:0;min-height:0;height:100%;max-height:100%;
     padding:0;border-right:none;
     flex:1 1 100%;transition:flex-basis .4s var(--ease);
@@ -819,15 +833,22 @@
        ran a filter over three full-width clones every frame, which is the
        most expensive thing a phone could have been asked to do during the
        one moment the composer needs a clear 60fps. A slightly larger rise
-       and a scale down read as depth without it. */
-    transition:opacity .44s ease-out,
-               transform .66s cubic-bezier(.32,.72,0,1)}
+       and a scale down read as depth without it.
+
+       Paced off the same travel as the bar: the greeting should still be
+       on its way out while the composer is still on its way down, or the
+       screen empties first and the bar arrives into a room that has
+       already been cleared. */
+    transition:opacity calc(var(--ag-travel) * .68) ease-out,
+               transform var(--ag-travel) var(--ag-travel-ease)}
   .ag-hero-ghost.out{opacity:0;transform:translateY(-30px) scale(.965)}
   /* Staggered: the greeting goes first, the tiles behind it, the examples
      last. Three things leaving on the same frame is a flicker; leaving in
-     the order you read them is a movement. */
-  .ag-hero-ghost:nth-of-type(2){transition-delay:.05s}
-  .ag-hero-ghost:nth-of-type(3){transition-delay:.10s}
+     the order you read them is a movement. The gap widens with the travel
+     for the same reason the travel widened — at 50ms over a second-long
+     move the three of them read as one. */
+  .ag-hero-ghost:nth-of-type(2){transition-delay:calc(var(--ag-travel) * .08)}
+  .ag-hero-ghost:nth-of-type(3){transition-delay:calc(var(--ag-travel) * .16)}
 
   /* The first line of the conversation, arriving under the composer tail. */
   @keyframes agFirstIn{
@@ -836,8 +857,12 @@
   }
   /* Same curve and a delay that puts it mid-flight, so it is already settling
      as the composer lands rather than starting afterwards. No blur here
-     either: it sits directly behind the bar that has to stay smooth. */
-  .ag-user.ag-first-in{animation:agFirstIn .5s cubic-bezier(.32,.72,0,1) .14s both}
+     either: it sits directly behind the bar that has to stay smooth.
+     Both numbers ride the travel, or a fixed .14s that was mid-flight at
+     .62s becomes the opening eighth of a 1.15s one. */
+  .ag-user.ag-first-in{
+    animation:agFirstIn calc(var(--ag-travel) * .55) var(--ag-travel-ease)
+              calc(var(--ag-travel) * .38) both}
   @media (prefers-reduced-motion:reduce){
     .ag-hero-ghost{display:none}
     .ag-user.ag-first-in{animation:none}
@@ -856,13 +881,25 @@
 
        The curve is gentler than the expo-out it replaces: that one spent
        most of its distance in the first few frames and then crawled, which
-       reads as a lurch followed by a wait rather than as one movement. */
+       reads as a lurch followed by a wait rather than as one movement.
+       Gentler again now that the travel is nearly twice as long — over
+       1.15s an out-curve that front-loads its distance leaves most of the
+       flight looking stationary, so this one eases in as well as out. */
     box-shadow:0 22px 50px -26px rgba(0,0,0,.45);
-    transition:transform .62s cubic-bezier(.32,.72,0,1)}
+    transition:transform var(--ag-travel) var(--ag-travel-ease)}
   .ag-composer.ag-flipping .ag-box{
     /* The glow the box carries is also a shadow; holding it still while the
-       bar travels keeps the whole thing to one composited layer. */
-    transition:none !important}
+       bar travels keeps the whole thing to one composited layer.
+
+       Except the glass, which has to arrive DURING the flight or it snaps
+       on at the first frame and the box changes material while it is still
+       moving. background and backdrop-filter are not shadows — they cost a
+       composite, not a repaint of a blurred rectangle on every frame, which
+       is the thing the rule above exists to prevent. The shadows stay still. */
+    transition:background var(--ag-travel) var(--ag-travel-ease),
+               -webkit-backdrop-filter var(--ag-travel) var(--ag-travel-ease),
+               backdrop-filter var(--ag-travel) var(--ag-travel-ease),
+               border-color var(--ag-travel) var(--ag-travel-ease) !important}
   @media (prefers-reduced-motion:reduce){
     .ag-composer.ag-flipping{transition:none;box-shadow:none}
   }
@@ -931,6 +968,19 @@
     -webkit-backdrop-filter:blur(16px) saturate(1.8);
     backdrop-filter:blur(16px) saturate(1.8);
     border:1px solid rgba(255,255,255,.7);
+    /* The glass ARRIVES; it does not appear.
+
+       This has to live here rather than on .ag-flipping. is-new comes off
+       first and flipComposerToBottom measures straight afterwards, and that
+       measurement forces the style recalc — so the box was already glass
+       one frame before the class that was supposed to be easing it got
+       added, and the material changed in a snap while the bar then slid.
+       A transition is governed by the style in effect AFTER the change,
+       which is this rule. */
+    transition:background var(--ag-travel) var(--ag-travel-ease),
+               -webkit-backdrop-filter var(--ag-travel) var(--ag-travel-ease),
+               backdrop-filter var(--ag-travel) var(--ag-travel-ease),
+               border-color var(--ag-travel) var(--ag-travel-ease);
     /* Lighting, in the order it reads:
          1px hairline   — a defined edge against moving text, which a blur
                           alone never gives you;
@@ -961,12 +1011,23 @@
   .ag:has(#agLog > *:not(.ag-empty)) .ag-box::before{
     opacity:0;
     animation:none;
+    /* Fades out over the travel, with the fill fading in. Cut dead, the
+       lamp went out a frame before the box it was lighting started to
+       move, which is the one moment the hero still has to look lit. */
+    transition:opacity var(--ag-travel) ease-out;
   }
   .ag:not(.is-new) .ag-box:focus-within,
   .ag.has-convo .ag-box:focus-within,
   .ag:has(#agLog > *:not(.ag-empty)) .ag-box:focus-within{
     /* Focus thickens the light, not the geometry — same rule the hero
-       state already follows, so nothing shifts under the cursor. */
+       state already follows, so nothing shifts under the cursor.
+       On its own clock: the fill above eases over the length of the
+       composer's travel, and a focus that took a second to register would
+       feel broken. Clicking into the box is not a journey. */
+    transition:background var(--dur-chill) ease,
+               -webkit-backdrop-filter var(--dur-chill) ease,
+               backdrop-filter var(--dur-chill) ease,
+               border-color var(--dur-chill) ease;
     background:color-mix(in srgb,var(--paper) 64%,transparent);
     box-shadow:
       0 0 0 1px rgba(23,23,23,.07),

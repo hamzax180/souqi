@@ -17,7 +17,7 @@
 </script>
 <link rel="stylesheet" href="/styles/tokens.css">
 <link rel="stylesheet" href="/styles/base.css">
-<link rel="stylesheet" href="/styles/pages/home.css">
+<link rel="stylesheet" href="/styles/pages/home.css?v=1.1">
 </head>
 <body>
 
@@ -743,6 +743,10 @@
     // sitting in the page with nothing driving it ever since.
     send.disabled = true;
     ta.blur();
+    /* The box turns to glass on the way out, so the composer the builder
+       opens with is the same material as the one you pressed send on —
+       see .ag-box.is-sent. */
+    if (bhBox) bhBox.classList.add("is-sent");
     const boot = $("bhBoot");
     boot.hidden = false;
 

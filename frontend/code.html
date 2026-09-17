@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=6.2">
+<link rel="stylesheet" href="/styles/pages/code.css?v=6.3">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -1771,6 +1771,26 @@
    * Upward, against the composer's descent. Opposing motion is what makes the
    * pair read as one choreographed change; both sliding the same way would
    * just look like the page scrolled. */
+  /* The travel, read off the stylesheet rather than repeated here.
+
+     --ag-travel and --ag-travel-ease live on .ag in code.css, where the
+     bar, the hero clones and the first message are all paced against
+     them. The durations used to be written out again in this file — and
+     because these set element.style, THIS copy was the one that ran, so
+     changing the stylesheet moved everything except the thing you were
+     looking at. Falls back to the old numbers if the sheet has not
+     applied yet, which is only ever a cold cache. */
+  function travelMs() {
+    const v = getComputedStyle(agSection).getPropertyValue("--ag-travel").trim();
+    const n = parseFloat(v);
+    if (!n) return 1150;
+    return /ms$/.test(v) ? n : n * 1000;
+  }
+  function travelEase() {
+    return getComputedStyle(agSection).getPropertyValue("--ag-travel-ease").trim()
+      || "cubic-bezier(.34,.05,.16,1)";
+  }
+
   function dissolveHero(nodes) {
     if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     nodes.forEach(function (n) {
@@ -1786,7 +1806,9 @@
         "width:" + r.width + "px;height:" + r.height + "px;margin:0;";
       document.body.appendChild(ghost);
       requestAnimationFrame(function () { ghost.classList.add("out"); });
-      setTimeout(function () { ghost.remove(); }, 700);
+      // Outlives the transition plus the last stagger delay, or a clone is
+      // pulled out of the page while it is still fading.
+      setTimeout(function () { ghost.remove(); }, travelMs() * 1.3 + 120);
     });
   }
 
@@ -1813,7 +1835,7 @@
     el.classList.add("ag-flipping");
 
     requestAnimationFrame(function () {
-      el.style.transition = "transform .62s cubic-bezier(.32,.72,0,1)";
+      el.style.transition = "transform " + travelMs() + "ms " + travelEase();
       el.style.transform = "translate(0,0) scale(1,1)";
     });
 
@@ -1830,8 +1852,11 @@
        which is why the bar appeared to teleport again. */
     const onEnd = function (e) { if (e.target === el && e.propertyName === "transform") clean(); };
     el.addEventListener("transitionend", onEnd);
-    // transitionend does not fire if the element is re-laid-out mid-flight.
-    setTimeout(clean, 900);
+    /* transitionend does not fire if the element is re-laid-out mid-flight.
+       Has to clear the travel with room to spare — at a fixed 900ms against
+       a 1.15s flight this stopped being a safety net and became the thing
+       that cut the movement short. */
+    setTimeout(clean, travelMs() + 260);
   }
 
   function clearEmpty() {
