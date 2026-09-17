@@ -5185,6 +5185,39 @@ function getConversationalFallback(prompt, history) {
      Same shape as the reportCheckResult crash, from the other direction:
      that one called something that was not there, this one let something
      that was there say no. */
+  /* EVERYTHING THE RUN NEEDS, ON THE RUN.
+
+     The worker rebuilds its options from run.context — the HTTP request
+     is long gone by the time it claims the run — so anything not written
+     here simply does not exist for a durable run. Nothing was written
+     here at all, and the two execution paths were fed from two different
+     places: in process got the images and the conversation straight off
+     req.body, the worker got {}.
+
+     That is both of the "it cannot see" bugs. A photo attached to a
+     durable run never reached the model, which said so; and the model was
+     asked what to do next with no history, so it proposed building a site
+     for a project that already had one.
+
+     One object now, passed to createRun and to executeRun, so the two
+     paths cannot disagree about what the run was given. Bounded because
+     it lives in the run document: the last dozen turns, truncated —
+     buildHistory trims again on its own budget at the other end. */
+  const runContext = {
+    history: (Array.isArray(req.body && req.body.conversation) ? req.body.conversation : [])
+      .slice(-12)
+      .map((t) => ({
+        role: t && t.role === "agent" ? "agent" : "user",
+        kind: (t && t.kind) || "text",
+        body: String((t && t.body) || "").slice(0, 2000)
+      }))
+      .filter((t) => t.body),
+    imagesBlock: imagesBlock || "",
+    // Just enough for the runner's imageUrls and for attaching them to the
+    // project afterwards; the rows themselves stay in `uploads`.
+    attachedImages: attachedImages.map((i) => ({ id: i.id, url: i.url, name: i.name }))
+  };
+
   let run;
   try {
     run = await runStore.createRun({
@@ -5211,6 +5244,7 @@ function getConversationalFallback(prompt, history) {
     idempotencyKey,
     requestHash: idempotencyKey,
     chatId: String((req.body && req.body.chatId) || ""),
+    context: runContext,
     meta: {
       approval: {
         ok: approval.ok,
@@ -5301,11 +5335,11 @@ function getConversationalFallback(prompt, history) {
   }
 
   // Launch the autonomous agent runner in background
-  if (!handedOff) agentRunner.executeRun(run.id, {
-    history: req.body && req.body.conversation,
-    imagesBlock,
-    attachedImages
-  }).then((outcome) => persistRunOutcome(run, project, attachedImages, outcome))
+  /* The SAME object the worker will rebuild from, not a second copy
+     assembled from req.body — that divergence is what let images and
+     history reach one executor and not the other. */
+  if (!handedOff) agentRunner.executeRun(run.id, Object.assign({}, runContext))
+  .then((outcome) => persistRunOutcome(run, project, attachedImages, outcome))
   .catch(async (err) => {
     await runStore.updateRun(run.id, { status: "failed", latestError: err.message });
   });
