@@ -432,6 +432,92 @@ async function check(name, fn) {
     }
   });
 
+  /* The four below are the tests that were missing when the durable
+     worker shipped. worker-service built a finalizer, passed it in opts,
+     and executeRun never called it — so a worker run marked itself
+     succeeded and the project stayed empty. Nothing here exercised the
+     finalizer seam, so eight green tests said the path was fine. */
+
+  function completingStub(summary) {
+    let step = 0;
+    return async () => {
+      step++;
+      const call = step === 1
+        ? { id: "c1", function: { name: "write_file", arguments: JSON.stringify({ path: "src/App.tsx", content: "export default function App(){return <h1>Hi</h1>;}" }) } }
+        : { id: "c2", function: { name: "complete_task", arguments: JSON.stringify({ summary }) } };
+      return { ok: true, json: async () => ({ choices: [{ message: { role: "assistant", tool_calls: [call] }, finish_reason: "tool_calls" }] }) };
+    };
+  }
+
+  function useStub(fetchImpl) {
+    client.init({
+      enabled: true,
+      routes: { json: { baseUrl: "http://mock", key: "mock-key", model: "mock-model" } },
+      fetchImpl
+    });
+  }
+
+  await check("a supplied finalizer owns the terminal transition, not updateRun", async () => {
+    useStub(completingStub("Done."));
+    const run = await runStore.createRun({ projectId: null, owner, prompt: "Build a page", mode: "auto", effort: "smart" });
+
+    const seen = [];
+    const outcome = await agentRunner.executeRun(run.id, {
+      finalize: async (result, status) => { seen.push({ status, stopReason: result.stopReason }); return true; }
+    });
+
+    assert.strictEqual(outcome.ok, true);
+    assert.deepStrictEqual(seen, [{ status: "succeeded", stopReason: "completed" }],
+      "finalize must be called exactly once, with the terminal status");
+    // The whole point: the runner must NOT have written the status itself,
+    // or the finalizer's transaction is bypassed and its fencing with it.
+    const row = await runStore.getRun(run.id, owner);
+    assert.notStrictEqual(row.status, "succeeded",
+      "the runner wrote the terminal status itself, so the finalizer was decoration");
+  });
+
+  await check("a fenced finalizer is reported, not treated as committed", async () => {
+    useStub(completingStub("Done."));
+    const run = await runStore.createRun({ projectId: null, owner, prompt: "Build a page", mode: "auto", effort: "smart" });
+
+    const outcome = await agentRunner.executeRun(run.id, { finalize: async () => false });
+    assert.strictEqual(outcome.fenced, true,
+      "a refused finalize means another worker owns this run; saying nothing lets both claim the result");
+  });
+
+  await check("with no finalizer the runner still settles the run itself", async () => {
+    useStub(completingStub("Done."));
+    const run = await runStore.createRun({ projectId: null, owner, prompt: "Build a page", mode: "auto", effort: "smart" });
+
+    await agentRunner.executeRun(run.id);
+    const row = await runStore.getRun(run.id, owner);
+    assert.strictEqual(row.status, "succeeded");
+    assert.strictEqual(row.stopReason, "completed", "the stop reason must reach the row, not just the return value");
+  });
+
+  await check("a provider refusal is provider_error, and keeps work already written", async () => {
+    // Writes a file, then the provider refuses — a 402 is badRequest, so
+    // it is not retried and the second call is the one that fails.
+    let step = 0;
+    useStub(async () => {
+      step++;
+      if (step === 1) {
+        return { ok: true, json: async () => ({ choices: [{ message: { role: "assistant", tool_calls: [{ id: "c1", function: { name: "write_file", arguments: JSON.stringify({ path: "src/App.tsx", content: "export default function App(){return <h1>Hi</h1>;}" }) } }] }, finish_reason: "tool_calls" }] }) };
+      }
+      return { ok: false, status: 402, text: async () => '{"error":{"message":"Insufficient Balance"}}', json: async () => ({}) };
+    });
+
+    const run = await runStore.createRun({ projectId: null, owner, prompt: "Build a page", mode: "auto", effort: "smart" });
+    const outcome = await agentRunner.executeRun(run.id);
+
+    assert.strictEqual(outcome.stopReason, "provider_error", "no tool failed — the provider refused");
+    assert.ok(outcome.files && outcome.files["src/App.tsx"],
+      "a blip on a later step must not discard the files earlier steps wrote");
+    const row = await runStore.getRun(run.id, owner);
+    assert.strictEqual(row.status, "partial", "work survived, so the run is partial rather than failed");
+    assert.strictEqual(row.stopReason, "provider_error");
+  });
+
   console.log("\n" + (failed === 0 ? "✓ ALL AGENT-RUNNER TESTS PASSED (" + passed + ")" : "✗ " + failed + " FAILED, " + passed + " passed"));
   process.exit(failed === 0 ? 0 : 1);
 })();

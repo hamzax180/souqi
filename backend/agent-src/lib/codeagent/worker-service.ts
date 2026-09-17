@@ -106,6 +106,11 @@ export function createFinalizer({ withTransaction, run, workerId, generation }: 
       }
       await runs.updateOne({ id: run.id }, { $set: {
         status, phase: status, result, costUsd: usd, updatedAt: now,
+        /* Persisted, not just returned. The brief asks for explicit stop
+           reasons and the first worker run ended with none on the row:
+           the runner produced one, handed it back, and the only writer
+           of the document never wrote it down. */
+        stopReason: outcome.stopReason || null,
         latestError: status === "succeeded" ? null : outcome.reason || outcome.summary || status
       }, $unset: { "context.byokEncrypted": "" } }, { session });
       return true;

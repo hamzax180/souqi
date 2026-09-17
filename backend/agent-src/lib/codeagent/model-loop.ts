@@ -2565,7 +2565,7 @@ async function proposeWithClientBuild({ userPrompt, maxRounds, onFiles, onRound,
       if (seenFailures.length < 12) seenFailures.push(entry);
     }
   };
-  const signature = (parts: any) => crypto.createHash("sha256").update(parts.join(" ")).digest("hex");
+  const signature = (parts: any) => crypto.createHash("sha256").update(parts.join("\u0000")).digest("hex");
   /* Captured BEFORE the loop mutates editBase. "Did this project have an
      app when the turn started" is the question, and editBase stops being
      able to answer it the moment round 0 writes a file. */
@@ -2844,7 +2844,7 @@ async function proposeWithClientBuild({ userPrompt, maxRounds, onFiles, onRound,
     /* Did this round move? Writes sorted so the model reordering its tool
        calls does not read as a change, and errors sorted because the
        compiler does not promise an order either. */
-    const writeSig = signature((attempt.calls! || []).map((c) => c.path + " " + c.content).sort());
+    const writeSig = signature((attempt.calls! || []).map((c) => c.path + "\u0000" + c.content).sort());
     const errorSig = signature((build.errors || []).map((e: any) => e.file + ":" + e.line + " " + e.message).sort());
     const sameWrites = priorWriteSig !== null && writeSig === priorWriteSig;
     const sameErrors = priorErrorSig !== null && errorSig === priorErrorSig;

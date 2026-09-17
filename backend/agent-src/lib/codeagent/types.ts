@@ -28,6 +28,10 @@ export type StopReason =
   | "turn_limit"
   | "budget_limit"
   | "tool_error"
+  /* A tool ran and failed is not the same as the provider never
+     answering. Separated after a run died on a 402 and was filed as a
+     tool error, which is the wrong thing to go and look at. */
+  | "provider_error"
   | "runtime_unavailable";
 
 export type ToolName =

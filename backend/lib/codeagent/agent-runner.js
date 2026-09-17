@@ -220,6 +220,36 @@ async function executeRun(runId, opts = {}) {
         isQuestion: !isBuildMode && isQuestionOrConversational(run.prompt)
     });
     const isQuestionTurn = state.mode === "awaiting_question";
+    /* ONE writer for the terminal transition, and which one depends on who
+       called.
+  
+       In process on Vercel there is no finalizer, and the route's own
+       .then() writes the revision and the turn after this returns. Under
+       the durable worker there is one, and it moves the run, the project
+       head, the revision, the turn and the usage record together or not at
+       all — including the lease-fencing check that a bare updateRun skips.
+  
+       This existed and was never called. worker-service built a finalizer,
+       passed it in opts, and nothing here ever read it: every exit wrote
+       its own status with updateRun and returned an outcome the claim loop
+       then discarded. A worker run therefore marked itself `succeeded`
+       while the project stayed empty and the chat showed no reply at all —
+       found by the first build ever driven through the worker, because the
+       in-process path persists elsewhere and hid it. */
+    async function settle(status, patch, outcome) {
+        const stopReason = outcome && outcome.stopReason;
+        if (typeof opts.finalize === "function") {
+            const committed = await opts.finalize(Object.assign({ stopReason }, outcome), status);
+            /* It refuses when the lease has moved on. Saying so is the point:
+               another worker owns this run, and continuing as though we had
+               written the result is how two workers both claim to have. */
+            if (!committed)
+                return Object.assign({}, outcome, { fenced: true });
+            return outcome;
+        }
+        await runStore.updateRun(runId, Object.assign({ status, stopReason }, patch));
+        return outcome;
+    }
     await runStore.updateRun(runId, { status: "running", phase: isQuestionTurn ? "answering" : isBuildMode ? "building" : "planning" });
     await runStore.appendEvent(runId, "stage", {
         id: isBuildMode ? "building" : "planning",
@@ -419,11 +449,10 @@ async function executeRun(runId, opts = {}) {
             Math.round((Date.now() - startedAt) / 1000) + "s. What was built is saved.";
         await runStore.saveCheckpoint(runId, currentFiles, "Deadline reached on step " + turn);
         await runStore.appendEvent(runId, "stage", { id: "turn-" + turn, state: "failed", detail });
-        await runStore.updateRun(runId, { status: "partial", phase: "deadline", latestError: detail });
-        return {
+        return await settle("partial", { phase: "deadline", latestError: detail }, {
             ok: false, stopReason: "budget_limit", reason: detail,
             files: currentFiles, fileStats: diff, summary: finalSummary || detail, costUsd: totalCostUsd
-        };
+        });
     }
     for (let turn = 1; turn <= maxTurns; turn++) {
         // Check for cancellation
@@ -498,11 +527,10 @@ async function executeRun(runId, opts = {}) {
             await runStore.appendEvent(runId, "stage", {
                 id: "turn-" + turn, state: "failed", detail: verdict.detail || "This run reached its limit."
             });
-            await runStore.updateRun(runId, { status: "partial", phase: "budget", latestError: verdict.detail });
-            return {
+            return await settle("partial", { phase: "budget", latestError: verdict.detail }, {
                 ok: false, stopReason: verdict.reason, reason: verdict.detail,
                 files: currentFiles, costUsd: totalCostUsd
-            };
+            });
         }
         calls++;
         /* Retried here, and withheld until the retries are spent. */
@@ -530,9 +558,27 @@ async function executeRun(runId, opts = {}) {
         }
         totalCostUsd += aiRes.costUsd || 0;
         if (!aiRes.ok) {
-            await runStore.updateRun(runId, { status: "failed", latestError: aiRes.reason });
             await runStore.appendEvent(runId, "error", { error: aiRes.reason || "Model call failed" });
-            return { ok: false, reason: aiRes.reason, stopReason: "tool_error" };
+            /* Not "tool_error": no tool ran. The provider refused — a rejected
+               key, an exhausted balance, a model that does not exist — and
+               calling that a tool failure sends whoever reads the run looking
+               in the wrong place. The first worker run died here on a 402 and
+               the row said `tool_error` with no stopReason persisted at all.
+      
+               Work already written is kept and the run is `partial`, because a
+               blip on step five must not throw away four steps of files. Only
+               a run that produced nothing is a flat failure. */
+            const diff = (0, diffstat_1.statsFor)(Object.entries(currentFiles).map(([path, content]) => ({ path, content: String(content) })), turnBaseFiles);
+            const salvaged = diff.length > 0;
+            return await settle(salvaged ? "partial" : "failed", {
+                phase: salvaged ? "provider" : "failed", latestError: aiRes.reason
+            }, {
+                ok: false, reason: aiRes.reason, stopReason: "provider_error",
+                files: salvaged ? currentFiles : undefined,
+                fileStats: salvaged ? diff : [],
+                summary: salvaged ? (finalSummary || aiRes.reason) : undefined,
+                costUsd: totalCostUsd
+            });
         }
         const assistantMsg = aiRes.message || { role: "assistant", content: "" };
         messages.push(assistantMsg);
@@ -856,11 +902,6 @@ async function executeRun(runId, opts = {}) {
     const buildTheme = theme.forBuild({ buildType, seedHex: buildSeedHex });
     fullBundle["tailwind.config.js"] = theme.tailwindConfig(buildTheme);
     fullBundle["__souqi_fonts__"] = theme.fontLinkTag(buildTheme);
-    await runStore.updateRun(runId, {
-        status: "succeeded",
-        costUsd: totalCostUsd,
-        phase: "completed"
-    });
     await runStore.appendEvent(runId, "result", {
         ok: true,
         summary: finalSummary,
@@ -875,7 +916,7 @@ async function executeRun(runId, opts = {}) {
        old shape said ok:true either way and left the caller to guess from
        whether `summary` looked finished. */
     const stopReason = taskCompleted ? "completed" : "turn_limit";
-    return {
+    return await settle("succeeded", { costUsd: totalCostUsd, phase: "completed" }, {
         ok: true,
         stopReason,
         files: currentFiles,
@@ -883,5 +924,5 @@ async function executeRun(runId, opts = {}) {
         summary: finalSummary,
         fileStats: diff,
         costUsd: totalCostUsd
-    };
+    });
 }
