@@ -3916,7 +3916,10 @@
             finalizeThinking();
             resetBootScreen();
             if (data.chitchat) {
-              say('<span class="muted">' + esc(data.chitchat) + '</span>');
+              // The agent talking, so it reads at full contrast. .muted is
+              // for the operational notices around it — publishing, gates,
+              // a cancelled turn — not for what it said.
+              say(esc(data.chitchat));
               return;
             }
             if (data.needsAnswer) {
@@ -4215,7 +4218,8 @@
         if (thinkPanel) thinkPanel.done();
         finalizeThinking();
         resetBootScreen();
-        say('<span class="muted">' + esc(chitchat) + '</span>');
+        // See the note on the other chitchat branch: this is the reply.
+        say(esc(chitchat));
         return;
       }
       if (publishRequested) {
@@ -4307,7 +4311,7 @@
         renderCard(result.files, result.costUsd, result.fileStats);
       }
       if (!/\?\s*$/.test(summaryText) && result.fileStats && result.fileStats.length) {
-        say('<span class="muted">Tell me what to change and I\'ll update it.</span>');
+        say('Tell me what to change and I\'ll update it.');
       }
       if (thinkPanel) thinkPanel.done();
       if (result.fileStats && result.fileStats.length) {
