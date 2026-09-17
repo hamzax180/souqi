@@ -55,6 +55,25 @@ Do not hand-edit these. Each has a script beside it.
 |---|---|
 | `backend/lib/nlu/industry-model.json` | `node scripts/train-classifier.js` (`npm run train:nlu`) |
 | `backend/lib/codeagent/scaffold-data.json` | `node scripts/build-scaffold-data.js` — manual, with no CI check, so it can drift from `scaffold/` |
+| **every `.js` under `backend/lib/codeagent/`**, its `runtimes/`, and `backend/worker/` | `npm run build:agent` — compiled from `backend/agent-src/`. Each carries a banner saying so. |
+
+The agent is written in TypeScript and shipped as JavaScript. The sources are
+`backend/agent-src/`, laid out as a mirror of what they compile into, and
+`.vercelignore` excludes them — only the compiled output deploys, because
+Vercel's bundler transpiles TypeScript it finds in an upload and the comment
+in that file records what happened the last time it did.
+
+The mirror is not tidiness. A relative import resolves against the *source*
+file when `tsc` reads it and against the *emitted* file when node runs it, so
+`../ai/client` has to mean the same thing in both trees. That is also why
+`agent-src/lib/ai/`, `agent-src/lib/design/` and `agent-src/db.d.ts` exist:
+type-only seams describing the hand-written JavaScript the agent calls but
+does not own. A `.d.ts` emits nothing.
+
+`npm run build:agent` refuses to overwrite a file that is not already stamped,
+so naming a source `model-loop.ts` by accident cannot replace someone's work
+with a compiled stub. `npm run typecheck` is the same compile without the
+write.
 
 `backend/lib/block-schema.json` used to be generated too. Its generator read
 `public/js/portals/`, which was deleted with the block editor, so the file is

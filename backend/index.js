@@ -2599,6 +2599,7 @@ const codeAgentUsage = require("./lib/codeagent/usage");
 codeAgentUsage.init({ getMasterDb });
 const runStore = require("./lib/codeagent/run-store");
 const agentRunner = require("./lib/codeagent/agent-runner");
+const agentState = require("./lib/codeagent/agent-state");
 runStore.init({ getMasterDb });
 runStore.ensureIndexes().catch(() => {});
 
@@ -4754,8 +4755,12 @@ app.post("/api/codeagent/runs", codeAgentLimiter, express.json({ limit: "1mb" })
   const rawMode = String((req.body && req.body.mode) || "").toLowerCase();
   // "build" mode skips ALL smart detection — always goes straight to code.
   const isBuildMode = rawMode === "build";
+  /* "plan" is preserved rather than collapsed into "auto". It used to be
+     mapped away right here, so by the time a run reached agent-runner the
+     mode it had been approved under no longer existed — and the confirmed
+     flag that gated it lived on a different route entirely. */
   const buildMode = (rawMode === "power" || (req.body && req.body.thinking)) ? "power"
-    : isBuildMode ? "build" : "auto";
+    : isBuildMode ? "build" : rawMode === "plan" ? "plan" : "auto";
 
   const existingKey = String((req.body && req.body.projectId) || "");
   let project = null;
@@ -4767,6 +4772,20 @@ app.post("/api/codeagent/runs", codeAgentLimiter, express.json({ limit: "1mb" })
     const full = await projects.materialize(project.id);
     baseFiles = (full && full.files) || {};
   }
+
+  /* Checked here because the head revision is part of what an approval is
+     bound to, and it is not known until the project is resolved. A token
+     that is present but does not verify is always refused; a token that is
+     ABSENT is only refused when CODEAGENT_REQUIRE_PLAN_APPROVAL is on,
+     because no shipped client sends one yet and enforcing it today would
+     refuse every plan-mode build. The outcome is recorded on the run either
+     way, so the logs can answer "how often would this have refused?" before
+     anyone turns it on. */
+  const approval = agentState.verifyApproval(req.body && req.body.approvalToken, {
+    sessionKey: agentState.sessionKeyOf(owner),
+    projectId: project ? project.id : "",
+    revisionId: (project && project.headRevision) || "none"
+  });
 
 function getConversationalFallback(prompt, history) {
   const p = String(prompt || "").trim().toLowerCase();
@@ -4836,8 +4855,13 @@ function getConversationalFallback(prompt, history) {
   return defaultReplies[Math.abs(p.length) % defaultReplies.length];
 }
 
-  // --- Smart guard (non-build mode): intercept conversational chatter, questions, indecision, and noise BEFORE creating projects or runs ---
-  if (!isBuildMode) {
+  /* --- Smart guard (non-build mode): intercept conversational chatter,
+     questions, indecision, and noise BEFORE creating projects or runs ---
+
+     Skipped for an approved plan. "add a dark mode?" reads as a question,
+     and refusing to build it after the user has approved a plan that says
+     exactly that would be the guard working against itself. */
+  if (!isBuildMode && !approval.ok) {
     const isConv = agentRunner.isQuestionOrConversational(prompt);
     const quick = quickAssess(prompt);
     const isNoiseOrGreeting = quick && !quick.clear;
@@ -4946,7 +4970,15 @@ function getConversationalFallback(prompt, history) {
     mode: buildMode,
     effort: effort.id,
     baseFiles,
-    chatId: String((req.body && req.body.chatId) || "")
+    chatId: String((req.body && req.body.chatId) || ""),
+    meta: {
+      approval: {
+        ok: approval.ok,
+        reason: approval.reason,
+        planVersion: approval.planVersion || null,
+        at: new Date().toISOString()
+      }
+    }
   });
 
   // Launch the autonomous agent runner in background
@@ -5491,15 +5523,31 @@ app.post("/api/codeagent/build", codeAgentLimiter, async (req, res) => {
         }
 
         // Full rich plan — send the complete schema to the client
+        /* The card carries the approval with it. Whatever the user is
+           about to press "Build it" on is what gets signed — the token is
+           bound to THIS plan's text, this project, this session and the
+           revision the plan was written against, so an edited plan or a
+           tree that moved underneath it cannot be executed with it.
+
+           Additive: code.html:2709 stores the confirm payload whole and
+           hands it to the plan card, so an extra field rides through
+           without the client needing to know about it yet. */
+        const planCard = {
+          title: plan.title,
+          overview: plan.overview,
+          phases: plan.phases || [],
+          screens: plan.screens || [],
+          tech: plan.tech || [],
+          assumptions: plan.assumptions || []
+        };
         sseFrame(res, "confirm", {
-          plan: {
-            title: plan.title,
-            overview: plan.overview,
-            phases: plan.phases || [],
-            screens: plan.screens || [],
-            tech: plan.tech || [],
-            assumptions: plan.assumptions || []
-          },
+          plan: planCard,
+          approvalToken: agentState.issueApproval({
+            sessionKey: agentState.sessionKeyOf(owner),
+            projectId: project ? project.id : "",
+            planVersion: agentState.planVersionOf(planCard),
+            revisionId: (project && project.headRevision) || "none"
+          }),
           prompt: prompt, buildType: planType
         });
         sseFrame(res, "done", {});

@@ -78,3 +78,14 @@ there is noise.
 Do not hand-edit `backend/lib/nlu/industry-model.json` or
 `backend/lib/codeagent/scaffold-data.json`. Each has a script beside it, listed
 in `docs/REPO-MAP.md`.
+
+**The agent is TypeScript.** Every `.js` under `backend/lib/codeagent/` (and
+its `runtimes/`, and `backend/worker/`) is compiled from `backend/agent-src/`
+and carries a banner saying so. Edit the `.ts` and run `npm run build:agent`;
+editing the `.js` means your change is gone on the next build. `npm run
+typecheck` is the same compile without the write, and it is strict — unlike
+`npm run lint`, which does not read the generated output at all.
+
+The source tree mirrors the output tree, and has to: a relative import
+resolves against the source file at compile time and the emitted file at
+runtime, so both trees must agree on what `../ai/client` means.

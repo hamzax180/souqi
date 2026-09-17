@@ -2357,7 +2357,15 @@
     go.addEventListener("click", function() {
       if (building) return;
       settle("Building\u2026");
-      runTurn(payload.prompt, { confirmed: true, planTitle: plan.title || "" });
+      /* The token the server signed this exact plan card with. It binds
+         the approval to this session, this project, this plan's text and
+         the revision it was written against — so pressing Build it here
+         cannot authorise a different plan or a tree that has moved. */
+      runTurn(payload.prompt, {
+        confirmed: true,
+        planTitle: plan.title || "",
+        approvalToken: payload.approvalToken || ""
+      });
     });
     edit.addEventListener("click", function() {
       settle("Editing the request");
@@ -2518,7 +2526,8 @@
               mode: agentMode,
               effort: agentEffort,
               chatId: chatId,
-              conversation: convo
+              conversation: convo,
+              approvalToken: (opts && opts.approvalToken) || undefined
             })
           });
           if (spawnRes.status === 202) {
