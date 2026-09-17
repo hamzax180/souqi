@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=5.3">
+<link rel="stylesheet" href="/styles/pages/code.css?v=5.5">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -1880,7 +1880,18 @@
 
   function el(cls, html) { const d = document.createElement("div"); d.className = cls; if (html != null) d.innerHTML = html; return d; }
   function esc(t) { const d = document.createElement("span"); d.textContent = t == null ? "" : t; return d.innerHTML; }
-  function toBottom() { agLog.scrollTop = agLog.scrollHeight; }
+  /* WHERE A NEW ROW GOES.
+
+     Normally the log. While a saved chat is being rebuilt it is a
+     detached node instead, so the whole conversation is assembled off
+     screen and put in once — the transcript used to paint in turn by
+     turn on top of the skeleton, each row animating its own words, and
+     the step panels landed later still and pushed everything down. That
+     is a page being built in front of you, which is the thing the
+     skeleton was added to avoid. */
+  let agRestoreHost = null;
+  const logHost = () => agRestoreHost || agLog;
+  function toBottom() { if (!agRestoreHost) agLog.scrollTop = agLog.scrollHeight; }
 
   /* ================= Publish =================
      Ships the current project into its own container through the deploy
@@ -2068,7 +2079,7 @@
     row.innerHTML = attachmentStrip(images)
       + '<div class="bubble">' + esc(text) + qBadge + '</div>'
       + '<span class="when" data-at="' + esc(at) + '">' + esc(whenText(at)) + '</span>';
-    agLog.appendChild(row); toBottom();
+    logHost().appendChild(row); toBottom();
 
     return row;
   }
@@ -2108,6 +2119,8 @@
   // second rather than making the reader wait through 40 words at 16ms
   // each — everything past the cap arrives together on the last beat.
   function revealWords(container) {
+    // Rebuilding history is not the agent speaking; it already spoke.
+    if (agRestoreHost) return;
     let i = 0;
     function walk(node) {
       if (node.nodeType === 3) {
@@ -2135,7 +2148,7 @@
     clearEmpty();
     const row = el("ag-say" + (cls ? " " + cls : ""), html);
     revealWords(row);
-    agLog.appendChild(row); toBottom();
+    logHost().appendChild(row); toBottom();
     // Returned so a caller can put something before it — history inserts
     // the turn's steps above the summary they produced.
     return row;
@@ -2493,7 +2506,7 @@
         '<span class="th2-sep">·</span>' +
         '<span class="th2-phase">Thinking…</span>' +
       '</div>';
-    agLog.appendChild(wrap); toBottom();
+    logHost().appendChild(wrap); toBottom();
 
     const stepsEl = wrap.querySelector(".th2-steps");
     const timeEl = wrap.querySelector(".th2-time");
@@ -2678,7 +2691,7 @@
   function worked(seconds) {
     const row = el("ag-worked", '<span class="ic">' + ICON.clock + "</span><span></span>");
     row.lastChild.textContent = "Worked for " + seconds + (seconds === 1 ? " second" : " seconds");
-    agLog.appendChild(row); toBottom();
+    logHost().appendChild(row); toBottom();
   }
   /**
    * The build's file list, one row per file with what it cost in lines.
@@ -2743,7 +2756,7 @@
 
     card.appendChild(list);
     if (costUsd) { const c = el("cost"); c.textContent = "~$" + costUsd.toFixed(5); card.appendChild(c); }
-    agLog.appendChild(card); toBottom();
+    logHost().appendChild(card); toBottom();
   }
 
   const STAGE_LABEL = { sandbox: "Creating a sandbox", install: "Installing dependencies", propose: "Writing your app", preview: "Starting your preview" };
@@ -5798,7 +5811,13 @@
       agSection.classList.remove("is-new");
 
       // Clear previous chat and replay turns
-      agLog.innerHTML = "";
+      /* Built off screen, shown once. The skeleton stays up until the
+         whole thing — turns, cards and the steps each turn took — is
+         assembled, because a conversation appearing in pieces is the
+         same jitter the skeleton replaced, just later. */
+      const restored = document.createElement("div");
+      agRestoreHost = restored;
+      const pendingSteps = [];
       let renderedAnyCard = false;
       (data.turns || []).forEach((t) => {
         if (t.role === "user") { sayUser(t.body, false, t.at, t.images); return; }
@@ -5816,6 +5835,17 @@
       // Older projects have turns with no stats on them. They still get the
       // list they always got, once, rather than nothing.
       if (!renderedAnyCard && data.files && data.files.length) renderCard(data.files, 0);
+
+      /* Their own failures are already swallowed; this only waits. A
+         chat that loads without its steps is the old behaviour, not a
+         reason to hold the whole transcript back. */
+      try { await Promise.all(pendingSteps); } catch (e) { /* nothing to add */ }
+
+      agRestoreHost = null;
+      agLog.innerHTML = "";
+      while (restored.firstChild) agLog.appendChild(restored.firstChild);
+      agLog.classList.add("ag-log-entered");
+      toBottom();
 
       // Render the real app through the same path a fresh build uses —
       // GET /api/projects/:key/preview is a placeholder ("hasn't been
@@ -6316,7 +6346,13 @@
       $("agRecent").hidden = true;
       agSection.classList.remove("is-new");
 
-      agLog.innerHTML = "";
+      /* Built off screen, shown once — the same as the chat switcher
+         above. The skeleton stays up until the turns, the cards and the
+         steps each turn took are all assembled; a conversation appearing
+         in pieces is the jitter the skeleton was added to replace. */
+      const restored = document.createElement("div");
+      agRestoreHost = restored;
+      const pendingSteps = [];
       let renderedAnyCard = false;
       /* The last few turns get their steps back; older ones keep the
          summary alone. Each one is a request, and a long project would
@@ -6334,8 +6370,12 @@
            which is the only link between a stored turn and the events that
            produced it. Filled after the fact so history paints immediately
            and the steps arrive into the place they belong. */
-        const runId = /^turn_(run_.+)$/.exec(String(t.id || ""));
-        if (runId && agentSeen >= replayFrom && said) fillPastSteps(runId[1], said);
+        /* Two shapes, one link. The worker's finalizer names the turn
+           after its run (`turn_<runId>`); the in-process path stores the
+           id in a field. Older turns predate both and simply have no
+           steps to fetch. */
+        const runId = t.runId || (/^turn_(run_.+)$/.exec(String(t.id || "")) || [])[1];
+        if (runId && agentSeen >= replayFrom && said) pendingSteps.push(fillPastSteps(runId, said));
         agentSeen += 1;
         // Per build, with that build's own counts — see loadProjectPreview().
         if (t.fileStats && t.fileStats.length) {
@@ -6344,6 +6384,17 @@
         }
       });
       if (!renderedAnyCard && data.files && data.files.length) renderCard(data.files, 0);
+
+      /* Waited on, not raced. fillPastSteps swallows its own failures, so
+         a chat that loads without its steps is the old behaviour rather
+         than a reason to hold the transcript back. */
+      try { await Promise.all(pendingSteps); } catch (e) { /* nothing to add */ }
+
+      agRestoreHost = null;
+      agLog.innerHTML = "";
+      while (restored.firstChild) agLog.appendChild(restored.firstChild);
+      agLog.classList.add("ag-log-entered");
+      toBottom();
 
       // Show preview panel
       $("agentView").classList.add("has-preview");

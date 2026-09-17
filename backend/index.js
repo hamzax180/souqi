@@ -5139,7 +5139,9 @@ function getConversationalFallback(prompt, history) {
           role: "agent", kind: hasChanges ? "result" : "text",
           body: outcome.summary || "Task completed",
           fileStats: outcome.fileStats || [],
-          revisionId: rev ? rev.id : undefined, chatId: run.chatId
+          revisionId: rev ? rev.id : undefined, chatId: run.chatId,
+          // So reopening this chat can find the steps this run took.
+          runId: run.id
         });
         if (attachedImages.length) {
           try { await uploads.attachToProject(attachedImages.map(i => i.id), project.id); } catch (e) {}

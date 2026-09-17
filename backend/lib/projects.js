@@ -474,6 +474,16 @@ async function addTurn(projectId, turn) {
     body: String(turn.body === null || turn.body === undefined ? "" : turn.body).slice(0, 4000),
     detail: turn.detail ? String(turn.detail).slice(0, 300) : "",
     revisionId: turn.revisionId || null,
+    /* The run that produced this turn, so a reopened chat can fetch the
+       steps it took — they live in agent_events and this is the only
+       thing linking the two.
+
+       Named here for the same reason `images` and `fileStats` are: this
+       row is fixed-shape and drops anything the caller passes that is
+       not listed. Turns written by the durable worker's finalizer carry
+       the run id inside their own id instead (`turn_<runId>`), which is
+       why only in-process turns had no way back to their history. */
+    runId: turn.runId ? String(turn.runId).slice(0, 60) : null,
     ms: typeof turn.ms === "number" ? turn.ms : null,
     /* Photos attached to this message, so a reloaded conversation still
        shows them. Just enough to render a chip — the upload rows are the

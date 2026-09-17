@@ -299,6 +299,11 @@
     animation:agSweep 1.4s var(--ease) infinite}
   .ag-skel-turn.me .ag-skel-bar{height:34px;border-radius:14px}
   @keyframes agSweep{to{transform:translateX(100%)}}
+  /* The swap from skeleton to conversation: one fade for the whole
+     transcript, not one per row. Rows carry their own entrance animation
+     for the live case and it is suppressed while restoring, so this is
+     the only movement a reopened chat makes. */
+  .ag-log.ag-log-entered{animation:agIn .26s var(--ease) both}
   @media (prefers-reduced-motion:reduce){ .ag-skel-bar::after{animation:none} }
   /* The new-chat "hero": greeting + composer + tiles/examples centered as
      ONE group. Three earlier attempts tried to do this with
