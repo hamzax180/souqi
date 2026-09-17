@@ -158,6 +158,17 @@ halves are covered now — `agent-runner-test.js` for the seam, and
 Only one of them may write the ending. If you add a terminal exit to
 `executeRun`, route it through `settle()`.
 
+The finalizer commits the project head with
+`{ id, headRevision: run.baseRevisionId }`, so a run cannot overwrite work that
+landed while it was thinking. The route has to *set* `baseRevisionId` from the
+project's current head for that to mean anything — it did not, so it was `null`
+on every run, `null` matches only a project that has never had a revision, and
+**every edit to an existing project threw** while first builds committed fine.
+When it does throw, that is a `conflict`: the run settles `partial`, keeps its
+files, and says so. Previously the throw escaped to the worker's catch and the
+run was abandoned holding a lease, so the stale sweep later relabelled a
+finished build "the agent worker stopped before finishing".
+
 ### What a run emits
 
 `stage`, `context`, `question`, `error`, `result`, and per tool:
