@@ -4811,7 +4811,12 @@ async function persistRunOutcome(run, project, attachedImages, outcome) {
         fileStats: outcome.fileStats || [],
         revisionId: rev ? rev.id : undefined, chatId: run.chatId,
         // So reopening this chat can find the steps this run took.
-        runId: run.id, ms
+        runId: run.id, ms,
+        /* And what it cost, on the row. Without it a replayed turn has to
+           fetch and replay the whole event stream to say "12.4k tokens",
+           which only the few turns inside the eager window ever do — so
+           everything older read "Done" with nothing beside it. */
+        tokens: Number(outcome.tokens) || 0
       });
       if (attachedImages && attachedImages.length) {
         try { await uploads.attachToProject(attachedImages.map((i) => i.id), project.id); } catch (e) {}

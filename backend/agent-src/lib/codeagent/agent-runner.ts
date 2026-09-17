@@ -1198,7 +1198,13 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
     fileContents: fullBundle,
     summary: finalSummary,
     fileStats: diff,
-    costUsd: totalCostUsd
+    costUsd: totalCostUsd,
+    /* Carried out so the turn row can keep it. A replayed turn otherwise
+       has to fetch and replay the whole event stream just to say what it
+       cost, which is why only the handful of turns inside the eager
+       window ever showed a token count and everything older read "Done"
+       with nothing beside it. */
+    tokens: totalTokens
   });
 }
 

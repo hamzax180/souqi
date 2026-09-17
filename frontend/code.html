@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=7.4">
+<link rel="stylesheet" href="/styles/pages/code.css?v=7.5">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -1787,7 +1787,17 @@
        in does not jerk the headline back to "building" mid-cycle. */
     const word = esc(HERO_WORDS[heroAt]);
     const hi = "<span class=\"hi\" id=\"agGreetWord\"><span>" + word + "</span></span>";
-    $("agGreeting").innerHTML = short
+    /* The greeting belongs to the NEW-CHAT hero, and that hero is gone the
+       moment a conversation is on screen — so on /agent/<slug> this
+       element does not exist. Unguarded it threw, and it is called from
+       the middle of the /api/account/me handler, whose .catch swallowed
+       everything after it: renderUsage never ran, so the 5-hour and
+       monthly meters sat on their markup default of "—" on every existing
+       project, and "Signed in as …" never appeared either. Three
+       unrelated-looking symptoms, one missing null check. */
+    const g = $("agGreeting");
+    if (!g) return;
+    g.innerHTML = short
       ? "Hey " + esc(short) + " — what are we " + hi + " today?"
       : "What are we " + hi + " today?";
   }
@@ -2813,11 +2823,12 @@
   }
 
   /** Steps for one past turn, fetched and inserted where it happened. */
-  async function fillPastSteps(runId, anchorNode, seconds) {
+  async function fillPastSteps(runId, anchorNode, seconds, tokens) {
     try {
       const got = await fetchRunSteps(runId);
       if (!got) return;
-      const panel = renderPastSteps("", got.steps, seconds || got.seconds, got.tokens);
+      // The row's own figures win: they are the run's, not a reconstruction.
+      const panel = renderPastSteps("", got.steps, seconds || got.seconds, tokens || got.tokens);
       if (panel && anchorNode && anchorNode.parentNode) {
         anchorNode.parentNode.insertBefore(panel, anchorNode);
         releasePastStatus(panel, anchorNode);
@@ -2832,7 +2843,7 @@
      ever had. Everything older used to lose its steps for good. This is
      the rest of them: the same settled panel drawn closed, which goes and
      gets its own contents the first time you open it. */
-  function lazyStepsPanel(runId, seconds) {
+  function lazyStepsPanel(runId, seconds, tokens) {
     /* Folded from birth, and .th2.folded is the whole affordance — it
        rotates the chevron and hides .th2-steps — so an empty body here is
        invisible until the click that fills it. */
@@ -2854,7 +2865,15 @@
        duration if the row carries it; otherwise the fetch brings one back
        off the event timestamps and the replacement fills it in. */
     wrap.querySelector(".th2-title").textContent = seconds ? "Thought for " + spentText(seconds) : "Thought it through";
-    wrap.querySelector(".th2-time").textContent = (seconds ? secsText(seconds) + "  ·  " : "") + "Done";
+    /* The counts come off the turn row, so a folded panel reads exactly
+       like an expanded one without fetching anything. Before the row
+       carried them, only the few turns inside the eager window could show
+       a token count and every older one said "Done" on its own. */
+    const bits0 = [];
+    if (seconds) bits0.push(secsText(seconds));
+    if (tokens) bits0.push(tokText(tokens) + " tokens");
+    bits0.push("Done");
+    wrap.querySelector(".th2-time").textContent = bits0.join("  ·  ");
 
     let loading = false;
     /* Bound to the node, not delegated off agLog: restore builds this
@@ -2932,10 +2951,11 @@
          before anything set ms fall back to that same word rather than to
          an invented number. */
       const seconds = typeof t.ms === "number" && t.ms > 0 ? Math.max(1, Math.round(t.ms / 1000)) : 0;
+      const turnTokens = Number(t.tokens) || 0;
       if (runId && said) {
-        if (agentSeen >= replayFrom) pendingSteps.push(fillPastSteps(runId, said, seconds));
+        if (agentSeen >= replayFrom) pendingSteps.push(fillPastSteps(runId, said, seconds, turnTokens));
         else {
-          const ph = lazyStepsPanel(runId, seconds);
+          const ph = lazyStepsPanel(runId, seconds, turnTokens);
           said.parentNode.insertBefore(ph, said);
           // Its receipt is a footer for the message too, not for the fold.
           releasePastStatus(ph, said);
@@ -3296,6 +3316,23 @@
      in every font on the three platforms this ships to, and the row is a
      line of monospace where that difference is obvious. */
   const IC_FILE_CODE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="m8 8-4 4 4 4"/><path d="m16 8 4 4-4 4"/></svg>';
+  /* A markup file gets the globe and a stylesheet gets the brush, because
+     a column of identical <> glyphs carries no information — the icon is
+     only worth its space if it tells you something the filename does not
+     already say at a glance. */
+  const IC_FILE_WEB = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18"/></svg>';
+  const IC_FILE_PAINT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 3H6a3 3 0 0 0 0 6h12a3 3 0 0 0 0-6Z"/><path d="M12 9v4"/><path d="M10 13h4v6a2 2 0 0 1-4 0z"/></svg>';
+  const IC_FILE_DATA = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>';
+  const IC_FILE_IMG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="m21 16-5-5L5 20"/></svg>';
+
+  function iconForPath(path) {
+    const ext = String(path).split(".").pop().toLowerCase();
+    if (ext === "html" || ext === "htm") return IC_FILE_WEB;
+    if (ext === "css" || ext === "scss" || ext === "sass" || ext === "less") return IC_FILE_PAINT;
+    if (ext === "json" || ext === "yml" || ext === "yaml" || ext === "env") return IC_FILE_DATA;
+    if (/^(png|jpe?g|gif|webp|avif|svg|ico)$/.test(ext)) return IC_FILE_IMG;
+    return IC_FILE_CODE;
+  }
   const IC_FILE_CHEV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>';
 
   function renderCard(files, costUsd, stats) {
@@ -3345,7 +3382,7 @@
 
       const ic = document.createElement("span");
       ic.className = "ic";
-      ic.innerHTML = IC_FILE_CODE;
+      ic.innerHTML = iconForPath(path);
       row.appendChild(ic);
 
       const p = document.createElement("span");
@@ -6897,7 +6934,14 @@
       if (agUserMain) agUserMain.dataset.signedOut = "1";
     }
     renderUsage(d);
-  }).catch(() => { /* the rail still works without it */ });
+  }).catch((e) => {
+    /* Logged, not swallowed. A bare catch here hid a null-element throw
+       for as long as it existed: the rail looked merely incomplete — no
+       plan numbers, no "signed in as" — rather than broken, so nothing
+       pointed at the line that actually failed. The rail does still work
+       without this, which is why it stays a catch and not a rethrow. */
+    console.warn("[rail] account/me handler failed:", (e && e.message) || e);
+  });
 
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;

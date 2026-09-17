@@ -100,6 +100,9 @@ export function createFinalizer({ withTransaction, run, workerId, generation, on
            the frames carry payloads and not the time each was written — so
            the turn row is the only place it can come from. */
         ms: Math.max(0, Date.now() - Date.parse(run.createdAt || "") || 0),
+        // Same reason as ms directly above: a replayed turn should not have
+        // to fetch a whole event stream to say what it cost.
+        tokens: Number(outcome.tokens) || 0,
         at: now
       } }, { upsert: true, session });
       const usd = Number(outcome.costUsd) || 0;
