@@ -2762,34 +2762,6 @@
   /* ---------- build confirmation card — Claude style ----------
      Shown before a fresh build. "Looks good → Build it" re-runs
      with confirmed:true, "Edit request" hands the prompt back. */
-  /* The card, thinking, shown the moment the request goes out.
-     -----------------------------------------------------------------
-     showPlan() used to be the first thing the user saw, and it opened
-     with an 820ms "Thinking…" shimmer — which meant the indicator
-     played AFTER the answer had already arrived, and the real wait
-     before it, which is the long one, showed nothing at all. The
-     animation was in the wrong place on the timeline.
-
-     This is the same card in its waiting state; showPlan() adopts it
-     rather than appending a second one. */
-  let agPlanPending = null;
-  function showPlanThinking() {
-    if (agPlanPending && agPlanPending.isConnected) return agPlanPending;
-    const card = el("ag-plan");
-    card.innerHTML = '<div class="pl2-think">'
-      + '<span class="pl2-think-dot"></span><span class="pl2-think-dot"></span><span class="pl2-think-dot"></span>'
-      + '<span class="pl2-think-txt">Working out a plan…</span></div>';
-    agLog.appendChild(card);
-    toBottom();
-    agPlanPending = card;
-    card.dataset.since = String(Date.now());
-    return card;
-  }
-  function clearPlanThinking() {
-    if (agPlanPending && agPlanPending.isConnected && !agPlanPending.dataset.filled) agPlanPending.remove();
-    agPlanPending = null;
-  }
-
   function showPlan(payload) {
     const raw = payload.plan || {};
     const plan = Object.assign({}, raw);
@@ -2813,14 +2785,13 @@
     if (!plan.tech || !plan.tech.length) {
       plan.tech = ["React", "Tailwind CSS", "TypeScript"];
     }
-    /* Adopt the card that has been thinking since the request went out,
-       so the plan fills in where the user has been watching instead of
-       appearing below a spinner that is still running. */
-    const card = (agPlanPending && agPlanPending.isConnected) ? agPlanPending : el("ag-plan");
-    const thinkingSince = Number(card.dataset.since) || Date.now();
-    card.dataset.filled = "1";
+    const card = el("ag-plan");
 
-    // --- Thinking shimmer, already running if the card was adopted ---
+    /* No shimmer of its own any more. The turn's thinking panel has been
+       running since the request went out — the same panel a build uses —
+       so a second, different spinner here would be the agent appearing
+       to start thinking again at the moment it finished. The markup
+       stays for the reveal transition; it is just never the wait. */
     let html = '<div class="pl2-think"><span class="pl2-think-dot"></span><span class="pl2-think-dot"></span><span class="pl2-think-dot"></span><span class="pl2-think-txt">Thinking\u2026</span></div>';
 
     // --- Title + overview ---
@@ -2893,19 +2864,17 @@
       + '</div>';
 
     card.innerHTML = html;
-    if (!card.isConnected) agLog.appendChild(card);
-    agPlanPending = null;
+    agLog.appendChild(card);
     toBottom();
 
-    /* The shimmer has a floor, not a fixed length. It used to run a flat
-       820ms after the plan had already arrived — pure delay. What it is
-       for is stopping a fast answer from flashing the spinner, so the
-       only wait left is whatever is still owed of that floor, and a
-       plan that took four seconds to come back reveals immediately. */
-    const owed = Math.max(0, 500 - (Date.now() - thinkingSince));
-    setTimeout(function() {
+    /* Revealed on the next frame, not after 820ms. That delay existed to
+       let a shimmer play, and the shimmer ran AFTER the plan had already
+       arrived — so it was 820ms of nothing, at the one moment the user
+       had finally stopped waiting. The wait is the turn's thinking
+       panel now; this is only the fade-in. */
+    requestAnimationFrame(function() {
       card.classList.add("pl2-revealed");
-    }, owed);
+    });
 
     const go = card.querySelector(".pl2-go");
     const edit = card.querySelector(".pl2-edit");
@@ -3124,7 +3093,16 @@
 
       /* Before the request, not after the answer. This is the only part
          of the wait the user can see, and the plan call is the slow one. */
-      if (isPlanConfirmation) showPlanThinking();
+      /* One loading UI for every turn, started before the request rather
+         than on whichever stage event happens to arrive first.
+
+         It was created lazily by onStage(), so the gap between sending
+         and the first stage showed nothing — longest in plan mode, where
+         the first stage only arrives once the assessor has answered. A
+         plan therefore looked like it had done nothing for several
+         seconds and then produced a card, while a build showed steps the
+         whole way. Same panel, same moment, either way. */
+      if (!thinkPanel) { thinkPanel = thinkingBlock(prompt); filesSeen = 0; }
 
       if (!isPlanConfirmation && !runId) {
         try {
@@ -3521,10 +3499,6 @@
       if (thinkPanel) {
         try { thinkPanel.done(); } catch (e) {}
       }
-      /* A turn that ended without a plan — an error, a clarifying
-         question, a cancel — must not leave a card thinking for ever.
-         A no-op once showPlan has filled it. */
-      try { clearPlanThinking(); } catch (e) {}
       finalizeThinking();
       /* Closed, not cleared. The block stays in the log as the record of
          what this run did — collapsed, so it is there when it is wanted

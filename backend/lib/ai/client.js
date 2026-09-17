@@ -371,9 +371,36 @@ function requestScope(req) {
     if (req.signal.aborted) onParentAbort();
     else req.signal.addEventListener("abort", onParentAbort, { once: true });
   }
-  const timer = setTimeout(() => stop("timeout"), timeoutMs);
+  /* Two clocks once a response streams, because "no answer" and "a long
+     answer" stopped being the same thing the moment tokens started
+     arriving one at a time.
+
+     - the stall clock is re-armed on every chunk. A stream still
+       delivering is answering; killing it at a fixed total and
+       reporting "the model did not answer" is simply false, and that is
+       what a 90s total deadline did to a power-model turn writing eight
+       files.
+     - the hard clock is never re-armed, so a trickle cannot run for
+       ever. The caller sets it from the time the RUN has left.
+
+     With neither stallMs nor hardMs supplied this behaves exactly as it
+     did: one timer, one deadline, covering headers and body alike. */
+  const stallMs = Number.isFinite(req.stallMs) && req.stallMs > 0 ? Math.min(req.stallMs, 2147483647) : 0;
+  const hardMs = Number.isFinite(req.hardMs) && req.hardMs > 0 ? Math.min(req.hardMs, 2147483647) : 0;
+
+  let timer = setTimeout(() => stop("timeout"), timeoutMs);
+  const hardTimer = hardMs ? setTimeout(() => stop("hard"), hardMs) : null;
+  let touched = false;
+
   return {
     signal: controller.signal,
+    /* Called by the stream reader for every chunk that arrives. */
+    touch: () => {
+      if (stoppedBy || !stallMs) return;
+      touched = true;
+      clearTimeout(timer);
+      timer = setTimeout(() => stop("stall"), stallMs);
+    },
     // Both headers and the body consume the same deadline. Racing the abort
     // also bounds custom transports that do not reject a pending body read.
     run: (operation) => new Promise((resolve, reject) => {
@@ -386,13 +413,29 @@ function requestScope(req) {
       }).then(resolve, reject).finally(() => controller.signal.removeEventListener("abort", onAbort));
     }),
     failure: (error, t0) => ({
-      ok: false, error: true, cancelled: stoppedBy === "cancelled", timedOut: stoppedBy === "timeout",
-      reason: stoppedBy === "cancelled" ? "request cancelled" : stoppedBy === "timeout"
-        ? "timed out after " + timeoutMs + "ms" : (error && error.message) || "provider request failed",
+      ok: false, error: true,
+      cancelled: stoppedBy === "cancelled",
+      timedOut: stoppedBy === "timeout" || stoppedBy === "stall" || stoppedBy === "hard",
+      stalled: stoppedBy === "stall",
+      /* Retrying this one cannot work: the ceiling is the time the RUN
+         has left, so a second attempt starts with less of it. */
+      ranOutOfTime: stoppedBy === "hard",
+      /* Named for what actually happened. "The model did not answer" is
+         wrong for a stream that answered for a minute and then stopped,
+         and wrong again for one cut off by the run's own deadline — and
+         which of the three it was decides whether retrying helps. */
+      reason: stoppedBy === "cancelled" ? "request cancelled"
+        : stoppedBy === "stall" ? "the model stopped sending after " + stallMs + "ms of silence"
+        : stoppedBy === "hard" ? "the run ran out of time after " + hardMs + "ms"
+        : stoppedBy === "timeout" ? (touched
+            ? "the model stopped sending after " + timeoutMs + "ms"
+            : "timed out after " + timeoutMs + "ms")
+        : (error && error.message) || "provider request failed",
       latencyMs: Date.now() - t0
     }),
     close: () => {
       clearTimeout(timer);
+      if (hardTimer) clearTimeout(hardTimer);
       if (req.signal) req.signal.removeEventListener("abort", onParentAbort);
     }
   };
@@ -413,7 +456,7 @@ function requestScope(req) {
  * turn that writes eight files spends twenty seconds generating tool
  * arguments, and the name arrives at the start of each.
  */
-async function readCompletionStream(res, onDelta) {
+async function readCompletionStream(res, onDelta, scope) {
   const content = [];
   const reasoning = [];
   const byIndex = new Map();
@@ -481,6 +524,10 @@ async function readCompletionStream(res, onDelta) {
     for (;;) {
       const chunk = await reader.read();
       if (chunk.done) break;
+      /* Before parsing, and for every chunk including a keepalive: the
+         question the stall clock answers is "is the provider still
+         there", not "did that chunk contain anything we wanted". */
+      if (scope && scope.touch) scope.touch();
       feed(decoder.decode(chunk.value, { stream: true }));
     }
   } else if (typeof res.text === "function") {
@@ -661,7 +708,7 @@ async function chat(req) {
     }
 
     const json = request.body.stream
-      ? await scope.run(() => readCompletionStream(res, req.onDelta))
+      ? await scope.run(() => readCompletionStream(res, req.onDelta, scope))
       : await scope.run(() => res.json());
     const usage = (json && json.usage) || {};
     const costUsd = estimateCost(route, usage);
@@ -750,7 +797,7 @@ async function chatByok(req) {
        streamed request here too — reading it as JSON would fail on the
        first `data:` line, and only for users on their own keys. */
     const json = request.body.stream
-      ? await scope.run(() => readCompletionStream(res, req.onDelta))
+      ? await scope.run(() => readCompletionStream(res, req.onDelta, scope))
       : await scope.run(() => res.json());
     const choice = json && json.choices && json.choices[0];
     if (!choice || !choice.message || typeof choice.message !== "object") {

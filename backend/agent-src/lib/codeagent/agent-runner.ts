@@ -131,6 +131,10 @@ function retryableReason(res: any): string | null {
   if (!res || res.ok) return null;
   if (res.badRequest || res.disabled || res.budgetExceeded) return null;
   if (res.overflow) return null;   // a fit problem; retrying sends the same thing
+  /* The ceiling was the run's own remaining time, so a second attempt
+     starts with less of it than the first. Retrying here spends what is
+     left failing the same way. */
+  if (res.ranOutOfTime) return null;
   return String(res.reason || "provider error");
 }
 
@@ -608,6 +612,16 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
          by the host rather than by us, and the difference is whether
          anything gets saved. */
       timeoutMs: Math.max(5000, Math.min(90000, msLeft() - FINISH_RESERVE_MS)),
+      /* How long the stream may go QUIET, once it has started. The 90s
+         above is how long the model has to start answering; it used to
+         be how long it had to finish, which on a power model writing
+         eight files meant killing a response mid-delivery and telling
+         the user it "did not answer". It had answered, for ninety
+         seconds. */
+      stallMs: Math.max(5000, Math.min(45000, msLeft() - FINISH_RESERVE_MS)),
+      /* And a ceiling that is never re-armed, so a trickle cannot
+         outlive the run that is waiting for it. */
+      hardMs: Math.max(10000, msLeft() - FINISH_RESERVE_MS),
       signal: abort.signal,
       stream: STREAMING,
       onDelta: STREAMING ? streamWatcher(runId, turn) : undefined

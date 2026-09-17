@@ -602,6 +602,99 @@ const FULL_ROUTES = {
     assert.strictEqual(res.message.reasoning_content, "the user probably wants...");
   });
 
+  /* A stream that is still delivering is answering. The deadline used to
+     be a single total, so a model that streamed for ninety seconds was
+     killed and reported as not having answered. */
+  function dripFetch(chunks, gapMs) {
+    return async () => {
+      let i = 0;
+      return {
+        ok: true,
+        body: {
+          getReader: () => ({
+            read: async () => {
+              if (i >= chunks.length) return { done: true };
+              await new Promise((r) => setTimeout(r, gapMs));
+              return { done: false, value: new TextEncoder().encode(chunks[i++]) };
+            }
+          })
+        }
+      };
+    };
+  }
+
+  await check("a slow but steady stream is not killed by the total deadline", async () => {
+    // Six chunks 120ms apart is 720ms of delivery against a 300ms
+    // timeoutMs — under the old single clock this was a timeout.
+    const frames = [
+      'data: {"choices":[{"delta":{"content":"one "}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"two "}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"three "}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"four "}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"five"},"finish_reason":"stop"}]}\n\n',
+      'data: [DONE]\n\n'
+    ];
+    client.init({ enabled: true, fetchImpl: dripFetch(frames, 120), routes: FULL_ROUTES });
+    const res = await client.chat({
+      route: "prose", messages: [{ role: "user", content: "hi" }], stream: true,
+      timeoutMs: 300, stallMs: 2000, hardMs: 10000
+    });
+    assert.strictEqual(res.ok, true, "a steady stream was killed: " + res.reason);
+    assert.strictEqual(res.message.content, "one two three four five");
+  });
+
+  await check("a stream that goes silent is a stall, and says so", async () => {
+    client.init({
+      enabled: true, routes: FULL_ROUTES,
+      fetchImpl: async () => ({
+        ok: true,
+        body: {
+          getReader: () => {
+            let sent = false;
+            return {
+              read: async () => {
+                if (!sent) { sent = true; return { done: false, value: new TextEncoder().encode('data: {"choices":[{"delta":{"content":"start"}}]}\n\n') }; }
+                await new Promise(() => {});   // never speaks again
+              }
+            };
+          }
+        }
+      })
+    });
+    const res = await client.chat({
+      route: "prose", messages: [{ role: "user", content: "hi" }], stream: true,
+      timeoutMs: 5000, stallMs: 250, hardMs: 10000
+    });
+    assert.strictEqual(res.ok, false);
+    assert.strictEqual(res.stalled, true);
+    assert.ok(/stopped sending/.test(res.reason), "got: " + res.reason);
+    assert.ok(!res.ranOutOfTime, "a stall is retryable; running out of run time is not");
+  });
+
+  await check("the hard ceiling still bounds a stream that never stops", async () => {
+    // Re-arming the stall clock for ever must not mean running for ever.
+    const frames = new Array(200).fill('data: {"choices":[{"delta":{"content":"."}}]}\n\n');
+    client.init({ enabled: true, fetchImpl: dripFetch(frames, 20), routes: FULL_ROUTES });
+    const t0 = Date.now();
+    const res = await client.chat({
+      route: "prose", messages: [{ role: "user", content: "hi" }], stream: true,
+      timeoutMs: 5000, stallMs: 5000, hardMs: 400
+    });
+    assert.strictEqual(res.ok, false);
+    assert.strictEqual(res.ranOutOfTime, true, "got: " + res.reason);
+    assert.ok(/ran out of time/.test(res.reason), "got: " + res.reason);
+    assert.ok(Date.now() - t0 < 3000, "the ceiling did not bound it");
+  });
+
+  await check("without the new clocks the old single deadline is unchanged", async () => {
+    client.init({ enabled: true, fetchImpl: hangingFetch(5000), routes: FULL_ROUTES });
+    const res = await client.chat({ route: "prose", messages: [{ role: "user", content: "hi" }], timeoutMs: 200 });
+    assert.strictEqual(res.ok, false);
+    assert.strictEqual(res.timedOut, true);
+    assert.ok(/timed out after 200ms/.test(res.reason), "got: " + res.reason);
+    assert.ok(!res.stalled && !res.ranOutOfTime);
+  });
+
   await check("a gateway that ignores the stream flag is still answered", async () => {
     /* OpenAI-compatible gateways do ignore it and return a whole
        completion. Returning an empty message because the transport was
