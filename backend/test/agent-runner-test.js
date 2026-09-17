@@ -463,6 +463,56 @@ async function check(name, fn) {
     }
   });
 
+  /* Whether a run may TOUCH FILES, which is a different question from
+     whether the route answers in chat.
+
+     Getting only the route right produced the bug this exists for: the
+     message reached a real run, and then the runner re-read the prompt on
+     its own, called it a question, and told the model in those words not
+     to call write_file or edit_file. So "make this photo one of the
+     sliders" came back as a paragraph explaining the one-line change it
+     could have made instead.
+
+     The verb is what separates the two cases. Both carry a photo; only
+     one of them is asking for files to change. */
+  await check("an attached photo plus an instruction lets the run write files", async () => {
+    const img = [{ id: "img_1", url: "/api/img/u/a.png", name: "a.png" }];
+
+    const instructions = [
+      "add this pic to header slider one of them not all",
+      "make this photo one of sliders at home",
+      "can you see this pic make it the one of the slides",
+      "use this as the hero image",
+      "put this in the header",
+      "swap the logo for this one",
+      "set this as the background"
+    ];
+    for (const p of instructions) {
+      assert.strictEqual(agentRunner.attachmentIsInstruction(p, img), true,
+        `"${p}" is an instruction — answering it in prose is the bug`);
+    }
+
+    // Still a question, even with a file attached.
+    const questions = [
+      "what do you think of this logo",
+      "how does this look",
+      "is this the right size",
+      "why did the preview break"
+    ];
+    for (const p of questions) {
+      assert.strictEqual(agentRunner.attachmentIsInstruction(p, img), false,
+        `"${p}" is a question — editing files uninvited is the opposite bug`);
+    }
+
+    // The veto survives an instruction verb sitting next to it.
+    assert.strictEqual(agentRunner.attachmentIsInstruction("wait, dont add it yet", img), false,
+      "being told to hold off outranks the verb");
+
+    // No file, no override — the ordinary classifier decides.
+    assert.strictEqual(agentRunner.attachmentIsInstruction("make this the hero", []), false);
+    assert.strictEqual(agentRunner.attachmentIsInstruction("make this the hero", null), false);
+  });
+
   /* The four below are the tests that were missing when the durable
      worker shipped. worker-service built a finalizer, passed it in opts,
      and executeRun never called it — so a worker run marked itself

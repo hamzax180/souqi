@@ -39,6 +39,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.DYNAMIC_TOOLS_SCHEMA = void 0;
 exports.reportCheckResult = reportCheckResult;
 exports.isStopOrCorrection = isStopOrCorrection;
+exports.attachmentIsInstruction = attachmentIsInstruction;
 exports.isQuestionOrConversational = isQuestionOrConversational;
 exports.executeRun = executeRun;
 /* =================================================================
@@ -217,10 +218,35 @@ const STOP_OR_CORRECTION = /\b(didn'?t say|don'?t build|don'?t touch|dont touch|
  * below. It must NOT override this one: "wait, don't build yet" with a
  * logo attached still means wait.
  */
+/* Something to DO with the attached file, anywhere in the sentence.
+   Not the anchored build-command test below: "make this the hero" and
+   "add this pic to the header slider" are instructions that happen to
+   start with a pronoun or an auxiliary, which is why they read as
+   questions in the first place.
+
+   The verb is what separates "add this pic to the slider" from "what do
+   you think of this logo" — both carry a photo, and only one of them is
+   asking to have files changed. Without it, attaching anything at all
+   would mean the run is never allowed to answer a question again. */
+const ACTION_ON_ATTACHMENT = /\b(add|put|use|set|make|place|insert|swap|replace|change|update|apply|attach|include|show|display|turn\s+(?:it|this|that)\s+into)\b/i;
 function isStopOrCorrection(prompt) {
     if (!prompt || typeof prompt !== "string")
         return false;
     return STOP_OR_CORRECTION.test(prompt.trim().toLowerCase());
+}
+/**
+ * Does this turn carry a file AND an instruction to do something with it?
+ *
+ * Exported and pure because it decides whether a run may write files at
+ * all, and a decision that big should be assertable without a worker, a
+ * queue and a model behind it.
+ */
+function attachmentIsInstruction(prompt, attachedImages) {
+    const list = Array.isArray(attachedImages) ? attachedImages : [];
+    if (!list.length)
+        return false;
+    const p = String(prompt || "");
+    return !isStopOrCorrection(p) && ACTION_ON_ATTACHMENT.test(p);
 }
 function isQuestionOrConversational(prompt) {
     if (!prompt || typeof prompt !== "string")
@@ -313,10 +339,22 @@ async function executeRun(runId, opts = {}) {
   
        isQuestionTurn stays as its own name because six later lines read it,
        and keeping it means those lines do not move. */
+    /* An attached photo means work here too, and this is the second half of
+       that rule — the route decides whether to answer in chat at all, and
+       THIS decides whether the run is allowed to touch files. Getting only
+       the first one right is why "make this the hero" came back as a
+       paragraph explaining the one-line change it could have made: the
+       question branch below tells the model, in those words, not to call
+       write_file or edit_file.
+  
+       Read off run.context, which is exactly what the note above requires —
+       the run document is the one thing both callers share, and the worker
+       rebuilds its opts from that same field. */
+    const attachmentMeansWork = attachmentIsInstruction(run.prompt, (run.context && run.context.attachedImages) || []);
     const state = agentState.resolve({
         mode: String(run.mode || ""),
         approval: (run.meta && run.meta.approval) || null,
-        isQuestion: !isBuildMode && isQuestionOrConversational(run.prompt)
+        isQuestion: !isBuildMode && !attachmentMeansWork && isQuestionOrConversational(run.prompt)
     });
     const isQuestionTurn = state.mode === "awaiting_question";
     /* ONE writer for the terminal transition, and which one depends on who
