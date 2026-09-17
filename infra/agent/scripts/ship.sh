@@ -125,9 +125,10 @@ cat <<EOF
 
   The agent worker is running on ${HOST}.
 
-  It claims queued runs from agent_runs. Until the API is told a worker
-  exists, nothing routes to it — mount run-routes.js and set
-  CODEAGENT_DURABLE_RUNS=1 on the app.
+  It claims queued runs from agent_runs. Nothing routes to it unless
+  CODEAGENT_DURABLE_RUNS=1 is set on the app AND this worker's heartbeat
+  is fresh — the flag says "prefer the worker", the heartbeat says there
+  is one, and without both the app runs the build in process instead.
 
   Logs:    SSH_USER=${SSH_USER} bash infra/agent/scripts/ship.sh ${HOST} --logs
   Stop:    ssh ${SSH_USER}@${HOST} 'cd ${REMOTE_DIR}/infra/agent && docker compose down'

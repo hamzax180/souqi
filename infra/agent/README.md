@@ -83,6 +83,6 @@ ssh ubuntu@<host> 'cd /opt/platform/agent/infra/agent && docker compose logs --t
 ```
 
 The worker writes a heartbeat to `agent_workers` every ten seconds. That row
-is what `getWorkerHealth()` reads and what `run-routes.js` refuses a build
-without, so a stale heartbeat is the signal that matters — not whether the
-process is running.
+is what `getWorkerHealth()` reads, and what the build route checks before it
+leaves a run queued for this worker instead of running it in process. A stale
+heartbeat is the signal that matters — not whether the process is running.

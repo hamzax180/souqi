@@ -2891,6 +2891,49 @@
     // title/slug (see CODEAGENT_TYPE_HINT's own comment in index.js).
     const buildType = !projectId ? selectedType : undefined;
 
+    /* The run's event stream is bounded server-side — it ends itself at 45s
+       rather than being cut off mid-frame by the host. So the stream ending
+       and the run finishing are no longer the same thing, and something has
+       to tell them apart.
+
+       This wraps the reader so the loop below never learns about it: when
+       the underlying stream ends, it asks the run whether it is still
+       alive, and if it is, reopens from the cursor and keeps going. A run
+       longer than 45 seconds — which is most of them — used to depend on
+       the host not killing the function first.
+
+       The cursor is the seq the loop has actually parsed, not one this
+       function guesses from the bytes: resuming from a guess replays
+       events, and a replayed `files` event fires a second build check. */
+    function resumingEventReader(runId, firstRes, signal, cursor) {
+      const DONE = ["succeeded", "failed", "cancelled", "partial", "blocked"];
+      let reader = firstRes.body.getReader();
+      return {
+        async read() {
+          for (;;) {
+            const chunk = await reader.read();
+            if (!chunk.done) return chunk;
+            if (signal && signal.aborted) return chunk;
+
+            let status = null;
+            try {
+              const st = await fetch("/api/codeagent/runs/" + encodeURIComponent(runId), { signal })
+                .then((r) => r.json());
+              status = st && st.run && st.run.status;
+            } catch (e) { return chunk; }
+            if (!status || DONE.indexOf(status) >= 0) return chunk;
+
+            const next = await fetch(
+              "/api/codeagent/runs/" + encodeURIComponent(runId) + "/events?after=" + (cursor.seq || 0),
+              { headers: { "Accept": "text/event-stream" }, signal }
+            ).catch(() => null);
+            if (!next || !next.ok || !next.body) return chunk;
+            reader = next.body.getReader();
+          }
+        }
+      };
+    }
+
     function onStage(id, state, detail) {
       // Update boot screen label for device mockup
       const bl = $("agBootLabel");
@@ -3032,7 +3075,10 @@
 
       if (!streamRes.ok || !streamRes.body) throw new Error("That didn't work");
 
-      const reader = streamRes.body.getReader();
+      const streamCursor = { seq: 0 };
+      const reader = runId
+        ? resumingEventReader(runId, streamRes, currentAbortController ? currentAbortController.signal : undefined, streamCursor)
+        : streamRes.body.getReader();
       const decoder = new TextDecoder();
       let buf = "", errorMsg = "", clarifyReply = null, clarifyAction = "chat", clarifyOptions = null, chitchat = null, gate = null, publishRequested = false, confirmPlan = null, clarifyPlan = null;
       result = null;
@@ -3051,6 +3097,8 @@
           let payload;
           try { payload = JSON.parse(dm[1]); } catch (e) { continue; }
           if (payload && payload.seq && payload.seq > lastSeq) lastSeq = payload.seq;
+          // What a resume asks to continue from: parsed, not inferred.
+          streamCursor.seq = lastSeq;
 
           if (em[1] === "files" || em[1] === "check_needed") {
             lastReceivedFiles = payload.files;

@@ -1786,9 +1786,18 @@ function sseOpen(res) {
   });
   if (typeof res.flushHeaders === "function") res.flushHeaders();
 }
-function sseFrame(res, event, data) {
-  res.write("event: " + event + "\ndata: " + JSON.stringify(data) + "\n\n");
+/* `id` is optional because most streams here are not resumable — a
+   project create has nothing to resume to. An agent run does, and the
+   id line is what lets a browser say where it got to. */
+function sseFrame(res, event, data, id) {
+  res.write((id === undefined ? "" : "id: " + id + "\n") +
+    "event: " + event + "\ndata: " + JSON.stringify(data) + "\n\n");
 }
+
+/* Every status a run can stop at. run-store's own list omits `blocked`
+   and worker-service's includes it; a stream that watches the short list
+   never stops watching. */
+const TERMINAL_RUN_STATUS = new Set(["succeeded", "failed", "cancelled", "partial", "blocked"]);
 
 /**
  * POST /api/projects
@@ -5131,44 +5140,57 @@ app.get("/api/codeagent/runs/:id/events", async (req, res) => {
   const run = await runStore.getRun(req.params.id, owner);
   if (!run) return res.status(404).json({ error: "run not found" });
 
-  sseOpen(res);
-
-  let lastSeq = Number(req.query.after) || 0;
-  // Send replay of existing events
-  const existing = await runStore.getEvents(run.id, lastSeq);
-  for (const ev of existing) {
-    sseFrame(res, ev.type, Object.assign({}, ev.payload, { seq: ev.seq }));
-    if (ev.seq > lastSeq) lastSeq = ev.seq;
+  /* The cursor comes from either place, and Last-Event-ID is the one the
+     browser sends by itself. EventSource replays it automatically on a
+     dropped connection — but only if the frames carried `id:` lines, and
+     these did not, so a native reconnect could only ever restart from
+     zero. The frames carry them now. */
+  const cursor = Number(req.query.after || req.get("Last-Event-ID") || 0);
+  if (!Number.isSafeInteger(cursor) || cursor < 0) {
+    return res.status(400).json({ error: "invalid event cursor" });
   }
 
-  // Poll for new events until run reaches a terminal state or client disconnects
-  const pollInterval = setInterval(async () => {
-    if (res.writableEnded) {
-      clearInterval(pollInterval);
-      return;
-    }
-    try {
+  sseOpen(res);
+  let lastSeq = cursor;
+
+  /* Bounded, and ended cleanly rather than killed. An unbounded stream on
+     a serverless function is terminated by the host mid-frame, which the
+     client sees as a truncated event rather than a stream it may resume.
+     Ending on our own terms leaves the client holding a cursor. */
+  const until = Date.now() + 45000;
+  let closed = false;
+  res.on("close", () => { closed = true; });
+
+  try {
+    while (!closed && !res.writableEnded) {
       const fresh = await runStore.getEvents(run.id, lastSeq);
       for (const ev of fresh) {
-        sseFrame(res, ev.type, Object.assign({}, ev.payload, { seq: ev.seq }));
+        if (closed) break;
+        sseFrame(res, ev.type, Object.assign({}, ev.payload, { seq: ev.seq }), ev.seq);
         if (ev.seq > lastSeq) lastSeq = ev.seq;
       }
-      const cur = await runStore.getRun(run.id, owner);
-      if (cur && (cur.status === "succeeded" || cur.status === "failed" || cur.status === "cancelled")) {
-        clearInterval(pollInterval);
-        res.end();
-      } else {
-        res.write(": ping\n\n");
-      }
-    } catch (e) {
-      clearInterval(pollInterval);
-      res.end();
-    }
-  }, 1000);
+      if (closed) break;
 
-  req.on("close", () => {
-    clearInterval(pollInterval);
-  });
+      const cur = await runStore.getRun(run.id, owner);
+      /* Every terminal status, not three of them. `partial` and `blocked`
+         were missing, so a run that stopped at its deadline or its budget
+         left this loop polling the database once a second until something
+         else killed it. Newly common: a provider refusal that kept the
+         files it had already written now ends `partial` too. */
+      if (!cur || TERMINAL_RUN_STATUS.has(cur.status)) break;
+      if (Date.now() >= until) break;
+
+      res.write(": ping\n\n");
+      /* Awaited rather than an interval: a poll that takes longer than the
+         tick used to overlap with the next one, and two in flight against
+         the same cursor send the same frame twice. */
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  } catch (e) {
+    /* The client going away is the ordinary ending, not a fault. */
+  } finally {
+    if (!res.writableEnded) res.end();
+  }
 });
 
 /**
