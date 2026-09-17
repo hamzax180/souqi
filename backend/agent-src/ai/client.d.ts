@@ -1,0 +1,55 @@
+/* =================================================================
+   ai/client.d.ts — the seam, not a module
+   -----------------------------------------------------------------
+   backend/lib/ai/client.js stays hand-written JavaScript: it is the
+   provider adapter for the whole platform, not part of the agent, and
+   index.js shares it with routes that have nothing to do with coding.
+
+   This file exists so `../ai/client` resolves for the TypeScript. It
+   emits nothing — see the rootDir note in tsconfig.json for why the
+   source tree has to mirror the output tree for this to work at all.
+   ================================================================= */
+
+/** A provider message. `content` is a string everywhere except the
+    vision route, which passes a content array — see vision.ts. */
+export interface ChatMessage {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string | Array<Record<string, unknown>>;
+  tool_calls?: Array<{
+    id: string;
+    type?: string;
+    function: { name: string; arguments: string };
+  }>;
+  tool_call_id?: string;
+  reasoning_content?: string;
+}
+
+export interface ChatRequest {
+  route: string;
+  messages: ChatMessage[];
+  tools?: unknown[];
+  toolChoice?: unknown;
+  model?: string;
+  maxTokens?: number;
+  temperature?: number;
+  timeoutMs?: number;
+  byok?: unknown;
+  thinking?: boolean;
+  signal?: AbortSignal;
+}
+
+export interface ChatResponse {
+  ok: boolean;
+  message?: ChatMessage;
+  reason?: string;
+  finishReason?: string;
+  costUsd?: number;
+  route?: string;
+  servedFallback?: boolean;
+  usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
+}
+
+export function chat(req: ChatRequest): Promise<ChatResponse>;
+export function routeConfigured(route: string): boolean;
+export function init(opts: Record<string, unknown>): void;
+export function recordSpend(route: string, usd: number): void;

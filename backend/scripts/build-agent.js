@@ -21,7 +21,7 @@ const { spawnSync } = require("child_process");
 
 const BACKEND = path.join(__dirname, "..");
 const SRC = path.join(BACKEND, "agent-src");
-const OUT = path.join(BACKEND, "lib", "codeagent");
+const OUT = path.join(BACKEND, "lib");
 
 const BANNER = "/* GENERATED FROM backend/agent-src/";
 
@@ -82,6 +82,7 @@ for (const rel of emitted) {
   if (!fs.existsSync(abs)) continue;
   const body = fs.readFileSync(abs, "utf8");
   if (body.startsWith(BANNER)) { stamped++; continue; }
+  // `rel` is already built with forward slashes by emittedPaths().
   const src = "agent-src/" + rel.replace(/\.js$/, ".ts");
   fs.writeFileSync(
     abs,
@@ -91,4 +92,4 @@ for (const rel of emitted) {
   stamped++;
 }
 
-console.log("✓ build:agent — " + stamped + " file" + (stamped === 1 ? "" : "s") + " emitted into lib/codeagent/");
+console.log("✓ build:agent — " + stamped + " file" + (stamped === 1 ? "" : "s") + " emitted into lib/");
