@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=4.7">
+<link rel="stylesheet" href="/styles/pages/code.css?v=4.8">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -663,6 +663,16 @@
    jumping back rather than arriving. */
 @keyframes th2Sweep { from { background-position: 0 0; } to { background-position: -200% 0; } }
 .th2-step.failed { color: #e0616d; }
+
+/* How much changed, beside what changed. Tabular so the numbers do not
+   shuffle as they climb, and using the diff tokens the rest of the app
+   already defines for added and removed. */
+.th2-diff { margin-left: 8px; font-size: .84em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.th2-add { color: var(--diff-add, #2ea043); font-weight: 600; }
+.th2-del { color: var(--diff-del, #e5534b); font-weight: 600; margin-left: 5px; }
+/* A step still running should not paint its counts through the shimmer's
+   background-clip, which would make them transparent along with the text. */
+.th2-step.busy .th2-diff { -webkit-text-fill-color: initial; }
 
 /* The status line. */
 .th2-status {
@@ -2217,9 +2227,16 @@
       return {
         /* Rewrites the row in place. A turn is one line that keeps
            getting truer, not a line per thing it happened to do. */
-        set(text, finished) {
+        set(text, finished, stats) {
           if (settled || !text) return;
           row.firstChild.textContent = text;
+          if (stats && (stats.added || stats.removed)) {
+            const n = document.createElement("span");
+            n.className = "th2-diff";
+            n.innerHTML = '<span class="th2-add">+' + (stats.added | 0) + '</span>' +
+                          '<span class="th2-del">−' + (stats.removed | 0) + '</span>';
+            row.firstChild.appendChild(n);
+          }
           if (finished) {
             settled = true;
             row.classList.remove("busy");
@@ -2286,7 +2303,7 @@
         return {
           // Not queued: this is the row correcting itself as it learns,
           // not a step settling, and it should track the work live.
-          set: function (text, finished) { sub.set(text, finished); },
+          set: function (text, finished, stats) { sub.set(text, finished, stats); },
           done: function (next) { queueSettle(function () { sub.done(next); }); },
           fail: function (msg) { queueSettle(function () { sub.fail(msg); }); }
         };
@@ -3169,7 +3186,11 @@
       if (!stepGroup || !stepGroup.handle) return;
       const text = summariseGroup(stepGroup, done);
       if (!text) return;
-      stepGroup.handle.set(text, done);
+      /* The counts are passed apart from the sentence so the sentence can
+         stay text — how big a change is is most of what you want to know
+         about it, and it is the one thing words cannot carry without
+         becoming a paragraph. */
+      stepGroup.handle.set(text, done, { added: stepGroup.added, removed: stepGroup.removed });
     }
     let result = null;
     /* Declared HERE, in runTurn's own scope, not inside the try below.
@@ -3295,7 +3316,7 @@
 
       /* A turn opens one row and owns it until it closes. */
       if (isTurn && state === "start") {
-        stepGroup = { id: id, created: [], edited: [], commands: [], reads: 0, handle: null };
+        stepGroup = { id: id, created: [], edited: [], commands: [], reads: 0, added: 0, removed: 0, handle: null };
         stepGroup.handle = thinkPanel.addStep("Working on it…");
         handles[id] = stepGroup.handle;
         return;
@@ -3306,8 +3327,12 @@
            if it genuinely did nothing visible, let the row go rather
            than leave a number standing in for an answer. */
         if (stepGroup && stepGroup.id === id) {
+          /* Through paintGroup, not set() directly — paintGroup is the one
+             that carries the counts, and settling here is the last chance
+             to show them: set() marks the row settled and ignores every
+             paint after it. */
           const text = summariseGroup(stepGroup, true);
-          if (text) stepGroup.handle.set(text, true);
+          if (text) paintGroup(true);
           else stepGroup.handle.done("Thought it through");
           stepGroup = null;
         } else if (handles[id]) { handles[id].done(); }
@@ -3653,8 +3678,17 @@
           }
 
           if (em[1] === "stage") onStage(payload.id, payload.state, payload.detail);
-          else if (em[1] === "file_written") onStage("file-" + payload.path, "done", "Wrote " + payload.path);
-          else if (em[1] === "file_edited") onStage("file-" + payload.path, "done", "Edited " + payload.path);
+          else if (em[1] === "file_written" || em[1] === "file_edited") {
+            /* The counts ride on THIS event, not on the stage twin that
+               follows it — so they are banked here and the stage event
+               finds them already waiting under the path it names. */
+            if (stepGroup) {
+              stepGroup.added += Number(payload.added) || 0;
+              stepGroup.removed += Number(payload.removed) || 0;
+            }
+            onStage("file-" + payload.path, "done",
+              (em[1] === "file_edited" ? "Edited " : "Wrote ") + payload.path);
+          }
           else if (em[1] === "result") {
             result = payload;
             if (payload.fileContents) lastReceivedFiles = payload.fileContents;

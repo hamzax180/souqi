@@ -83,6 +83,7 @@ exports.applyTurnBudget = applyTurnBudget;
 const model_loop_1 = require("./model-loop");
 const agentState = __importStar(require("./agent-state"));
 const file_retrieval_1 = require("./context/file-retrieval");
+const diffstat_1 = require("./diffstat");
 /* Copied verbatim from agent-runner.js:28-128. A test asserts this is
    deep-equal to what that file exported, because the point of moving
    it was to gate the tools, not to change which tools exist. */
@@ -341,11 +342,19 @@ const TOOLS = [
         async run(args, ctx) {
             // Throws on every refusal; dispatch turns that into a tool result.
             const { path, content } = (0, model_loop_1.validateWriteFileArgs)(args, { imageUrls: ctx.imageUrls ?? [] });
+            /* Measured BEFORE the write, because after it there is nothing left
+               to compare against. "Created three files" says what happened;
+               "+214 -0" says how much, and the size of a change is most of
+               what anyone wants to know about it while it is happening. */
+            const before = ctx.files[path];
+            const stat = (0, diffstat_1.diffStat)(before, content);
             ctx.files[path] = content;
             // The model wrote it, so it knows this version — no stale-read refusal.
             if (ctx.seen)
                 ctx.seen[path] = (0, file_retrieval_1.hashOf)(content);
-            await emit(ctx, "file_written", { path, bytes: content.length });
+            await emit(ctx, "file_written", {
+                path, bytes: content.length, added: stat.added, removed: stat.removed, isNew: stat.isNew
+            });
             await emit(ctx, "stage", { id: "file-" + path, state: "done", detail: "Wrote " + path });
             return { ok: true, content: "Successfully wrote " + path, effects: { wrotePath: path } };
         }
@@ -387,10 +396,12 @@ const TOOLS = [
                 }
             }
             const { path, content } = (0, model_loop_1.applyEditFileArgs)(args, current, { imageUrls: ctx.imageUrls ?? [] });
+            // `current` is this file as it was a few lines ago — the diff is free.
+            const stat = (0, diffstat_1.diffStat)(current, content);
             ctx.files[path] = content;
             if (ctx.seen)
                 ctx.seen[path] = (0, file_retrieval_1.hashOf)(content);
-            await emit(ctx, "file_edited", { path });
+            await emit(ctx, "file_edited", { path, added: stat.added, removed: stat.removed });
             await emit(ctx, "stage", { id: "file-" + path, state: "done", detail: "Edited " + path });
             return { ok: true, content: "Successfully edited " + path, effects: { editedPath: path } };
         }

@@ -40,6 +40,7 @@
 import { validateWriteFileArgs, applyEditFileArgs } from "./model-loop";
 import * as agentState from "./agent-state";
 import { hashOf } from "./context/file-retrieval";
+import { diffStat } from "./diffstat";
 import type {
   ToolContext, ToolEntry, ToolName, ToolOutcome, ToolSchema
 } from "./types";
@@ -309,10 +310,18 @@ const TOOLS: ToolEntry[] = [
     async run(args, ctx) {
       // Throws on every refusal; dispatch turns that into a tool result.
       const { path, content } = validateWriteFileArgs(args, { imageUrls: ctx.imageUrls ?? [] });
+      /* Measured BEFORE the write, because after it there is nothing left
+         to compare against. "Created three files" says what happened;
+         "+214 -0" says how much, and the size of a change is most of
+         what anyone wants to know about it while it is happening. */
+      const before = ctx.files[path];
+      const stat = diffStat(before, content);
       ctx.files[path] = content;
       // The model wrote it, so it knows this version — no stale-read refusal.
       if (ctx.seen) ctx.seen[path] = hashOf(content);
-      await emit(ctx, "file_written", { path, bytes: content.length });
+      await emit(ctx, "file_written", {
+        path, bytes: content.length, added: stat.added, removed: stat.removed, isNew: stat.isNew
+      });
       await emit(ctx, "stage", { id: "file-" + path, state: "done", detail: "Wrote " + path });
       return { ok: true, content: "Successfully wrote " + path, effects: { wrotePath: path } };
     }
@@ -356,9 +365,11 @@ const TOOLS: ToolEntry[] = [
       }
 
       const { path, content } = applyEditFileArgs(args, current, { imageUrls: ctx.imageUrls ?? [] });
+      // `current` is this file as it was a few lines ago — the diff is free.
+      const stat = diffStat(current, content);
       ctx.files[path] = content;
       if (ctx.seen) ctx.seen[path] = hashOf(content);
-      await emit(ctx, "file_edited", { path });
+      await emit(ctx, "file_edited", { path, added: stat.added, removed: stat.removed });
       await emit(ctx, "stage", { id: "file-" + path, state: "done", detail: "Edited " + path });
       return { ok: true, content: "Successfully edited " + path, effects: { editedPath: path } };
     }
