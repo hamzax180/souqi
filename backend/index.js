@@ -4963,6 +4963,27 @@ function getConversationalFallback(prompt, history) {
   );
   const imagesBlock = buildImagesBlock(attachedImages);
 
+  /* An idempotency key, so a double-submit is one run rather than two.
+     run-store has had the unique index and getRunByIdempotency since it
+     was written, and this call has never passed a key — so the index
+     never engaged and a retried POST (a flaky connection, an impatient
+     second click) started a second run against the same project.
+
+     Taken from the client's header when it sends one, and otherwise
+     DERIVED from what actually identifies this request: the same owner
+     asking for the same thing in the same chat within the same minute
+     is the same request. The minute bucket is what keeps a deliberate
+     "do that again" from being swallowed. */
+  const idemHeader = String(req.get("Idempotency-Key") || "").slice(0, 100);
+  const idempotencyKey = /^[a-zA-Z0-9_-]{16,100}$/.test(idemHeader)
+    ? idemHeader
+    : require("crypto").createHash("sha256").update([
+        (owner.userId ? "u:" + owner.userId : "a:" + (owner.anonId || "")),
+        project ? project.id : "", prompt,
+        buildMode, effort.id, String((req.body && req.body.chatId) || ""),
+        Math.floor(Date.now() / 60000)
+      ].join(" ")).digest("hex").slice(0, 40);
+
   const run = await runStore.createRun({
     projectId: project ? project.id : null,
     owner,
@@ -4970,6 +4991,8 @@ function getConversationalFallback(prompt, history) {
     mode: buildMode,
     effort: effort.id,
     baseFiles,
+    idempotencyKey,
+    requestHash: idempotencyKey,
     chatId: String((req.body && req.body.chatId) || ""),
     meta: {
       approval: {
