@@ -44,13 +44,28 @@ await check("an api key, a jwt and a connection string are all removed", () => {
     "token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk",
     "MONGODB_URI=mongodb+srv://admin:hunter2@cluster0.example.net/db",
     "AKIAIOSFODNN7EXAMPLE",
-    "const STRIPE_SECRET_KEY = \"rk_live_51H8xQ2abcdefghijklmn\""
+    "const STRIPE_SECRET_KEY = \"rk_live_51H8xQ2abcdefghijklmn\"",
+    /* The two formats a repo is most likely to actually contain, and the
+       two this missed: the rule wanted 16 straight alphanumerics after
+       the prefix and gave up at the dash three characters in. */
+    "ANTHROPIC_KEY is sk-ant-api03-Ab0Cd1Ef2Gh3Ij4Kl5Mn6Op7Qr8St9Uv0Wx1Yz",
+    "OPENAI_KEY is sk-proj-Ab0Cd1Ef2Gh3Ij4Kl5Mn6Op7Qr"
   ];
   for (const c of cases) {
     const r = redactor.redact(c);
     assert.ok(r.redacted > 0, "nothing redacted in: " + c.slice(0, 40));
-    assert.ok(!/hunter2|AbCdEf0123456789|AKIAIOSFODNN7EXAMPLE|51H8xQ2abcdefghijklmn/.test(r.text),
+    assert.ok(!/hunter2|AbCdEf0123456789|AKIAIOSFODNN7EXAMPLE|51H8xQ2abcdefghijklmn|Ab0Cd1Ef2Gh3Ij4Kl/.test(r.text),
       "the secret survived: " + r.text);
+  }
+});
+
+await check("words that merely start like a key are not redacted", () => {
+  // The tail now allows dashes, so this is the cost side of that change.
+  for (const prose of [
+    "ask-me-about-this-later", "the task-list is long and boring",
+    "risk_assessment_document_final", "sk-short"
+  ]) {
+    assert.strictEqual(redactor.redact(prose).text, prose, "false positive on: " + prose);
   }
 });
 

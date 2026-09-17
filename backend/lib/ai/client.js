@@ -398,12 +398,133 @@ function requestScope(req) {
   };
 }
 
+/**
+ * Reassemble a streamed chat completion into the shape the non-streamed
+ * one returns.
+ *
+ * Deliberately NOT a second response format. Everything downstream — the
+ * agent loop, the tool dispatcher, cost accounting — reads
+ * `choices[0].message` and `usage`, and it should not be able to tell
+ * which transport produced them. Streaming is a way to watch the answer
+ * being written, not a different kind of answer.
+ *
+ * `onDelta` is called as text arrives, and once per tool call at the
+ * moment its NAME becomes known. That second one is the useful one: a
+ * turn that writes eight files spends twenty seconds generating tool
+ * arguments, and the name arrives at the start of each.
+ */
+async function readCompletionStream(res, onDelta) {
+  const content = [];
+  const reasoning = [];
+  const byIndex = new Map();
+  const named = new Set();
+  let finishReason = null;
+  let usage = {};
+
+  const tell = (event) => { if (onDelta) { try { onDelta(event); } catch (e) { /* a watcher must never break the call */ } } };
+
+  const consumeLine = (line) => {
+    const text = line.trim();
+    if (!text.startsWith("data:")) return;
+    const payload = text.slice(5).trim();
+    if (!payload || payload === "[DONE]") return;
+    let event;
+    try { event = JSON.parse(payload); } catch (e) { return; }   // a keepalive or a split frame
+
+    // Arrives in its own final chunk, after the last choice.
+    if (event.usage) usage = event.usage;
+
+    const choice = event.choices && event.choices[0];
+    if (!choice) return;
+    if (choice.finish_reason) finishReason = choice.finish_reason;
+
+    const delta = choice.delta || {};
+    if (typeof delta.content === "string" && delta.content) {
+      content.push(delta.content);
+      tell({ textDelta: delta.content });
+    }
+    // Kept so a reasoning model's own trace is not silently dropped, and
+    // NOT passed to onDelta: it is not for showing to anyone.
+    if (typeof delta.reasoning_content === "string" && delta.reasoning_content) {
+      reasoning.push(delta.reasoning_content);
+    }
+
+    for (const part of delta.tool_calls || []) {
+      const i = part.index === undefined ? 0 : part.index;
+      let call = byIndex.get(i);
+      if (!call) { call = { id: "", type: "function", function: { name: "", arguments: "" } }; byIndex.set(i, call); }
+      if (part.id) call.id = part.id;
+      if (part.type) call.type = part.type;
+      if (part.function) {
+        // Both accumulate: a name can be split across frames just as
+        // arguments are, and assigning would keep only the last fragment.
+        if (part.function.name) call.function.name += part.function.name;
+        if (part.function.arguments) call.function.arguments += part.function.arguments;
+      }
+      if (call.function.name && !named.has(i)) { named.add(i); tell({ toolName: call.function.name, index: i }); }
+    }
+  };
+
+  let buffered = "";
+  const feed = (text) => {
+    buffered += text;
+    let nl;
+    while ((nl = buffered.indexOf("\n")) >= 0) {
+      consumeLine(buffered.slice(0, nl));
+      buffered = buffered.slice(nl + 1);
+    }
+  };
+
+  if (res.body && typeof res.body.getReader === "function") {
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      feed(decoder.decode(chunk.value, { stream: true }));
+    }
+  } else if (typeof res.text === "function") {
+    /* No readable body. Some proxies buffer the whole stream before
+       handing it over — the frames are the same, they just all arrive at
+       once. */
+    feed(await res.text());
+  } else if (typeof res.json === "function") {
+    /* Asked for a stream and got a whole completion. OpenAI-compatible
+       gateways do ignore the flag, and the honest thing is to use the
+       answer rather than return an empty message because the transport
+       was not the one we asked for. onDelta simply never fires. */
+    const whole = await res.json();
+    if (whole && whole.choices) return whole;
+  }
+  if (buffered) consumeLine(buffered);
+
+  const message = { role: "assistant", content: content.join("") };
+  if (reasoning.length) message.reasoning_content = reasoning.join("");
+
+  /* Only calls that got a name. A stream cut off mid-tool-call leaves a
+     fragment whose arguments will not parse, and handing that to the
+     dispatcher is executing half of something the model never finished
+     saying. finish_reason already tells the caller it was truncated. */
+  const calls = Array.from(byIndex.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map((entry) => entry[1])
+    .filter((call) => call.function.name);
+  if (calls.length) message.tool_calls = calls;
+
+  return { choices: [{ message, finish_reason: finishReason }], usage };
+}
+
 function completionBody(req, model, baseUrl) {
   const body = {
     model, messages: req.messages, tools: req.tools || undefined,
     tool_choice: req.toolChoice || undefined, response_format: req.responseFormat || undefined,
     max_tokens: req.maxTokens || 900,
-    temperature: req.temperature !== null && req.temperature !== undefined ? req.temperature : 0.5
+    temperature: req.temperature !== null && req.temperature !== undefined ? req.temperature : 0.5,
+    stream: req.stream ? true : undefined,
+    /* Without this a streamed response carries no usage block at all, and
+       every call would be recorded as costing nothing — the budget guard
+       and the breaker both read what recordSpend is given. */
+    stream_options: req.stream ? { include_usage: true } : undefined
   };
   let deepseek = /^deepseek/i.test(model);
   try { deepseek = deepseek || new URL(baseUrl).hostname === "api.deepseek.com"; } catch (_) { /* validated by fetch */ }
@@ -539,7 +660,9 @@ async function chat(req) {
       };
     }
 
-    const json = await scope.run(() => res.json());
+    const json = request.body.stream
+      ? await scope.run(() => readCompletionStream(res, req.onDelta))
+      : await scope.run(() => res.json());
     const usage = (json && json.usage) || {};
     const costUsd = estimateCost(route, usage);
     recordSpend(route, costUsd);
@@ -623,7 +746,12 @@ async function chatByok(req) {
       return { ok: false, error: true, badRequest: !countsAsProviderFailure(res.status), status: res.status, reason: reason, latencyMs: Date.now() - t0 };
     }
 
-    const json = await scope.run(() => res.json());
+    /* The same builder produces this body, so a streamed request is a
+       streamed request here too — reading it as JSON would fail on the
+       first `data:` line, and only for users on their own keys. */
+    const json = request.body.stream
+      ? await scope.run(() => readCompletionStream(res, req.onDelta))
+      : await scope.run(() => res.json());
     const choice = json && json.choices && json.choices[0];
     if (!choice || !choice.message || typeof choice.message !== "object") {
       return { ok: false, error: true, reason: "provider returned no completion message", usage: (json && json.usage) || {}, costUsd: 0, latencyMs: Date.now() - t0 };

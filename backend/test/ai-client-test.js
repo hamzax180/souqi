@@ -434,6 +434,207 @@ const FULL_ROUTES = {
     assert.strictEqual(seen[0].route, "prose");
   });
 
+  console.log("\n── streaming ───────────────────────────────────────");
+
+  /* A streamed answer must be indistinguishable from a whole one by the
+     time it leaves this module. Everything downstream reads
+     choices[0].message and usage, and it should not be able to tell which
+     transport produced them. */
+  function sseFetch(frames, opts) {
+    const body = frames.map((f) => "data: " + (typeof f === "string" ? f : JSON.stringify(f)) + "\n\n").join("") +
+      "data: [DONE]\n\n";
+    return async (url, init) => {
+      if (opts && opts.captureBody) opts.captureBody(JSON.parse(init.body));
+      if (opts && opts.asText) return { ok: true, text: async () => body };
+      // Split at an awkward place on purpose: a frame that arrives in two
+      // TCP chunks is the normal case, not the exceptional one.
+      const bytes = new TextEncoder().encode(body);
+      const cut = Math.floor(bytes.length / 3);
+      const parts = [bytes.slice(0, cut), bytes.slice(cut, cut * 2), bytes.slice(cut * 2)];
+      let i = 0;
+      return {
+        ok: true,
+        body: { getReader: () => ({ read: async () => (i < parts.length ? { done: false, value: parts[i++] } : { done: true }) }) }
+      };
+    };
+  }
+
+  const textFrames = [
+    { choices: [{ delta: { role: "assistant", content: "Look" } }] },
+    { choices: [{ delta: { content: "ing at " } }] },
+    { choices: [{ delta: { content: "the code." }, finish_reason: "stop" }] },
+    { usage: { prompt_tokens: 100, completion_tokens: 50 } }
+  ];
+
+  await check("a streamed reply reassembles into the same shape as a whole one", async () => {
+    client.init({ enabled: true, fetchImpl: sseFetch(textFrames), routes: FULL_ROUTES });
+    const res = await client.chat({ route: "prose", messages: [{ role: "user", content: "hi" }], stream: true });
+    assert.strictEqual(res.ok, true);
+    assert.strictEqual(res.message.content, "Looking at the code.");
+    assert.strictEqual(res.message.role, "assistant");
+    assert.strictEqual(res.finishReason, "stop");
+    assert.deepStrictEqual(res.usage, { prompt_tokens: 100, completion_tokens: 50 });
+    assert.ok(res.costUsd > 0, "a streamed call must still be costed, or the budget guard is blind");
+  });
+
+  await check("the request asks for usage, or every streamed call looks free", async () => {
+    let sent = null;
+    client.init({ enabled: true, fetchImpl: sseFetch(textFrames, { captureBody: (b) => { sent = b; } }), routes: FULL_ROUTES });
+    await client.chat({ route: "prose", messages: [{ role: "user", content: "hi" }], stream: true });
+    assert.strictEqual(sent.stream, true);
+    assert.deepStrictEqual(sent.stream_options, { include_usage: true });
+  });
+
+  await check("not asking for a stream still sends no stream fields", async () => {
+    let sent = null;
+    client.init({
+      enabled: true, routes: FULL_ROUTES,
+      fetchImpl: async (url, init) => {
+        sent = JSON.parse(init.body);
+        return { ok: true, json: async () => ({ choices: [{ message: { role: "assistant", content: "hi" }, finish_reason: "stop" }], usage: {} }) };
+      }
+    });
+    const res = await client.chat({ route: "prose", messages: [{ role: "user", content: "hi" }] });
+    assert.strictEqual(res.ok, true);
+    assert.ok(!("stream" in sent) || sent.stream === undefined);
+    assert.ok(!("stream_options" in sent) || sent.stream_options === undefined);
+  });
+
+  await check("text arrives as it is generated, not all at the end", async () => {
+    const seen = [];
+    client.init({ enabled: true, fetchImpl: sseFetch(textFrames), routes: FULL_ROUTES });
+    const res = await client.chat({
+      route: "prose", messages: [{ role: "user", content: "hi" }], stream: true,
+      onDelta: (d) => { if (d.textDelta) seen.push(d.textDelta); }
+    });
+    assert.ok(seen.length >= 3, "expected several deltas, got " + seen.length);
+    assert.strictEqual(seen.join(""), res.message.content);
+  });
+
+  await check("tool calls split across frames are stitched back together", async () => {
+    // How a real provider sends them: id and name first, then the
+    // arguments in fragments, interleaved across two parallel calls.
+    client.init({
+      enabled: true, routes: FULL_ROUTES,
+      fetchImpl: sseFetch([
+        { choices: [{ delta: { tool_calls: [{ index: 0, id: "call_a", type: "function", function: { name: "write_file", arguments: "" } }] } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 1, id: "call_b", type: "function", function: { name: "read_file", arguments: "" } }] } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: '{"path":"src/' } }] } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 1, function: { arguments: '{"path":"src/b' } }] } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: 'a.tsx","content":"x"}' } }] } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 1, function: { arguments: '.tsx"}' } }] }, finish_reason: "tool_calls" }] },
+        { usage: { prompt_tokens: 10, completion_tokens: 5 } }
+      ])
+    });
+    const names = [];
+    const res = await client.chat({
+      route: "prose", messages: [{ role: "user", content: "hi" }], stream: true,
+      onDelta: (d) => { if (d.toolName) names.push(d.toolName); }
+    });
+    assert.strictEqual(res.finishReason, "tool_calls");
+    assert.strictEqual(res.message.tool_calls.length, 2);
+    const [a, b] = res.message.tool_calls;
+    assert.strictEqual(a.id, "call_a");
+    assert.strictEqual(a.function.name, "write_file");
+    assert.deepStrictEqual(JSON.parse(a.function.arguments), { path: "src/a.tsx", content: "x" });
+    assert.strictEqual(b.id, "call_b");
+    assert.deepStrictEqual(JSON.parse(b.function.arguments), { path: "src/b.tsx" });
+    // The name is the part worth announcing: it arrives before twenty
+    // seconds of argument generation, not after.
+    assert.deepStrictEqual(names, ["write_file", "read_file"]);
+  });
+
+  await check("a tool call cut off before it was named is dropped, not dispatched", async () => {
+    client.init({
+      enabled: true, routes: FULL_ROUTES,
+      fetchImpl: sseFetch([
+        { choices: [{ delta: { tool_calls: [{ index: 0, id: "call_a", type: "function", function: { name: "write_file", arguments: '{"path":"src/a.tsx","content":"x"}' } }] } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 1, id: "call_b", type: "function", function: { arguments: '{"pa' } }] }, finish_reason: "length" }] }
+      ])
+    });
+    const res = await client.chat({ route: "prose", messages: [{ role: "user", content: "hi" }], stream: true });
+    assert.strictEqual(res.message.tool_calls.length, 1,
+      "a nameless fragment is half of something the model never finished saying");
+    assert.strictEqual(res.finishReason, "length", "the caller is still told it was truncated");
+  });
+
+  await check("a buffered stream with no readable body still parses", async () => {
+    // Some proxies hand over the whole thing at once; the frames are the same.
+    client.init({ enabled: true, fetchImpl: sseFetch(textFrames, { asText: true }), routes: FULL_ROUTES });
+    const res = await client.chat({ route: "prose", messages: [{ role: "user", content: "hi" }], stream: true });
+    assert.strictEqual(res.message.content, "Looking at the code.");
+  });
+
+  await check("keepalives and junk frames are skipped rather than throwing", async () => {
+    client.init({
+      enabled: true, routes: FULL_ROUTES,
+      fetchImpl: sseFetch([": keepalive", "not json at all", { choices: [{ delta: { content: "ok" }, finish_reason: "stop" }] }])
+    });
+    const res = await client.chat({ route: "prose", messages: [{ role: "user", content: "hi" }], stream: true });
+    assert.strictEqual(res.ok, true);
+    assert.strictEqual(res.message.content, "ok");
+  });
+
+  await check("an onDelta that throws does not break the call", async () => {
+    client.init({ enabled: true, fetchImpl: sseFetch(textFrames), routes: FULL_ROUTES });
+    const res = await client.chat({
+      route: "prose", messages: [{ role: "user", content: "hi" }], stream: true,
+      onDelta: () => { throw new Error("the watcher is broken"); }
+    });
+    assert.strictEqual(res.ok, true);
+    assert.strictEqual(res.message.content, "Looking at the code.");
+  });
+
+  await check("a reasoning trace is kept off the visible stream", async () => {
+    const seen = [];
+    client.init({
+      enabled: true, routes: FULL_ROUTES,
+      fetchImpl: sseFetch([
+        { choices: [{ delta: { reasoning_content: "the user probably wants..." } }] },
+        { choices: [{ delta: { content: "Done." }, finish_reason: "stop" }] }
+      ])
+    });
+    const res = await client.chat({
+      route: "prose", messages: [{ role: "user", content: "hi" }], stream: true,
+      onDelta: (d) => { if (d.textDelta) seen.push(d.textDelta); }
+    });
+    assert.strictEqual(seen.join(""), "Done.", "a private reasoning trace must not be streamed to anyone");
+    assert.strictEqual(res.message.reasoning_content, "the user probably wants...");
+  });
+
+  await check("a gateway that ignores the stream flag is still answered", async () => {
+    /* OpenAI-compatible gateways do ignore it and return a whole
+       completion. Returning an empty message because the transport was
+       not the one we asked for would turn a working provider into a
+       silent failure. */
+    let called = 0;
+    client.init({
+      enabled: true, routes: FULL_ROUTES,
+      fetchImpl: async () => ({
+        ok: true,
+        json: async () => ({ choices: [{ message: { role: "assistant", content: "whole answer" }, finish_reason: "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1 } })
+      })
+    });
+    const res = await client.chat({
+      route: "prose", messages: [{ role: "user", content: "hi" }], stream: true,
+      onDelta: () => { called++; }
+    });
+    assert.strictEqual(res.ok, true);
+    assert.strictEqual(res.message.content, "whole answer");
+    assert.strictEqual(called, 0, "nothing streamed, so nothing should have been announced as streaming");
+  });
+
+  await check("a streamed error is still an error, not a parse failure", async () => {
+    client.init({
+      enabled: true, routes: FULL_ROUTES,
+      fetchImpl: async () => ({ ok: false, status: 402, json: async () => ({ error: { message: "Insufficient Balance" } }) })
+    });
+    const res = await client.chat({ route: "prose", messages: [{ role: "user", content: "hi" }], stream: true });
+    assert.strictEqual(res.ok, false);
+    assert.ok(/402/.test(res.reason));
+    assert.strictEqual(res.badRequest, true, "a 402 is not a provider outage");
+  });
+
   console.log("\n" + (failed === 0 ? "✓ ALL AI CLIENT TESTS PASSED (" + passed + ")" : "✗ " + failed + " FAILED, " + passed + " passed"));
   process.exit(failed === 0 ? 0 : 1);
 })();

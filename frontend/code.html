@@ -541,6 +541,15 @@
   color: rgba(255,255,255,.55); font-size: .72rem; white-space: pre-wrap;
   max-height: 160px; overflow-y: auto;
 }
+/* The agent's own words, arriving as they are written. Brighter than
+   command output because it is someone talking rather than a program
+   printing, and uncapped because unlike a build log it is meant to be
+   read straight through — the terminal body scrolls instead. */
+.term-stream {
+  color: rgba(255,255,255,.82);
+  border-left-color: rgba(120,190,255,.45);
+  max-height: none; overflow: visible;
+}
 .term-empty { color: rgba(255,255,255,.35); font-style: italic; }
 </style>
 </head>
@@ -2442,6 +2451,21 @@
         if (body.scrollHeight - body.scrollTop - body.clientHeight < 60) body.scrollTop = body.scrollHeight;
         return line;
       },
+      /* The block the current streamed answer is being written into.
+         Cleared implicitly: anything else appended makes it stop being
+         body.lastChild, and the next delta starts a fresh block. */
+      streamEl: null,
+      /** Appends to the answer in progress, so a reply streamed in a
+          dozen flushes reads as one paragraph and not as a dozen. */
+      stream: function (text) {
+        if (!agTerm.streamEl || agTerm.streamEl !== body.lastChild) {
+          agTerm.streamEl = document.createElement("div");
+          agTerm.streamEl.className = "term-out term-stream";
+          body.appendChild(agTerm.streamEl);
+        }
+        agTerm.streamEl.textContent += String(text || "");
+        if (body.scrollHeight - body.scrollTop - body.clientHeight < 200) body.scrollTop = body.scrollHeight;
+      },
       /** Verbatim output, indented under the line that produced it. */
       out: function (text) {
         const pre = document.createElement("div");
@@ -2486,6 +2510,13 @@
       const a = p.args || {};
       const detail = a.path || a.query || a.dir || a.command || a.reason || "";
       t.write("›", p.tool + (detail ? "  " + detail : ""), "term-cmd");
+    } else if (kind === "tool_intent") {
+      /* Arrives while the model is still generating the call's arguments,
+         which on an eight-file build is twenty seconds before the write
+         lands. Dim, because it is an intention and not yet a fact. */
+      t.write("·", p.tool, "term-dim");
+    } else if (kind === "assistant_delta") {
+      t.stream(p.text);
     } else if (kind === "tool_result") {
       /* Only for the tools that close with nothing else. A write already
          prints its file_written line and a command prints its exit code,

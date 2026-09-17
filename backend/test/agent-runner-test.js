@@ -567,6 +567,80 @@ async function check(name, fn) {
       ") — the raw record is not raw, so recovering it returns the same truncated text");
   });
 
+  /* A streaming transport, so the runner's own streaming path is what
+     these exercise. The stubs above return a whole completion, which the
+     client accepts as a gateway that ignored the flag — useful coverage,
+     but not this. */
+  function sseStub(framesPerCall) {
+    let call = 0;
+    return async () => {
+      const frames = framesPerCall[Math.min(call++, framesPerCall.length - 1)];
+      const body = frames.map((f) => "data: " + JSON.stringify(f) + "\n\n").join("") + "data: [DONE]\n\n";
+      const bytes = new TextEncoder().encode(body);
+      let sent = false;
+      return {
+        ok: true,
+        body: { getReader: () => ({ read: async () => (sent ? { done: true } : (sent = true, { done: false, value: bytes })) }) }
+      };
+    };
+  }
+
+  await check("a streamed turn narrates itself and still dispatches its tools", async () => {
+    useStub(sseStub([
+      [
+        { choices: [{ delta: { content: "I will write " } }] },
+        { choices: [{ delta: { content: "the component." } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 0, id: "s1", type: "function", function: { name: "write_file", arguments: "" } }] } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: JSON.stringify({ path: "src/App.tsx", content: "export default function App(){return <h1>Hi</h1>;}" }) } }] }, finish_reason: "tool_calls" }] },
+        { usage: { prompt_tokens: 10, completion_tokens: 5 } }
+      ],
+      [
+        { choices: [{ delta: { tool_calls: [{ index: 0, id: "s2", type: "function", function: { name: "complete_task", arguments: JSON.stringify({ summary: "Wrote it." }) } }] }, finish_reason: "tool_calls" }] },
+        { usage: { prompt_tokens: 10, completion_tokens: 5 } }
+      ]
+    ]));
+
+    const run = await runStore.createRun({
+      projectId: null, owner, prompt: "write a component", mode: "auto", effort: "smart"
+    });
+    const outcome = await agentRunner.executeRun(run.id);
+
+    assert.strictEqual(outcome.ok, true, "a streamed turn must dispatch exactly as a whole one does");
+    assert.ok(outcome.files["src/App.tsx"], "the stitched tool arguments never reached the dispatcher");
+
+    const events = await runStore.getEvents(run.id, 0);
+    const deltas = events.filter((e) => e.type === "assistant_delta");
+    assert.ok(deltas.length >= 1, "the run said nothing while it was writing");
+    assert.strictEqual(deltas.map((e) => e.payload.text).join(""), "I will write the component.",
+      "the narration must be complete — the tail is easy to leave in the buffer");
+
+    // The point of streaming: the tool is announced before its arguments
+    // finish generating, which on a real eight-file turn is ~20s earlier.
+    const intents = events.filter((e) => e.type === "tool_intent");
+    assert.ok(intents.some((e) => e.payload.tool === "write_file"), "no tool_intent for the write");
+    const intentSeq = intents.find((e) => e.payload.tool === "write_file").seq;
+    const startSeq = events.find((e) => e.type === "tool_start" && e.payload.tool === "write_file").seq;
+    assert.ok(intentSeq < startSeq, "the intent must arrive before the dispatch, or it is telling us nothing new");
+  });
+
+  await check("streamed narration is redacted", async () => {
+    const KEY = "sk-ant-api03-" + "B".repeat(40);
+    useStub(sseStub([
+      [
+        { choices: [{ delta: { content: "Your key is " + KEY + " apparently." } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 0, id: "s1", type: "function", function: { name: "complete_task", arguments: JSON.stringify({ summary: "done" }) } }] }, finish_reason: "tool_calls" }] }
+      ]
+    ]));
+    const run = await runStore.createRun({
+      projectId: null, owner, prompt: "say it", mode: "auto", effort: "smart"
+    });
+    await agentRunner.executeRun(run.id);
+    for (const e of await runStore.getEvents(run.id, 0)) {
+      if (e.type !== "assistant_delta") continue;
+      assert.ok(!String(e.payload.text || "").includes(KEY), "a streamed delta leaked a key");
+    }
+  });
+
   await check("a finalizer that rejects is reported as a conflict, not abandoned", async () => {
     /* The finalizer throws when the project moved under the run. Nothing
        caught it: the throw escaped to the worker's catch, the run was

@@ -69,6 +69,64 @@ function firstLineOf(text: unknown): string {
   return redact(first.slice(0, 160)).text;
 }
 
+/* Streaming is on unless it is turned off. CODEAGENT_STREAMING=0 is the
+   rollback: it changes the transport and nothing else, because the client
+   reassembles a streamed answer into the same shape a whole one has. */
+const STREAMING = process.env.CODEAGENT_STREAMING !== "0";
+
+/** How often a run is willing to write its own narration to the database. */
+const DELTA_FLUSH_MS = 600;
+
+/**
+ * Turn a token stream into events worth storing.
+ *
+ * Not one event per token. These are persisted and replayed to every
+ * reconnecting browser, and a thousand-row turn would cost more to read
+ * back than the text is worth — so text is coalesced on a timer.
+ *
+ * The tool names are not coalesced, because the whole point of them is
+ * WHEN they arrive: measured against the live provider, a turn writing a
+ * file knows the tool's name 703ms in and finishes generating its
+ * arguments at 896ms. Before this the first sign of that turn was the
+ * finished write, twenty seconds later on an eight-file build.
+ */
+function streamWatcher(runId: string, turn: number) {
+  let pending = "";
+  let lastFlush = Date.now();
+  let inFlight: Promise<any> = Promise.resolve();
+
+  /* Serialised, and never awaited by the caller. appendEvent allocates a
+     sequence number, so two overlapping writes can collide; and onDelta
+     runs inside the read loop, where awaiting a database round trip per
+     token would make the stream slower than not streaming at all. */
+  const queue = (fn: () => Promise<any>) => {
+    inFlight = inFlight.then(fn).catch(() => { /* narration must never fail a run */ });
+  };
+
+  const flush = () => {
+    if (!pending) return;
+    const text = pending;
+    pending = "";
+    lastFlush = Date.now();
+    queue(() => runStore.appendEvent(runId, "assistant_delta", { turn, text: redact(text).text }));
+  };
+
+  const watcher = (d: any) => {
+    if (d && d.textDelta) {
+      pending += d.textDelta;
+      if (Date.now() - lastFlush >= DELTA_FLUSH_MS) flush();
+    }
+    if (d && d.toolName) {
+      flush();   // whatever was said before the tool belongs before it
+      queue(() => runStore.appendEvent(runId, "tool_intent", { turn, tool: d.toolName, index: d.index }));
+    }
+  };
+  /* The caller settles this after the call returns, so the tail of the
+     answer is not left sitting in `pending` until the next turn. */
+  watcher.done = async () => { flush(); await inFlight; };
+  return watcher;
+}
+
 function retryableReason(res: any): string | null {
   if (!res || res.ok) return null;
   if (res.badRequest || res.disabled || res.budgetExceeded) return null;
@@ -538,7 +596,9 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
          by the host rather than by us, and the difference is whether
          anything gets saved. */
       timeoutMs: Math.max(5000, Math.min(90000, msLeft() - FINISH_RESERVE_MS)),
-      signal: abort.signal
+      signal: abort.signal,
+      stream: STREAMING,
+      onDelta: STREAMING ? streamWatcher(runId, turn) : undefined
     };
 
     /* Reassembled every call rather than accumulated: measure, then
@@ -602,6 +662,10 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
       calls++;
       aiRes = await client.chat(Object.assign({}, callOpts, { messages }));
     }
+    /* The tail of the answer is still sitting in the watcher's buffer,
+       and the retries above share one watcher — so this is after the loop,
+       not after each call. */
+    if (callOpts.onDelta) await (callOpts.onDelta as any).done();
     totalCostUsd += aiRes.costUsd || 0;
 
     if (!aiRes.ok) {

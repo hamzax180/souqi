@@ -29,8 +29,15 @@ export interface RedactionResult {
    the moment somebody adds a provider. `label` is what replaces the
    match, so a reader can see WHAT was removed without seeing it. */
 const PATTERNS: Array<{ re: RegExp; label: string }> = [
-  // Anything that announces itself: sk-..., pk_live_..., ghp_..., xoxb-...
-  { re: /\b(?:sk|pk|rk|ak)[-_](?:live|test|prod)?[-_]?[A-Za-z0-9]{16,}\b/g, label: "[redacted: api key]" },
+  /* Anything that announces itself: sk-..., pk_live_..., ghp_..., xoxb-...
+     The tail allows internal dashes and underscores, and it has to: this
+     required 16 straight alphanumerics after the prefix, so it matched
+     sk_live_abc... and missed sk-ant-api03-... and sk-proj-... entirely —
+     it gave up three characters in, at the dash in "ant-api03". Both of
+     the two most common key formats in a repo this agent reads walked
+     through it. Found when a streamed reply carried one. */
+  { re: /\b(?:sk|pk|rk|ak)[-_](?:live|test|prod)?[-_]?[A-Za-z0-9][A-Za-z0-9_-]{14,}[A-Za-z0-9]\b/g,
+    label: "[redacted: api key]" },
   { re: /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, label: "[redacted: github token]" },
   { re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, label: "[redacted: slack token]" },
   { re: /\bAKIA[0-9A-Z]{16}\b/g, label: "[redacted: aws key id]" },
