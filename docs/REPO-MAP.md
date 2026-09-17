@@ -55,7 +55,7 @@ Do not hand-edit these. Each has a script beside it.
 |---|---|
 | `backend/lib/nlu/industry-model.json` | `node scripts/train-classifier.js` (`npm run train:nlu`) |
 | `backend/lib/codeagent/scaffold-data.json` | `node scripts/build-scaffold-data.js` — manual, with no CI check, so it can drift from `scaffold/` |
-| **every `.js` under `backend/lib/codeagent/`**, its `runtimes/`, and `backend/worker/` | `npm run build:agent` — compiled from `backend/agent-src/`. Each carries a banner saying so. |
+| **every `.js` under `backend/lib/codeagent/`**, its `runtimes/` and `context/`, and `backend/worker/` | `npm run build:agent` — compiled from `backend/agent-src/`. Each carries a banner saying so. |
 
 The agent is written in TypeScript and shipped as JavaScript. The sources are
 `backend/agent-src/`, laid out as a mirror of what they compile into, and

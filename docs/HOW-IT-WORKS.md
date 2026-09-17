@@ -82,14 +82,44 @@ unless stated otherwise.
 
 ### Tools
 
-Four, and all four are inert — none of them can execute anything.
+**There are two tool surfaces, because there are two engines.**
 
-| Tool | What it does |
-|---|---|
-| `write_file` | create or replace a file |
-| `edit_file` | exact-match find/replace inside an existing file |
-| `read_file` | read a file the context budget left out |
-| `suggest_next` | 2-3 follow-up ideas, shown as chips |
+`model-loop.js` serves `/api/codeagent/build` — the plan card and the
+no-WebContainer fallback. Five tools, and all five are inert: `write_file`,
+`edit_file`, `read_file`, `search_code`, `suggest_next`. Nothing there can
+execute anything, and `model-loop-test.js` asserts that set exactly so it
+cannot widen quietly.
+
+`agent-runner.js` serves `/api/codeagent/runs`, which is the live path. Nine
+tools, through the single gate in `tool-registry.js`:
+
+| Tool | What it does | Writes? |
+|---|---|---|
+| `write_file` | create or replace a file | yes |
+| `edit_file` | exact find/replace, refused if the anchor is ambiguous | yes |
+| `read_file` | read a file, and record which version was seen | no |
+| `list_files` | every path in the candidate tree | no |
+| `search_code` | first ten matches, with line numbers | no |
+| `check_project` | compile and render-check the candidate | spends a slot |
+| `run_command` | one allowlisted command in the build sandbox | spends a slot |
+| `ask_user_question` | 1–4 questions with options; **parks the run** | no |
+| `complete_task` | end the turn | no |
+
+`tool-registry.js` is the only place a tool name is interpreted, and it asks
+`agent-state.js` whether the mode permits the tool **before** it looks at the
+arguments. Not offering a tool in the schema is not the same as refusing it —
+the instruction to use one anyway can arrive inside a file the model has just
+read, and that gap is what the gate closes.
+
+`edit_file` also refuses an anchor written from a stale read. The tree is
+edited in memory as the run goes, so a file read on turn two may not be the
+file being edited on turn nine — usually because the model's own later write
+replaced it.
+
+`run_command`'s allowlist lives on the **deploy plane**, beside the Docker
+socket; the tool keeps a copy so a refusal costs a sentence rather than a
+round trip. There is no shell, so `;`, `&&` and `$(…)` are refused with the
+reason rather than escaped.
 
 `read_file` resolves against the **in-memory tree the prompt was built from**,
 never the filesystem — there is nothing on the host for a path traversal to
