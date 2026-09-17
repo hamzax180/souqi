@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=5.9">
+<link rel="stylesheet" href="/styles/pages/code.css?v=6.0">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -941,11 +941,10 @@
     <div class="ag-hero" id="agHero">
     <div class="ag-log" id="agLog" aria-live="polite">
       <div class="ag-empty" id="agEmptyState">
-        <!-- The highlighted word and the line under it are one pair, swapped
-             together — see rotateHero(). The markup carries the first pair so
-             the hero is correct before any script runs. -->
+        <!-- No subtitle here on purpose: the home hero carries one and this
+             screen does not. The headline's accent word is the only thing
+             that changes — see rotateHero(). -->
         <h2 id="agGreeting">What are we <span class="hi" id="agGreetWord"><span>building</span></span> today?</h2>
-        <p class="ag-sub" id="agGreetSub">Describe it in a sentence — the agent writes the code.</p>
       </div>
     </div>
     <form class="ag-composer" id="agForm" autocomplete="off">
@@ -1654,31 +1653,24 @@
   // through esc() rather than being concatenated raw.
   /* THE HERO'S ONE MOVING PART.
 
-     A word in the headline and the line beneath it, swapped together on a
-     timer. They are written as pairs because that is what makes it read
-     as a sentence rather than as two independent tickers: the subtitle
-     explains the verb above it, so they have to change in the same beat.
+     One word in the headline, on a timer. There is no subtitle on this
+     screen — that belongs to the home hero — so the word is the whole
+     animation.
 
      Stops when it is not being looked at — the empty state is gone the
      moment a build starts, the tab can be in the background, and someone
      typing is reading their own words rather than these. */
-  const HERO_LINES = [
-    ["building", "Describe it in a sentence — the agent writes the code."],
-    ["shipping", "From an idea to something running, in one conversation."],
-    ["designing", "Say how it should look. Change your mind as often as you like."],
-    ["fixing", "Paste an error and it reads the code before it touches it."],
-    ["launching", "It compiles, it runs, and it is yours to publish."]
-  ];
+  const HERO_WORDS = ["building", "shipping", "designing", "fixing", "launching"];
   const HERO_EVERY_MS = 3600;
   let heroAt = 0, heroTimer = 0;
 
   function heroWordEl() { return document.getElementById("agGreetWord"); }
 
   function rotateHero() {
-    const word = heroWordEl(), sub = $("agGreetSub");
-    if (!word || !sub) return;
-    heroAt = (heroAt + 1) % HERO_LINES.length;
-    const [next, line] = HERO_LINES[heroAt];
+    const word = heroWordEl();
+    if (!word) return;
+    heroAt = (heroAt + 1) % HERO_WORDS.length;
+    const next = HERO_WORDS[heroAt];
 
     /* Both words in the grid cell at once, then the old one is removed.
        Swapping textContent instead would show the new word before the old
@@ -1693,8 +1685,6 @@
       setTimeout(function () { if (outgoing.parentNode) outgoing.remove(); }, 360);
     }
 
-    sub.classList.add("fading");
-    setTimeout(function () { sub.textContent = line; sub.classList.remove("fading"); }, 300);
   }
 
   function heroRotationOn() {
@@ -1719,7 +1709,7 @@
     /* The same shape rotateHero expects — .hi wrapping ONE span — and the
        word that is currently showing rather than the first one, so signing
        in does not jerk the headline back to "building" mid-cycle. */
-    const word = esc(HERO_LINES[heroAt][0]);
+    const word = esc(HERO_WORDS[heroAt]);
     const hi = "<span class=\"hi\" id=\"agGreetWord\"><span>" + word + "</span></span>";
     $("agGreeting").innerHTML = short
       ? "Hey " + esc(short) + " — what are we " + hi + " today?"

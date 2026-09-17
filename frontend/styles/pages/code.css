@@ -1902,20 +1902,8 @@
   @keyframes heroOut{to{opacity:0;transform:translateY(-.5em)}}
   @keyframes heroIn{from{opacity:0;transform:translateY(.55em)}}
 
-  /* The line under it, changing with it. Cross-faded rather than slid:
-     two motions at two sizes in the same breath reads as a page that
-     cannot keep still. */
-  .ag-sub{
-    font-size:clamp(.92rem,1.3vw,1.02rem);color:var(--ink-2);
-    line-height:1.5;margin:-4px 0 14px;max-width:46ch;
-    opacity:0;animation:agIn .5s var(--ease) .1s forwards;
-    transition:opacity .3s var(--ease);
-  }
-  .ag-sub.fading{opacity:0}
-
   @media (prefers-reduced-motion:reduce){
     .hi-out,.hi-in{animation:none}
-    .ag-sub{transition:none}
   }
 
   /* New-chat-only extras: type tiles + example prompts, both hidden the
