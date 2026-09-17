@@ -203,7 +203,7 @@
      second wrapper; harmless once .ag narrows to 460px too, since a
      460px column is already under the 720px cap. */
   .ag-head,.ag-log,.ag-composer,.ag-newchat-extras{width:100%;max-width:720px;align-self:center}
-  .ag-split.has-preview .ag{flex:0 0 clamp(340px,34vw,460px)}
+  .ag-split.has-preview .ag{flex:0 0 clamp(360px,36vw,520px)}
   /* The chat column flexes with the DEVICE being previewed. A phone
      mockup is only ~270px wide, so a preview pane sized for a MacBook
      left a few hundred px of empty stage next to it while the composer
@@ -219,8 +219,8 @@
        was never set and the column fell back to the base width, which is
        there is nothing left to fall out of sync. */
     .ag-split.has-preview:has(.ag-pv-frame.mobile)  .ag{flex:0 0 clamp(420px,50vw,760px)}
-    .ag-split.has-preview:has(.ag-pv-frame.tablet)  .ag{flex:0 0 clamp(360px,36vw,540px)}
-    .ag-split.has-preview:has(.ag-pv-frame.desktop) .ag{flex:0 0 clamp(340px,28vw,430px)}
+    .ag-split.has-preview:has(.ag-pv-frame.tablet)  .ag{flex:0 0 clamp(380px,40vw,620px)}
+    .ag-split.has-preview:has(.ag-pv-frame.desktop) .ag{flex:0 0 clamp(380px,34vw,560px)}
   }
   @media (min-width:901px){
     /* Fallback for engines without :has(). Kept as SEPARATE rules — an
@@ -228,8 +228,8 @@
        were combined with the ones above. syncPreviewPaneSize() still sets
        these classes, so this path keeps working there. */
     .ag-split.has-preview.pv-mobile  .ag{flex:0 0 clamp(420px,50vw,760px)}
-    .ag-split.has-preview.pv-tablet  .ag{flex:0 0 clamp(360px,36vw,540px)}
-    .ag-split.has-preview.pv-desktop .ag{flex:0 0 clamp(340px,28vw,430px)}
+    .ag-split.has-preview.pv-tablet  .ag{flex:0 0 clamp(380px,40vw,620px)}
+    .ag-split.has-preview.pv-desktop .ag{flex:0 0 clamp(380px,34vw,560px)}
   }
   .ag-head{display:none}
   .ag-head .mark{width:26px;height:26px;border-radius:7px;background:var(--accent);display:grid;place-items:center}
@@ -1442,8 +1442,22 @@
      and pushed the buttons down instead of stacking above them. With nothing
      attached the row still fits on one line, so this changes nothing until
      there is something to show. */
-  .ag-brow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding-top:6px}
-  .ag-brow-sp{flex:1}
+  /* ONE ROW, ALWAYS, AND SEND IS THE LAST THING ON IT.
+
+     This wrapped, and the item that wrapped was the send button — the
+     narrower the composer, the more likely the one control the row exists
+     for dropped onto a line of its own underneath everything else. It
+     read as a rendering fault, and it moved the target between renders.
+
+     nowrap plus a shrinkable middle is what holds it: the model and effort
+     pills give up width (min-width:0 lets them shrink past their content,
+     which flex items otherwise refuse to do), and the three fixed controls
+     — attach, voice, send — keep their size because they are flex:none. */
+  .ag-brow{display:flex;flex-wrap:nowrap;align-items:center;gap:6px;padding-top:6px;min-width:0}
+  .ag-brow-sp{flex:1 1 auto;min-width:0}
+  .ag-brow>.ag-model-wrap,.ag-brow>.ag-effort-wrap{min-width:0;flex-shrink:1}
+  .ag-brow .ag-model-pill,.ag-brow .ag-effort-pill{min-width:0;overflow:hidden}
+  .ag-brow .ag-model-pill>span,.ag-brow .ag-effort-lbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
   /* Attach button + the chip that replaces it once a file's picked —
      Replit's "+" in the composer row, repurposed here specifically for a
@@ -1855,7 +1869,15 @@
        the containing block to .ag-box, which is already position:relative
        and is the thing this should track. */
     .ag-effort-wrap{position:static}
-    .ag-effort-pop{left:0;right:0;width:auto;bottom:calc(100% + 10px);transform-origin:50% 100%}
+    /* Still 252px, still pinned to the right edge.
+       This used to be left:0;right:0;width:auto, which fixed the
+       positioning by letting the panel stretch the whole width of the
+       composer — so the same control was a neat card on a laptop and a
+       full-width band on anything narrower, with its slider stretched to
+       match. Pinning one edge and capping the width keeps the geometry
+       identical everywhere; the min() is only there so it cannot overflow
+       a composer narrower than the panel itself. */
+    .ag-effort-pop{left:auto;right:0;width:min(252px, 100%);bottom:calc(100% + 10px);transform-origin:100% 100%}
     .ag-effort-tip{display:none}
   }
 
@@ -1993,14 +2015,16 @@
      side; an auto margin on the attach button does the same job with one
      fewer child in the row.
 
-     wrap is the floor, not the plan. Below about 340px the row runs out of
-     width whatever the metrics are, and a second line is a better answer
-     than a control sitting outside the box it belongs to. The row packs to
-     the end so that when it does wrap, send stays under the other buttons
-     on the right rather than jumping to the left margin. */
+     The wrap that used to be the floor here is gone. It was a reasonable
+     answer while the pills were rigid — below about 340px the row genuinely
+     ran out of width, and a second line beat a control sitting outside the
+     box. But it fired long before 340px in a split pane on a desktop, and
+     the item it dropped was always the send button. The pills shrink now
+     (see .ag-brow above), so the row compresses instead of breaking and the
+     one control the row exists for stays where the eye last left it. */
   @media (max-width:640px){
     .ag-box{padding-inline:10px}
-    .ag-brow{gap:4px;row-gap:6px;justify-content:flex-end}
+    .ag-brow{gap:4px;justify-content:flex-end}
     .ag-brow-sp{display:none}
     .ag-attach{margin-inline-end:auto}
     .ag-attach,.ag-voice-btn{width:28px;height:28px}
@@ -3017,7 +3041,7 @@
        icon rail, plus a small inset — see the left/right declarations. */
     /* THE one that broke the phone layout for months of screenshots.
 
-       .ag-split.has-preview .ag{flex:0 0 clamp(340px,34vw,460px)} is a WIDTH:
+       .ag-split.has-preview .ag{flex:0 0 clamp(360px,36vw,520px)} is a WIDTH:
        it sizes the chat column beside the preview in the desktop row layout.
        It carries no media query, and down here .ag-split is a flex COLUMN --
        so the same declaration becomes a fixed 340px HEIGHT. At 352px the

@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=7.1">
+<link rel="stylesheet" href="/styles/pages/code.css?v=7.2">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -730,11 +730,27 @@
 .th2-step.busy .th2-diff { -webkit-text-fill-color: initial; }
 
 /* The status line. */
+/* ONE LINE, AND THE NUMBERS DO NOT MOVE.
+
+   The row never wrapped — its ITEMS did. Each one is a flex child, so a
+   long phase ("Almost done thinking…") squeezed the others below their
+   own text width and each span broke internally: the elapsed time and the
+   token count split across two lines into ragged columns, then snapped
+   back into one line the moment the phase became "Done". The receipt
+   reflowed under the reader twice per turn, for no reason they could see.
+
+   So the numbers are rigid and the phase is the only thing that gives:
+   it truncates instead of pushing, which keeps every figure in the same
+   place from the first second of a run to the last. */
 .th2-status {
   display: flex; align-items: center; gap: 9px;
+  flex-wrap: nowrap; min-width: 0;
   padding: 5px 0 2px;
   font-size: .88rem; color: var(--mut, #8a8f91);
 }
+.th2-status > * { white-space: nowrap; }
+.th2-status > .th2-num, .th2-status > .th2-sep { flex: none; }
+.th2-phase { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* The Souqi bag, lit.
 
    Masked rather than drawn: assets/logo-mark.png IS the logo, alpha and
