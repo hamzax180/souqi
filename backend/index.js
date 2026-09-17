@@ -5003,7 +5003,7 @@ function getConversationalFallback(prompt, history) {
         project ? project.id : "", prompt,
         buildMode, effort.id, String((req.body && req.body.chatId) || ""),
         Math.floor(Date.now() / 60000)
-      ].join(" ")).digest("hex").slice(0, 40);
+      ].join("\u0000")).digest("hex").slice(0, 40);
 
   const run = await runStore.createRun({
     projectId: project ? project.id : null,
@@ -5025,8 +5025,40 @@ function getConversationalFallback(prompt, history) {
     }
   });
 
+  /* Hand the run to the durable worker, or run it here.
+
+     With CODEAGENT_DURABLE_RUNS=1 and a worker whose heartbeat is
+     fresh, the run is left `queued` and claimNext() picks it up on the
+     other machine — where it may take the thirty minutes its effort
+     level promises rather than being terminated at 300 seconds.
+
+     BOTH conditions, not just the flag. A worker that is configured but
+     dead would otherwise leave every run queued for ever, which is a
+     worse failure than the one this replaces: at least an in-process
+     run finishes partial and says so. So the flag says "prefer the
+     worker" and the heartbeat says "there is one".
+
+     Unsetting the flag is the rollback, and it leaves nothing behind
+     but an idle container. */
+  let handedOff = false;
+  if (process.env.CODEAGENT_DURABLE_RUNS === "1") {
+    try {
+      const health = await runStore.getWorkerHealth();
+      if (health && health.healthy) {
+        handedOff = true;
+        await runStore.appendEvent(run.id, "stage", {
+          id: "queued", state: "start", detail: "Queued for the build worker…"
+        });
+      } else {
+        console.warn("[codeagent] durable runs are on but no worker is healthy — running in process");
+      }
+    } catch (e) {
+      console.warn("[codeagent] worker health check failed, running in process:", e && e.message);
+    }
+  }
+
   // Launch the autonomous agent runner in background
-  agentRunner.executeRun(run.id, {
+  if (!handedOff) agentRunner.executeRun(run.id, {
     history: req.body && req.body.conversation,
     imagesBlock,
     attachedImages

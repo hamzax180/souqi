@@ -1,0 +1,84 @@
+# =================================================================
+#  The code agent's durable worker — a THIRD stack, on purpose.
+#  -----------------------------------------------------------------
+#  Not added to infra/deploy/. That stack is the container plane, and
+#  its whole design is that it shares a git repository with the
+#  platform and nothing else: it speaks Postgres, holds the Docker
+#  socket, and has never had the platform's MongoDB credentials.
+#
+#  This process needs MONGODB_URI, because agent runs live in the
+#  platform database alongside projects and revisions. Giving that to
+#  the deploy plane would hand a Docker-socket-holding service write
+#  access to every customer's projects. So it lives here instead, with
+#  its own compose file, its own .env and its own deploy command — and
+#  it can be removed without touching anything the deploy plane owns.
+#
+#  docs/DYNAMIC-AGENT-PLAN.md §11 specifies exactly this: "separate
+#  worker packaging under infra/agent/".
+#
+#  WHAT IT DOES. Claims queued runs from agent_runs with a lease,
+#  executes the agent loop, renews the lease while it works, and
+#  finalises in a transaction. If it dies mid-run the lease expires and
+#  another worker — or the api's own sweep — recovers the row.
+#
+#  WHAT IT MUST NOT DO. Create containers. It has no Docker socket and
+#  no docker CLI in its image. Build verification is an HTTP call to
+#  the deploy plane, which is the only thing that may.
+# =================================================================
+services:
+  agent-worker:
+    build:
+      # The repo root, because the worker requires its way into
+      # backend/lib. See the Dockerfile's own note.
+      context: ../..
+      dockerfile: infra/agent/Dockerfile
+    restart: unless-stopped
+
+    environment:
+      # --- the platform database -------------------------------------
+      # The one credential that makes this stack a decision rather than
+      # a detail. Runs, checkpoints, events and revisions all live here.
+      MONGODB_URI: ${MONGODB_URI:?MONGODB_URI is required — the worker cannot claim a run without it}
+      DB_NAME: ${DB_NAME:-}
+      # Modest: this is one process claiming one run at a time, not a
+      # request-serving fleet. A large pool here is idle connections
+      # held against an Atlas limit the API also draws from.
+      MONGO_MAX_POOL: ${MONGO_MAX_POOL:-5}
+
+      # --- the build sandbox, on the deploy plane --------------------
+      # Two tokens, because there are two gates: the control hostname is
+      # fenced app-wide by x-platform-token before any route is reached,
+      # and the verifier route is fenced by x-internal-token. See
+      # docs/DEPLOYING.md. The trailing slash on the URL is load-bearing.
+      AGENT_VERIFIER_URL: ${AGENT_VERIFIER_URL:?set this to https://<control-domain>/internal/agent/ — with the trailing slash}
+      AGENT_VERIFIER_TOKEN: ${AGENT_VERIFIER_TOKEN:?this is the deploy plane's INTERNAL_TOKEN}
+      DEPLOY_PLATFORM_TOKEN: ${DEPLOY_PLATFORM_TOKEN:?this is the deploy plane's DEPLOY_PLATFORM_TOKEN}
+
+      # --- the model ------------------------------------------------
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      AI_JSON_MODEL: ${AI_JSON_MODEL:-}
+      AI_JSON_POWER_MODEL: ${AI_JSON_POWER_MODEL:-}
+      AI_PROSE_MODEL: ${AI_PROSE_MODEL:-}
+      AI_MONTHLY_BUDGET_USD: ${AI_MONTHLY_BUDGET_USD:-}
+
+      # --- the run's own limits -------------------------------------
+      # Longer than the serverless path's 300s, which is the entire
+      # reason this stack exists: here a run may actually take the time
+      # its effort level promises.
+      CODEAGENT_MAX_RUN_MS: ${CODEAGENT_MAX_RUN_MS:-1800000}
+      CODEAGENT_FINISH_RESERVE_MS: ${CODEAGENT_FINISH_RESERVE_MS:-30000}
+      CODEAGENT_APPROVAL_SECRET: ${CODEAGENT_APPROVAL_SECRET:-}
+      JWT_SECRET: ${JWT_SECRET:-}
+
+      NODE_ENV: production
+
+    # No ports. Nothing calls this; it claims work from the database.
+    # No volumes. It holds no state — the run store is the state.
+
+    # A worker that cannot reach Mongo exits, and compose restarts it
+    # rather than leaving a process that claims nothing and says nothing.
+    stop_grace_period: 40s
+
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
