@@ -389,6 +389,92 @@
   color: var(--ink2, #888);
   padding: 8px 20px;
 }
+
+/* ---------- the agent's own question ----------
+   Distinct from .ag-clarify above, which is the PLAN flow asking for
+   detail before it writes a plan. This one is the running agent
+   stopping mid-task because it has hit a choice it should not make for
+   you — so it looks like a decision to take, not a form to fill in. */
+.ag-ask {
+  background: var(--surface, #fff);
+  border: 1px solid var(--line, rgba(0,0,0,.12));
+  border-radius: 14px;
+  margin: 14px 0;
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0,0,0,.06), 0 1px 3px rgba(0,0,0,.04);
+  animation: sqFadeUp .25s var(--ease-snappy) both;
+}
+.ag-ask.done { opacity: .65; box-shadow: none; }
+.ask-head { display: flex; gap: 11px; align-items: flex-start; padding: 15px 18px 10px; }
+.ask-icon {
+  width: 26px; height: 26px; flex: 0 0 26px; border-radius: 8px;
+  display: grid; place-items: center;
+  background: color-mix(in oklch, var(--accent, #1aa6df) 14%, transparent);
+  color: var(--accent, #1aa6df);
+}
+.ask-icon svg { width: 15px; height: 15px; }
+.ask-kicker { font-size: .92rem; font-weight: 650; color: var(--ink, #111); }
+.ask-sub { margin: 2px 0 0; font-size: .8rem; color: var(--ink2, #888); }
+
+.ask-q { padding: 4px 18px 0; }
+.ask-q + .ask-q { margin-top: 14px; border-top: 1px solid var(--line, rgba(0,0,0,.08)); padding-top: 14px; }
+.ask-q-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
+.ask-chip {
+  font-size: .68rem; font-weight: 650; letter-spacing: .02em; text-transform: uppercase;
+  padding: 2px 8px; border-radius: 999px;
+  background: color-mix(in oklch, var(--accent, #1aa6df) 12%, transparent);
+  color: var(--accent, #1aa6df);
+}
+.ask-q-text { font-size: .88rem; font-weight: 600; color: var(--ink, #111); }
+.ask-multi { font-size: .72rem; color: var(--ink2, #888); }
+
+.ask-opts { display: flex; flex-direction: column; gap: 7px; }
+.ask-opt {
+  display: flex; gap: 10px; align-items: flex-start; width: 100%;
+  text-align: left; cursor: pointer;
+  padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--line, rgba(0,0,0,.12));
+  background: var(--surface, #fff);
+  transition: border-color var(--dur-chill, .2s), background var(--dur-chill, .2s);
+}
+.ask-opt:hover { border-color: color-mix(in oklch, var(--accent, #1aa6df) 45%, transparent); }
+.ask-opt.on {
+  border-color: var(--accent, #1aa6df);
+  background: color-mix(in oklch, var(--accent, #1aa6df) 7%, transparent);
+}
+.ask-tick {
+  width: 16px; height: 16px; flex: 0 0 16px; margin-top: 1px; border-radius: 5px;
+  border: 1.5px solid var(--line, rgba(0,0,0,.25));
+  display: grid; place-items: center; color: #fff;
+}
+.ask-opt.on .ask-tick { background: var(--accent, #1aa6df); border-color: var(--accent, #1aa6df); }
+.ask-tick svg { width: 10px; height: 10px; opacity: 0; }
+.ask-opt.on .ask-tick svg { opacity: 1; }
+.ask-opt-label { font-size: .84rem; font-weight: 600; color: var(--ink, #111); }
+.ask-opt-desc { margin: 2px 0 0; font-size: .77rem; line-height: 1.45; color: var(--ink2, #888); }
+
+.ask-other { margin-top: 7px; }
+.ask-input {
+  width: 100%; box-sizing: border-box;
+  padding: 9px 12px; border-radius: 10px; font: inherit; font-size: .83rem;
+  border: 1px solid var(--line, rgba(0,0,0,.12));
+  background: var(--surface, #fff); color: var(--ink, #111);
+  resize: vertical;
+}
+.ask-input:focus { outline: none; border-color: var(--accent, #1aa6df); }
+
+.ask-actions { display: flex; align-items: center; gap: 10px; padding: 14px 18px 16px; }
+.ask-send {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 8px 15px; border: none; border-radius: 9px; cursor: pointer;
+  font: inherit; font-size: .83rem; font-weight: 640;
+  background: var(--accent, #1aa6df); color: var(--on-accent, #fff);
+}
+.ask-send:hover { filter: brightness(1.08); }
+.ask-send:disabled { opacity: .45; cursor: not-allowed; filter: none; }
+.ask-send svg { width: 13px; height: 13px; }
+.ask-hint { font-size: .75rem; color: var(--ink2, #888); }
+.ask-chose { font-size: .8rem; color: var(--ink2, #888); padding: 8px 18px 14px; display: block; }
 </style>
 </head>
 <body><div class="ag-hist-backdrop" id="agHistBackdrop"></div>
@@ -2237,6 +2323,153 @@
     setTimeout(function() { textarea.focus(); }, 80);
   }
 
+  /* ---------- the agent asked something ----------
+     Rendered from the `question` SSE event, which the run emits when it
+     calls ask_user_question and parks itself. The run is ALREADY
+     waiting on the server by the time this appears — the card is not
+     what stops it, so closing the tab does not lose the question and
+     reloading brings it back with the run.
+
+     Answers post to /runs/:id/answer, not into the composer. The old
+     clarify flow concatenated the answer onto the original prompt and
+     re-ran the turn, which threw away everything the run had done. */
+  function showAgentQuestion(payload, runId) {
+    const questions = (payload && payload.questions) || [];
+    if (!questions.length || !runId) return;
+
+    const card = el("ag-ask");
+    const many = questions.length > 1;
+    let html = '<div class="ask-head">'
+      + '<div class="ask-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/><circle cx="12" cy="12" r="10"/></svg></div>'
+      + '<div><span class="ask-kicker">' + (many ? "A few decisions for you" : "One decision for you") + '</span>'
+      + '<p class="ask-sub">I’ve paused here — these are yours to make, not mine to guess.</p></div>'
+      + '</div>';
+
+    questions.forEach(function(q, qi) {
+      const qid = q.id || ("q" + (qi + 1));
+      html += '<div class="ask-q" data-qid="' + esc(qid) + '" data-multi="' + (q.multiSelect ? "1" : "0") + '">'
+        + '<div class="ask-q-head">'
+        + (q.header ? '<span class="ask-chip">' + esc(q.header) + '</span>' : "")
+        + '<span class="ask-q-text">' + esc(q.question) + '</span>'
+        + (q.multiSelect ? '<span class="ask-multi">pick any</span>' : "")
+        + '</div>';
+
+      const opts = q.options || [];
+      if (opts.length) {
+        html += '<div class="ask-opts">';
+        opts.forEach(function(o, oi) {
+          html += '<button type="button" class="ask-opt" data-label="' + esc(o.label) + '" data-oi="' + oi + '">'
+            + '<span class="ask-tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>'
+            + '<span><span class="ask-opt-label">' + esc(o.label) + '</span>'
+            + (o.description ? '<p class="ask-opt-desc">' + esc(o.description) + '</p>' : "")
+            + '</span></button>';
+        });
+        html += '</div>';
+      }
+
+      /* Always offered, and never one of the model's options. The tool
+         is told not to add an "other" choice precisely because the user
+         has one here whatever it proposed. */
+      html += '<div class="ask-other"><textarea class="ask-input" rows="' + (opts.length ? 1 : 2) + '" '
+        + 'placeholder="' + (opts.length ? "Something else…" : "Type your answer…") + '"></textarea></div>'
+        + '</div>';
+    });
+
+    html += '<div class="ask-actions">'
+      + '<button type="button" class="ask-send" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>Send</button>'
+      + '<span class="ask-hint">Answer every question to continue</span>'
+      + '</div>';
+
+    card.innerHTML = html;
+    agLog.appendChild(card);
+    toBottom();
+
+    const sendBtn = card.querySelector(".ask-send");
+    const hint = card.querySelector(".ask-hint");
+    const qEls = Array.prototype.slice.call(card.querySelectorAll(".ask-q"));
+
+    function answerOf(qEl) {
+      const typed = (qEl.querySelector(".ask-input").value || "").trim();
+      const picked = Array.prototype.slice.call(qEl.querySelectorAll(".ask-opt.on"))
+        .map(function(b) { return b.getAttribute("data-label"); });
+      // Typed text wins: it is the more specific thing the user said.
+      if (typed) return picked.length ? picked.join(", ") + " — " + typed : typed;
+      return picked.join(", ");
+    }
+
+    function refresh() {
+      const ready = qEls.every(function(qEl) { return !!answerOf(qEl); });
+      sendBtn.disabled = !ready;
+      hint.textContent = ready
+        ? (qEls.length > 1 ? "All answered" : "Ready")
+        : "Answer every question to continue";
+    }
+
+    card.addEventListener("click", function(ev) {
+      const btn = ev.target.closest ? ev.target.closest(".ask-opt") : null;
+      if (!btn || card.classList.contains("done")) return;
+      const qEl = btn.closest(".ask-q");
+      if (qEl.getAttribute("data-multi") === "1") {
+        btn.classList.toggle("on");
+      } else {
+        Array.prototype.slice.call(qEl.querySelectorAll(".ask-opt"))
+          .forEach(function(b) { b.classList.toggle("on", b === btn); });
+      }
+      refresh();
+    });
+    card.addEventListener("input", function(ev) {
+      if (ev.target && ev.target.classList.contains("ask-input")) refresh();
+    });
+
+    function settle(label) {
+      card.classList.add("done");
+      Array.prototype.slice.call(card.querySelectorAll(".ask-opt, .ask-input"))
+        .forEach(function(n) { n.disabled = true; });
+      card.querySelector(".ask-actions").outerHTML = '<span class="ask-chose">' + esc(label) + '</span>';
+    }
+
+    sendBtn.addEventListener("click", async function() {
+      if (sendBtn.disabled) return;
+      const answers = {};
+      qEls.forEach(function(qEl, i) {
+        const q = questions[i] || {};
+        answers[q.question || qEl.getAttribute("data-qid")] = answerOf(qEl);
+      });
+
+      sendBtn.disabled = true;
+      try {
+        const res = await fetch("/api/codeagent/runs/" + encodeURIComponent(runId) + "/answer", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ questionId: payload.id, answers: answers })
+        });
+        if (res.status === 202) {
+          settle("✓ Answered — carrying on");
+          /* The run resumes on the server and keeps streaming on the
+             events subscription that is already open, so there is
+             nothing to restart here. */
+          return;
+        }
+        /* 409 is the honest case rather than an error: the question was
+           already answered, most likely in another tab. */
+        const body = await res.json().catch(function() { return {}; });
+        settle(res.status === 409
+          ? "Already answered elsewhere"
+          : (body.error || "That answer did not go through"));
+      } catch (e) {
+        sendBtn.disabled = false;
+        hint.textContent = "Could not reach the server — try again";
+      }
+    });
+
+    refresh();
+    setTimeout(function() {
+      const first = card.querySelector(".ask-opt") || card.querySelector(".ask-input");
+      if (first) first.focus();
+    }, 80);
+  }
+
   /* ---------- build confirmation card — Claude style ----------
      Shown before a fresh build. "Looks good → Build it" re-runs
      with confirmed:true, "Edit request" hands the prompt back. */
@@ -2715,6 +2948,13 @@
             if (payload.fileContents) lastReceivedFiles = payload.fileContents;
           }
           else if (em[1] === "needsAnswer") { clarifyReply = payload.reply; clarifyAction = payload.action || "chat"; clarifyOptions = payload.options || null; }
+          /* The run has already parked itself on the server by the time
+             this arrives, so the card is a way to answer it rather than
+             the thing holding it open. Rendered immediately instead of
+             being collected for after the stream, which is what the
+             other question-ish events do — those end the turn, this one
+             pauses it and the same stream carries on afterwards. */
+          else if (em[1] === "question") showAgentQuestion(payload, runId);
           else if (em[1] === "confirm") confirmPlan = payload;
           else if (em[1] === "clarify") clarifyPlan = payload;
           else if (em[1] === "chitchat") chitchat = payload.reply;
