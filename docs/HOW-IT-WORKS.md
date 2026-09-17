@@ -163,6 +163,32 @@ superseded attempt is gone.
 `client.chat()` is the backstop: a request that still cannot fit is refused
 locally, with the numbers, rather than paying a round trip to be told so.
 
+**On the `/runs` engine, dropping is now the last resort rather than the
+only one.** `context/context-manager.ts` runs four steps before every call,
+cheapest first, each only when the one before it was not enough:
+
+| | what it does | what it costs |
+|---|---|---|
+| measure | pressure as a fraction of the usable window | nothing |
+| micro-compact | clears old bulky **tool results**, leaving a pointer | nothing — `agent_steps` still has the raw row |
+| auto-compact | replaces the middle with a structured summary | one provider call, and detail |
+| `fitConversation` | drops whole groups | whole turns |
+
+Thresholds are fractions of the window (0.60 and 0.85), not message counts:
+forty short turns fit comfortably and three turns carrying a 24,000-character
+`read_file` do not. In the 100-turn test, clearing tool output alone holds the
+request at 58% and the summary never runs — the expensive rung only engages
+when the bulk is the conversation itself.
+
+The summary is built from facts the runner tracked as they happened, not by
+reading the transcript back, because by then the transcript is what is being
+discarded. It quotes the user's request verbatim, keeps a pending question
+pending, and records an unattested browser check **as** unattested — a summary
+saying "passed" would launder a client's claim into a verified result.
+
+Nothing durable is written without `context/redact.ts` first. A summary and a
+project rule both outlive the turn that made them.
+
 Other limits: history 12 turns / 6,000 chars; `read_file` truncates at 24,000
 chars and says so; three tool rounds before the model is told to write; a
 truncated reply retries at double the budget, capped at 32,000.
