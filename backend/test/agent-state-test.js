@@ -41,8 +41,27 @@ console.log("\n── the surface each mode offers ─────────")
 /* Byte-identical to the filter this replaced (agent-runner.js:331). */
 check("a read-only mode offers exactly read_file, search_code, list_files", () => {
   assert.deepStrictEqual(st.offers("awaiting_question"), ["read_file", "search_code", "list_files"]);
-  assert.deepStrictEqual(st.offers("plan"), ["read_file", "search_code", "list_files"]);
   assert.deepStrictEqual(st.offers("awaiting_approval"), ["read_file", "search_code", "list_files"]);
+});
+
+/* Plan mode is the one read-only mode that may ask, and that is what
+   plan mode is for: working out what to build is exactly when a
+   consequential unknown surfaces, and the alternative to asking is
+   guessing and writing the guess into a plan the user then approves. */
+check("plan mode may ask a question, and a mode answering one may not ask back", () => {
+  assert.deepStrictEqual(st.offers("plan"),
+    ["read_file", "search_code", "list_files", "ask_user_question"]);
+  assert.strictEqual(st.permits("plan", "ask_user_question"), true);
+  assert.strictEqual(st.permits("awaiting_question", "ask_user_question"), false);
+  assert.strictEqual(st.permits("act", "ask_user_question"), true);
+});
+
+/* Asking writes nothing, but it is not free: it stops the run. Plan
+   mode is allowed it; the mode that exists BECAUSE a question is
+   outstanding is not, or a run could ask its way in a circle. */
+check("asking is still refused where it is not offered", () => {
+  assert.strictEqual(st.permits("chat", "ask_user_question"), false);
+  assert.strictEqual(st.permits("awaiting_approval", "ask_user_question"), false);
 });
 
 check("act offers all seven, and chat offers none", () => {

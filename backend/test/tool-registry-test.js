@@ -34,10 +34,15 @@ const ctx = (mode, f) => ({ mode, files: f, runId: "run_test" });
 
 console.log("\n── the surface did not move ─────────────");
 
-await check("the registry offers exactly the seven tools agent-runner exported", () => {
+/* An EXACT set, in the same spirit as model-loop-test's TOOLS_SCHEMA
+   assertion: widening the model's surface should cost somebody a
+   deliberate edit here. Adding ask_user_question broke this, which is
+   the assertion working. */
+await check("the registry offers exactly these eight tools, in this order", () => {
   assert.deepStrictEqual(
     registry.names(),
-    ["write_file", "edit_file", "read_file", "list_files", "search_code", "check_project", "complete_task"]
+    ["write_file", "edit_file", "read_file", "list_files", "search_code",
+     "check_project", "ask_user_question", "complete_task"]
   );
 });
 
@@ -198,6 +203,119 @@ await check("complete_task is permitted in a read-only mode", async () => {
   const r = await registry.dispatch("complete_task", { summary: "answered" }, ctx("awaiting_question", files()));
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.effects.completed, true);
+});
+
+console.log("\n── read before edit, and the same read ──");
+
+/* The candidate tree is edited in memory as the run goes, so a file read
+   on turn two may not be the file being edited on turn nine — the model's
+   own later write can have replaced it. */
+await check("an edit based on a stale read is refused, and the file is untouched", async () => {
+  const f = { "src/App.tsx": "const a = 1;" };
+  const seen = {};
+  const c = { mode: "act", files: f, runId: "r", seen };
+
+  await registry.dispatch("read_file", { path: "src/App.tsx" }, c);
+  // something else rewrites it — in a real run, the model's own write_file
+  f["src/App.tsx"] = "const a = 2;";
+
+  const r = await registry.dispatch("edit_file",
+    { path: "src/App.tsx", find: "const a = 2;", replace: "const a = 3;" }, c);
+  assert.strictEqual(r.ok, false);
+  assert.match(r.content, /has changed since you read it/);
+  assert.strictEqual(f["src/App.tsx"], "const a = 2;", "the stale edit was applied anyway");
+});
+
+await check("re-reading clears the conflict", async () => {
+  const f = { "src/App.tsx": "const a = 1;" };
+  const seen = {};
+  const c = { mode: "act", files: f, runId: "r", seen };
+
+  await registry.dispatch("read_file", { path: "src/App.tsx" }, c);
+  f["src/App.tsx"] = "const a = 2;";
+  await registry.dispatch("read_file", { path: "src/App.tsx" }, c);
+
+  const r = await registry.dispatch("edit_file",
+    { path: "src/App.tsx", find: "const a = 2;", replace: "const a = 3;" }, c);
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(f["src/App.tsx"], "const a = 3;");
+});
+
+await check("writing a file counts as having seen it", async () => {
+  const f = {};
+  const seen = {};
+  const c = { mode: "act", files: f, runId: "r", seen };
+  await registry.dispatch("write_file", { path: "src/Hero.tsx", content: "export const Hero = 1;" }, c);
+  const r = await registry.dispatch("edit_file",
+    { path: "src/Hero.tsx", find: "1", replace: "2" }, c);
+  assert.strictEqual(r.ok, true, r.content);
+});
+
+/* Without a recorded read there is nothing to compare against, and the
+   old behaviour stands — applyEditFileArgs still has the last word. */
+await check("a file that was never read edits as it always did", async () => {
+  const f = { "src/App.tsx": "const a = 1;" };
+  const r = await registry.dispatch("edit_file",
+    { path: "src/App.tsx", find: "const a = 1;", replace: "const a = 9;" },
+    { mode: "act", files: f, runId: "r", seen: {} });
+  assert.strictEqual(r.ok, true);
+});
+
+console.log("\n── asking is a choice, not a prompt ────");
+
+await check("a well-formed question is accepted and comes back as an effect", async () => {
+  const r = await registry.dispatch("ask_user_question", {
+    questions: [{
+      question: "Which payment provider should the shop use?",
+      header: "Payments",
+      options: [
+        { label: "Stripe", description: "Cards worldwide, needs a Stripe account." },
+        { label: "Cash on delivery", description: "No integration, no card fees." }
+      ]
+    }]
+  }, ctx("act", files()));
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.effects.questionAsked.length, 1);
+  assert.strictEqual(r.effects.questionAsked[0].id, "q1");
+  assert.strictEqual(r.effects.questionAsked[0].options.length, 2);
+  assert.match(r.content, /paused until they answer/);
+});
+
+/* One option is not a choice — a model offering one has usually taken a
+   decision it should have just taken silently. */
+await check("a single option is refused as not being a choice", async () => {
+  const r = await registry.dispatch("ask_user_question", {
+    questions: [{ question: "Use Stripe?", header: "Payments", options: [{ label: "Yes", description: "ok" }] }]
+  }, ctx("act", files()));
+  assert.strictEqual(r.ok, false);
+  assert.match(r.content, /not a choice/);
+});
+
+await check("questions and options are capped, and empty ones dropped", async () => {
+  const r = await registry.dispatch("ask_user_question", {
+    questions: Array.from({ length: 9 }, (_, i) => ({
+      question: "Question " + i + "?", header: "H" + i,
+      options: Array.from({ length: 9 }, (_, j) => ({ label: "opt" + j, description: "d" }))
+    }))
+  }, ctx("act", files()));
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.effects.questionAsked.length, 4, "more than four questions got through");
+  for (const q of r.effects.questionAsked) assert.strictEqual(q.options.length, 4);
+});
+
+await check("a question with no text is refused rather than parked", async () => {
+  for (const bad of [{ questions: [] }, { questions: [{ header: "H", options: [] }] }, {}]) {
+    const r = await registry.dispatch("ask_user_question", bad, ctx("act", files()));
+    assert.strictEqual(r.ok, false, JSON.stringify(bad) + " was accepted");
+  }
+});
+
+await check("a free-text question needs no options at all", async () => {
+  const r = await registry.dispatch("ask_user_question", {
+    questions: [{ question: "What is the business called?", header: "Name", options: [] }]
+  }, ctx("act", files()));
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.effects.questionAsked[0].options.length, 0);
 });
 
 console.log("\n── a refusal is always a reply ──────────");

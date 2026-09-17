@@ -51,13 +51,20 @@ exports.cancelRun = cancelRun;
 exports.appendEvent = appendEvent;
 exports.getEvents = getEvents;
 exports.saveCheckpoint = saveCheckpoint;
+exports.askQuestion = askQuestion;
+exports.answerQuestion = answerQuestion;
 exports.getLatestCheckpoint = getLatestCheckpoint;
 exports.recordStep = recordStep;
 exports.workerHeartbeat = workerHeartbeat;
 exports.getWorkerHealth = getWorkerHealth;
 exports.recoverExpiredRuns = recoverExpiredRuns;
 const crypto = __importStar(require("crypto"));
-const ACTIVE = ["queued", "running", "waiting_for_check", "finalizing"];
+/* awaiting_answer is ACTIVE, not terminal. The run is alive and holding:
+   its lease keeps renewing, its checkpoint stands, and it resumes on the
+   same transcript when the answer arrives. Listing it as terminal would
+   release the single-active-run slot and let a second run start on the
+   same project while the first still owns its files. */
+const ACTIVE = ["queued", "running", "waiting_for_check", "awaiting_answer", "finalizing"];
 const TERMINAL = ["succeeded", "failed", "cancelled", "partial"];
 let getMasterDb = () => null;
 let indexPromises = new WeakMap();
@@ -297,6 +304,43 @@ async function saveCheckpoint(runId, files, summary, fence) {
         return null;
     }
     return doc;
+}
+/**
+ * Park the run on a question and record what was asked.
+ *
+ * The question lives on the run document rather than in memory because
+ * the whole point is that it survives the process: a Vercel function
+ * that asked a question and died has still asked it, and the answer
+ * arrives at whichever instance happens to take the next request.
+ */
+async function askQuestion(runId, question) {
+    const result = await dbRequired().collection("agent_runs").updateOne({ id: runId, status: { $in: ACTIVE }, "meta.pendingQuestion": { $exists: false } }, { $set: { status: "awaiting_answer", phase: "awaiting_answer",
+            "meta.pendingQuestion": copy(question), updatedAt: now() } });
+    return !!result.matchedCount;
+}
+/**
+ * Consume the answer. Exactly once, whatever the client does.
+ *
+ * The questionId is part of the query rather than checked after
+ * reading, so two submissions of the same answer race on the same
+ * document and one of them loses: the second sees matchedCount 0 and
+ * is told the question is already answered, rather than resuming the
+ * run a second time on the same transcript.
+ *
+ * Ownership is part of the query too. An unguessable run id is not
+ * authorization, and this is the one route where a stranger's reply
+ * would be indistinguishable from the owner's.
+ */
+async function answerQuestion(runId, owner, questionId, answers) {
+    const scope = ownerKey(owner);
+    const result = await dbRequired().collection("agent_runs").updateOne({ id: runId, ownerKey: scope, status: "awaiting_answer", "meta.pendingQuestion.id": questionId }, {
+        $set: {
+            status: "running", phase: "resuming", updatedAt: now(),
+            "meta.answeredQuestion": { id: questionId, answers: copy(answers || {}), at: now() }
+        },
+        $unset: { "meta.pendingQuestion": "" }
+    });
+    return !!result.matchedCount;
 }
 async function getLatestCheckpoint(runId) {
     const run = await getRun(runId);

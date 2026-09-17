@@ -51,12 +51,18 @@ const READ_ONLY_TOOLS: ToolName[] = ["read_file", "search_code", "list_files"];
 
 const ALL_TOOLS: ToolName[] = [
   "write_file", "edit_file", "read_file", "list_files",
-  "search_code", "check_project", "complete_task"
+  "search_code", "check_project", "ask_user_question", "complete_task"
 ];
 
+/* Plan mode is offered the question tool and the other read-only modes
+   are not, and that asymmetry is the point of plan mode: working out
+   what to build is exactly when a consequential unknown shows up, and
+   the alternative to asking is guessing and writing the guess into a
+   plan the user then approves. A mode that is ANSWERING a question does
+   not get to ask one back — that is a loop. */
 const OFFERS: Record<AgentMode, ToolName[]> = {
   chat: [],
-  plan: READ_ONLY_TOOLS.slice(),
+  plan: READ_ONLY_TOOLS.concat(["ask_user_question"]),
   awaiting_question: READ_ONLY_TOOLS.slice(),
   awaiting_approval: READ_ONLY_TOOLS.slice(),
   act: ALL_TOOLS.slice()

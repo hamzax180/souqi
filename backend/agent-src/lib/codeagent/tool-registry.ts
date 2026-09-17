@@ -39,6 +39,7 @@
 
 import { validateWriteFileArgs, applyEditFileArgs } from "./model-loop";
 import * as agentState from "./agent-state";
+import { hashOf } from "./context/file-retrieval";
 import type {
   ToolContext, ToolEntry, ToolName, ToolOutcome, ToolSchema
 } from "./types";
@@ -135,6 +136,50 @@ const SCHEMAS: ToolSchema[] = [
   {
     type: "function",
     function: {
+      name: "ask_user_question",
+      description:
+        "Ask the user to decide something you cannot decide for them, and stop until they answer. " +
+        "Use this ONLY when the choice is consequential and the answer is not already in the project " +
+        "files, the conversation, or the project's remembered rules — check those first. A question " +
+        "the user has effectively already answered costs them a round trip and reads as not listening. " +
+        "Good: which payment provider, whether prices include tax, what the business is actually called. " +
+        "Bad: anything about colour, spacing or wording, which you should choose and let them correct.",
+      parameters: {
+        type: "object",
+        properties: {
+          questions: {
+            type: "array",
+            description: "1-4 questions. Ask everything you need in one go rather than in a series.",
+            items: {
+              type: "object",
+              properties: {
+                question: { type: "string", description: "The question, in full. Ends with a question mark." },
+                header: { type: "string", description: "A 1-3 word label for the chip, e.g. \"Payments\" or \"Currency\"." },
+                options: {
+                  type: "array",
+                  description: "2-4 distinct choices. Do not add an \"other\" option — the user always has one.",
+                  items: {
+                    type: "object",
+                    properties: {
+                      label: { type: "string", description: "1-5 words. What the user picks." },
+                      description: { type: "string", description: "What choosing this means, and its trade-off." }
+                    },
+                    required: ["label", "description"]
+                  }
+                },
+                multiSelect: { type: "boolean", description: "True when the choices are not mutually exclusive." }
+              },
+              required: ["question", "header", "options"]
+            }
+          }
+        },
+        required: ["questions"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
       name: "complete_task",
       description: "Declare the task complete when all user requirements are satisfied and code compiles cleanly.",
       parameters: {
@@ -171,6 +216,8 @@ const TOOLS: ToolEntry[] = [
       // Throws on every refusal; dispatch turns that into a tool result.
       const { path, content } = validateWriteFileArgs(args, { imageUrls: ctx.imageUrls ?? [] });
       ctx.files[path] = content;
+      // The model wrote it, so it knows this version — no stale-read refusal.
+      if (ctx.seen) ctx.seen[path] = hashOf(content);
       await emit(ctx, "file_written", { path, bytes: content.length });
       await emit(ctx, "stage", { id: "file-" + path, state: "done", detail: "Wrote " + path });
       return { ok: true, content: "Successfully wrote " + path, effects: { wrotePath: path } };
@@ -189,8 +236,34 @@ const TOOLS: ToolEntry[] = [
          invented image URL exactly as a write can. */
       const probe = validateEditPathish(args);
       const current = ctx.files[probe];
+
+      /* READ BEFORE EDIT, and the same read.
+
+         The candidate tree is edited in memory as the run goes, so a
+         file the model read on turn two is not necessarily the file it
+         is editing on turn nine — its own later write may have replaced
+         it. applyEditFileArgs would then find the anchor missing and say
+         "copy it exactly as it appears", which is true and useless,
+         because the model DID copy it exactly as it appeared at the time.
+
+         Refusing with the reason is what lets it recover: re-read, then
+         edit. Only enforced when there IS a recorded read; an edit to a
+         file the model has not read is the existing behaviour and
+         applyEditFileArgs still has the last word on it. */
+      if (ctx.seen && typeof current === "string") {
+        const sawAt = ctx.seen[probe];
+        if (sawAt && sawAt !== hashOf(current)) {
+          return {
+            ok: false,
+            content: 'Error: "' + probe + '" has changed since you read it — most likely you wrote to it ' +
+              "yourself later in this run. Call read_file on it again and base the edit on what comes back."
+          };
+        }
+      }
+
       const { path, content } = applyEditFileArgs(args, current, { imageUrls: ctx.imageUrls ?? [] });
       ctx.files[path] = content;
+      if (ctx.seen) ctx.seen[path] = hashOf(content);
       await emit(ctx, "file_edited", { path });
       await emit(ctx, "stage", { id: "file-" + path, state: "done", detail: "Edited " + path });
       return { ok: true, content: "Successfully edited " + path, effects: { editedPath: path } };
@@ -210,6 +283,10 @@ const TOOLS: ToolEntry[] = [
       const path = str(args.path).trim();
       const content = ctx.files[path];
       if (content === undefined) return { ok: true, content: "File not found: " + path };
+      /* Remember WHICH version the model was shown. edit_file compares
+         against this, so an anchor written from a stale read is refused
+         rather than applied to a file that has moved on. */
+      if (ctx.seen) ctx.seen[path] = hashOf(content);
       return { ok: true, content };
     }
   },
@@ -255,6 +332,57 @@ const TOOLS: ToolEntry[] = [
     schema: schemaOf("check_project"),
     run() {
       return { ok: true, content: "check_project initiated.", effects: { checkRequested: true } };
+    }
+  },
+  {
+    name: "ask_user_question",
+    /* Writes nothing, so readOnly — but it is the one tool whose whole
+       effect is on the RUN rather than on the files: it parks the run
+       and the turn loop stops. See agent-runner, which persists the
+       question before it returns. */
+    readOnly: true,
+    schema: schemaOf("ask_user_question"),
+    run(args) {
+      const raw = Array.isArray(args.questions) ? args.questions : [];
+      const questions = raw.slice(0, 4).map((q: any, i: number) => {
+        const options = (Array.isArray(q && q.options) ? q.options : [])
+          .slice(0, 4)
+          .map((o: any) => ({
+            label: str(o && o.label).slice(0, 60),
+            description: str(o && o.description).slice(0, 240)
+          }))
+          .filter((o: { label: string }) => o.label);
+        return {
+          id: "q" + (i + 1),
+          question: str(q && q.question).slice(0, 400),
+          header: str(q && q.header).slice(0, 24),
+          options,
+          multiSelect: !!(q && q.multiSelect)
+        };
+      }).filter((q: { question: string }) => q.question);
+
+      if (!questions.length) {
+        return { ok: false, content: 'Error: ask_user_question needs at least one question with text.' };
+      }
+      /* Two options or none. One option is not a choice, and a model
+         that offers one is usually stating a decision it should have
+         just taken. */
+      for (const q of questions) {
+        if (q.options.length === 1) {
+          return {
+            ok: false,
+            content: 'Error: "' + q.header + '" offers a single option, which is not a choice. ' +
+              "Give 2-4 distinct options, or none at all if the answer is free text."
+          };
+        }
+      }
+
+      return {
+        ok: true,
+        content: "Asked the user " + questions.length + " question" + (questions.length === 1 ? "" : "s") +
+          ". The run is paused until they answer.",
+        effects: { questionAsked: questions }
+      };
     }
   },
   {

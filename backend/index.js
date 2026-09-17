@@ -5109,6 +5109,54 @@ app.post("/api/codeagent/runs/:id/check-result", express.json({ limit: "1mb" }),
  * POST /api/codeagent/runs/:id/cancel
  * Halts an active run.
  */
+/**
+ * POST /api/codeagent/runs/:id/answer
+ * Body: { questionId, answers: { "<question text>": "<answer>" } }
+ *
+ * Resumes a run parked on ask_user_question. The store does the work
+ * that matters: ownership is part of the update query rather than a
+ * check before it, and the questionId is too, so two submissions of the
+ * same answer race on one document and exactly one wins. A second one
+ * gets 409 rather than resuming the run again on the same transcript.
+ */
+app.post("/api/codeagent/runs/:id/answer", async (req, res) => {
+  const owner = appOwnerOf(req, res);
+  const questionId = String((req.body && req.body.questionId) || "");
+  const raw = (req.body && req.body.answers) || {};
+  if (!questionId) return res.status(400).json({ error: "questionId is required" });
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return res.status(400).json({ error: "answers must be an object of question -> answer" });
+  }
+
+  // Bounded before it is stored: this is user text that ends up in a prompt.
+  const answers = {};
+  for (const [q, a] of Object.entries(raw).slice(0, 4)) {
+    answers[String(q).slice(0, 400)] = String(a ?? "").slice(0, 2000);
+  }
+
+  const resumed = await runStore.answerQuestion(req.params.id, owner, questionId, answers);
+  if (!resumed) {
+    return res.status(409).json({
+      error: "That question is not open — it may have been answered already, or the run has moved on."
+    });
+  }
+
+  await runStore.appendEvent(req.params.id, "answered", { id: questionId });
+
+  /* Same fire-and-forget shape the spawn route uses: the run continues
+     in the background and the client follows it on the events stream it
+     is already subscribed to. */
+  const run = await runStore.getRun(req.params.id, owner);
+  agentRunner.executeRun(req.params.id, {
+    history: (run && run.context && run.context.history) || []
+  }).catch(async (err) => {
+    await runStore.updateRun(req.params.id, { status: "failed", latestError: String(err && err.message || err) })
+      .catch(() => {});
+  });
+
+  res.status(202).json({ resumed: true, runId: req.params.id });
+});
+
 app.post("/api/codeagent/runs/:id/cancel", async (req, res) => {
   const owner = appOwnerOf(req, res);
   const ok = await runStore.cancelRun(req.params.id, owner, req.body && req.body.reason);

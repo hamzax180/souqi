@@ -16,7 +16,7 @@ import * as registry from "./tool-registry";
 import * as agentState from "./agent-state";
 import * as contextManager from "./context/context-manager";
 import * as retrieval from "./context/file-retrieval";
-import type { AgentMode, ToolContext } from "./types";
+import type { AgentMode, StopReason, ToolContext } from "./types";
 import {
   systemPromptFor,
   buildCodebaseContext,
@@ -252,6 +252,29 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
     });
   }
 
+  /* A run that was parked on a question resumes here. The answer goes
+     in as its own turn rather than being concatenated onto the original
+     prompt — which is what the old clarify flow did, and it meant the
+     model saw one sentence somebody had glued together instead of a
+     question it asked and a person answering it. */
+  const answered = run.meta && run.meta.answeredQuestion;
+  if (answered && answered.answers) {
+    const lines = Object.entries(answered.answers as Record<string, string>)
+      .map(([q, a]) => "  " + q + " -> " + a);
+    if (lines.length) {
+      messages.push({
+        role: "user",
+        content: "You asked, and the user answered:\n" + lines.join("\n") +
+          "\n\nCarry on from where you stopped. Do not ask this again."
+      });
+    }
+  }
+
+  /* What version of each file the model has actually been shown. Lives
+     for the whole run, not the turn, because the stale read it guards
+     against happens across turns. */
+  const seen: Record<string, string> = {};
+
   let taskCompleted = false;
   let finalSummary = "";
   let repairedCount = 0;
@@ -282,7 +305,7 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
     const currentRun = await runStore.getRun(runId);
     if (currentRun && currentRun.cancelled) {
       await runStore.appendEvent(runId, "stage", { id: "turn-" + turn, state: "cancelled", detail: "Run was cancelled by user." });
-      return { ok: false, cancelled: true };
+      return { ok: false, cancelled: true, stopReason: "cancelled" as StopReason };
     }
 
     const hasEntry = !!currentFiles["src/App.tsx"] || !!currentFiles["index.html"];
@@ -341,7 +364,7 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
     if (!aiRes.ok) {
       await runStore.updateRun(runId, { status: "failed", latestError: aiRes.reason });
       await runStore.appendEvent(runId, "error", { error: aiRes.reason || "Model call failed" });
-      return { ok: false, reason: aiRes.reason };
+      return { ok: false, reason: aiRes.reason, stopReason: "tool_error" as StopReason };
     }
 
     const assistantMsg = aiRes.message || { role: "assistant", content: "" };
@@ -429,6 +452,7 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
     const ctx: ToolContext = {
       mode: state.mode,
       files: currentFiles,
+      seen,
       runId,
       imageUrls: (opts.attachedImages || []).map((i) => String(i && i.url || "")).filter(Boolean),
       emit: (type, payload) => runStore.appendEvent(runId, type, payload)
@@ -467,6 +491,32 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
           (facts.filesEdited as string[]).push(effects.editedPath);
         }
         if (effects.checkRequested) needsBrowserCheck = true;
+        if (effects.questionAsked && effects.questionAsked.length) {
+          /* Persisted BEFORE the loop is left, so a process that dies
+             on the next line has still asked the question and the run
+             can be answered by whichever instance takes the request. */
+          const questionId = "aq_" + runId + "_" + turn;
+          const parked = await runStore.askQuestion(runId, {
+            id: questionId, questions: effects.questionAsked, askedAt: new Date().toISOString()
+          });
+          if (parked) {
+            await runStore.appendEvent(runId, "question", {
+              id: questionId, questions: effects.questionAsked
+            });
+            await runStore.recordStep(runId, { turn, toolCalls, toolResults, costUsd: aiRes.costUsd || 0 });
+            return {
+              ok: false, stopReason: "awaiting_question" as StopReason,
+              questionId, questions: effects.questionAsked,
+              files: currentFiles, costUsd: totalCostUsd
+            };
+          }
+          /* askQuestion refuses when one is already outstanding. Telling
+             the model that is better than parking twice. */
+          toolResults[toolResults.length - 1] = {
+            role: "tool", tool_call_id: tc.id,
+            content: "Error: this run is already waiting on a question. Answer that one first."
+          };
+        }
         if (effects.completed) {
           taskCompleted = true;
           finalSummary = effects.summary || textOf(assistantMsg.content) || "Task completed successfully.";
@@ -603,8 +653,15 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
     warnings: finalGate.soft || []
   });
 
+  /* Eight outcomes, and they are not the same event. A turn_limit keeps
+     its files and can be continued; a tool_error may not have any. The
+     old shape said ok:true either way and left the caller to guess from
+     whether `summary` looked finished. */
+  const stopReason: StopReason = taskCompleted ? "completed" : "turn_limit";
+
   return {
     ok: true,
+    stopReason,
     files: currentFiles,
     fileContents: fullBundle,
     summary: finalSummary,

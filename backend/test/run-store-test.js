@@ -3,6 +3,28 @@
 const assert = require("assert");
 const runStore = require("../lib/codeagent/run-store");
 
+/* Dotted paths, because the question a run is parked on lives at
+   meta.pendingQuestion and both the query and the update address it that
+   way. Without these the mock silently matched nothing and every
+   pause/resume assertion passed by not happening. */
+function dotGet(doc, path) {
+  return String(path).split(".").reduce((o, k) => (o === undefined || o === null ? undefined : o[k]), doc);
+}
+function dotSet(doc, path, value) {
+  const keys = String(path).split(".");
+  const last = keys.pop();
+  let cur = doc;
+  for (const k of keys) { if (typeof cur[k] !== "object" || cur[k] === null) cur[k] = {}; cur = cur[k]; }
+  cur[last] = value;
+}
+function dotUnset(doc, path) {
+  const keys = String(path).split(".");
+  const last = keys.pop();
+  let cur = doc;
+  for (const k of keys) { if (typeof cur[k] !== "object" || cur[k] === null) return; cur = cur[k]; }
+  delete cur[last];
+}
+
 // Mock in-memory DB for unit testing without live MongoDB
 function createMockDb() {
   const collections = {};
@@ -28,23 +50,26 @@ function createMockDb() {
         async updateOne(query, update) {
           const match = docs.find((d) => {
             for (const [k, v] of Object.entries(query)) {
+              const actual = dotGet(d, k);
               if (v && typeof v === "object" && Array.isArray(v.$in)) {
-                if (!v.$in.includes(d[k])) return false;
+                if (!v.$in.includes(actual)) return false;
               } else if (v && typeof v === "object" && v.$gt !== undefined) {
-                if (d[k] <= v.$gt) return false;
+                if (actual <= v.$gt) return false;
               } else if (v && typeof v === "object" && v.$lte !== undefined) {
-                if (d[k] > v.$lte) return false;
-              } else if (d[k] !== v) {
+                if (actual > v.$lte) return false;
+              } else if (v && typeof v === "object" && v.$exists !== undefined) {
+                if ((actual !== undefined) !== !!v.$exists) return false;
+              } else if (actual !== v) {
                 return false;
               }
             }
             return true;
           });
-          if (!match) return { modifiedCount: 0 };
-          if (update.$set) Object.assign(match, update.$set);
-          if (update.$unset) { for (const key of Object.keys(update.$unset)) delete match[key]; }
-          if (update.$inc) { for (const [key, val] of Object.entries(update.$inc)) { match[key] = (match[key] || 0) + val; } }
-          return { modifiedCount: 1 };
+          if (!match) return { modifiedCount: 0, matchedCount: 0 };
+          if (update.$set) { for (const [k, v] of Object.entries(update.$set)) dotSet(match, k, v); }
+          if (update.$unset) { for (const k of Object.keys(update.$unset)) dotUnset(match, k); }
+          if (update.$inc) { for (const [k, v] of Object.entries(update.$inc)) dotSet(match, k, (dotGet(match, k) || 0) + v); }
+          return { modifiedCount: 1, matchedCount: 1 };
         },
         find(query, opts) {
           let res = docs.filter((d) => {
@@ -173,6 +198,75 @@ async function check(name, fn) {
     const events = await runStore.getEvents(testRunId, 0);
     const lastEv = events[events.length - 1];
     assert.strictEqual(lastEv.type, "run_cancelled");
+  });
+
+  console.log("\n── a run that is waiting on an answer ───");
+
+  await check("askQuestion parks the run and records what was asked", async () => {
+    const run = await runStore.createRun({
+      projectId: "pr_q", owner: { userId: "u1" }, prompt: "build a shop", mode: "act", effort: "balanced"
+    });
+    const parked = await runStore.askQuestion(run.id, {
+      id: "aq_1", askedAt: new Date().toISOString(),
+      questions: [{ id: "q1", question: "Which provider?", header: "Payments", options: [] }]
+    });
+    assert.strictEqual(parked, true);
+    const after = await runStore.getRun(run.id);
+    assert.strictEqual(after.status, "awaiting_answer");
+    assert.strictEqual(after.meta.pendingQuestion.id, "aq_1");
+  });
+
+  /* Two submissions of the same answer race on one document. One wins.
+     The other must be told it is already answered rather than resuming
+     the run a second time on the same transcript. */
+  await check("an answer is consumed exactly once", async () => {
+    const owner = { userId: "u1" };
+    const run = await runStore.createRun({
+      projectId: "pr_q2", owner, prompt: "build a shop", mode: "act", effort: "balanced"
+    });
+    await runStore.askQuestion(run.id, { id: "aq_2", askedAt: "now", questions: [] });
+
+    const first = await runStore.answerQuestion(run.id, owner, "aq_2", { "Which provider?": "Stripe" });
+    const second = await runStore.answerQuestion(run.id, owner, "aq_2", { "Which provider?": "Stripe" });
+    assert.strictEqual(first, true);
+    assert.strictEqual(second, false, "the same answer resumed the run twice");
+
+    const after = await runStore.getRun(run.id);
+    assert.strictEqual(after.status, "running");
+    assert.strictEqual(after.meta.pendingQuestion, undefined);
+    assert.strictEqual(after.meta.answeredQuestion.answers["Which provider?"], "Stripe");
+  });
+
+  /* An unguessable run id is not authorization, and this is the one
+     route where a stranger's reply looks exactly like the owner's. */
+  await check("another owner cannot answer your question", async () => {
+    const owner = { userId: "u1" };
+    const run = await runStore.createRun({
+      projectId: "pr_q3", owner, prompt: "build a shop", mode: "act", effort: "balanced"
+    });
+    await runStore.askQuestion(run.id, { id: "aq_3", askedAt: "now", questions: [] });
+
+    const stranger = await runStore.answerQuestion(run.id, { userId: "u2" }, "aq_3", { a: "b" });
+    assert.strictEqual(stranger, false);
+    const after = await runStore.getRun(run.id);
+    assert.strictEqual(after.status, "awaiting_answer", "a stranger resumed the run");
+  });
+
+  await check("an answer to a question that was never asked does nothing", async () => {
+    const owner = { userId: "u1" };
+    const run = await runStore.createRun({
+      projectId: "pr_q4", owner, prompt: "build a shop", mode: "act", effort: "balanced"
+    });
+    await runStore.askQuestion(run.id, { id: "aq_4", askedAt: "now", questions: [] });
+    assert.strictEqual(await runStore.answerQuestion(run.id, owner, "aq_WRONG", { a: "b" }), false);
+  });
+
+  await check("a run already holding a question does not park on a second", async () => {
+    const run = await runStore.createRun({
+      projectId: "pr_q5", owner: { userId: "u1" }, prompt: "p", mode: "act", effort: "balanced"
+    });
+    assert.strictEqual(await runStore.askQuestion(run.id, { id: "a", askedAt: "n", questions: [] }), true);
+    assert.strictEqual(await runStore.askQuestion(run.id, { id: "b", askedAt: "n", questions: [] }), false);
   });
 
   console.log("\n" + (failed === 0 ? "✓ ALL RUN-STORE TESTS PASSED (" + passed + ")" : "✗ " + failed + " FAILED, " + passed + " passed"));

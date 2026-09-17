@@ -37,6 +37,7 @@ export type ToolName =
   | "list_files"
   | "search_code"
   | "check_project"
+  | "ask_user_question"
   | "complete_task";
 
 /** OpenAI-shaped function schema — the form DYNAMIC_TOOLS_SCHEMA already
@@ -64,6 +65,14 @@ export interface ToolEffects {
   summary?: string;
   wrotePath?: string;
   editedPath?: string;
+  /** Set by ask_user_question. The runner persists these and stops. */
+  questionAsked?: Array<{
+    id: string;
+    question: string;
+    header: string;
+    options: Array<{ label: string; description: string }>;
+    multiSelect: boolean;
+  }>;
 }
 
 /** What dispatch() always returns. It never throws and never returns
@@ -86,6 +95,9 @@ export interface ToolContext {
   files: Record<string, string>;
   runId: string;
   imageUrls?: string[];
+  /** path -> hash of the version the model was last shown or wrote.
+      Absent means no conflict checking, which is the old behaviour. */
+  seen?: Record<string, string>;
   emit?: (type: string, payload: Record<string, unknown>) => Promise<void> | void;
 }
 
