@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=4.5">
+<link rel="stylesheet" href="/styles/pages/code.css?v=4.6">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -2013,39 +2013,15 @@
       + '<span class="when" data-at="' + esc(at) + '">' + esc(whenText(at)) + '</span>';
     agLog.appendChild(row); toBottom();
 
-    if (building) {
-      showInterruptUnderUserMessage();
-    }
     return row;
   }
 
-  function showInterruptUnderUserMessage() {
-    removeInterruptRow();
-    if (!building) return;
-    const lastUserMsg = agLog.querySelector(".ag-user:last-of-type");
-    if (!lastUserMsg) return;
-    const row = el("ag-interrupt-row");
-    row.id = "agInterruptRow";
-    const label = buildQueue.length > 0 ? "Interrupt Agent" : "Cancel";
-    row.innerHTML =
-      '<button class="ag-interrupt-btn" type="button" id="agInterruptBtn" title="Cancel active Agent turn">' +
-        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></svg>' +
-        '<span>' + label + '</span>' +
-      '</button>';
-    lastUserMsg.after(row);
-    toBottom();
-    const btn = row.querySelector("#agInterruptBtn");
-    if (btn) {
-      btn.addEventListener("click", () => {
-        cancelTurn();
-      });
-    }
-  }
-
-  function removeInterruptRow() {
-    const existing = $("agInterruptRow");
-    if (existing) existing.remove();
-  }
+  /* There was a red Cancel pill under the last user message, which put a
+     second stop control on screen a few pixels from the one in the
+     composer — the composer's send button already becomes a stop while a
+     turn runs, and that is where you are looking when you want to stop.
+     Two of them meant the transcript grew a button that scrolled away
+     with the message it was attached to. */
   function think(label, container, cls) {
     clearEmpty();
     const row = el("ag-think busy" + (cls ? " " + cls : ""), '<span class="ic">' + ICON.dot + "</span><span></span>");
@@ -2444,7 +2420,6 @@
       try { currentAbortController.abort(); } catch(e) {}
       currentAbortController = null;
     }
-    removeInterruptRow();
     resetBootScreen();
     if (building) {
       building = false;
@@ -2499,8 +2474,6 @@
     } else if (qb) {
       qb.remove();
     }
-    if (building) showInterruptUnderUserMessage();
-    else removeInterruptRow();
   }
 
   function updateComposerSendButton() {
@@ -3134,7 +3107,6 @@
     sayUser(prompt, false, null, attachedImages
       .filter((i) => i.status === "ready" && i.url)
       .map((i) => ({ url: i.url, name: i.name })));
-    showInterruptUnderUserMessage();
     const startedAt = Date.now();
     const handles = {};
     let openedStream = null;
@@ -3886,7 +3858,6 @@
       currentAbortController = null;
       document.body.classList.remove("is-building");
       agHistory.classList.remove("focus");
-      removeInterruptRow();
       if (!result && (!lastReceivedFiles || !Object.keys(lastReceivedFiles).length)) {
         resetBootScreen();
       }
