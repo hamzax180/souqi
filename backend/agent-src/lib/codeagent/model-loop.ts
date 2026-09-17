@@ -3170,7 +3170,10 @@ async function buildPlan(prompt: any, buildType: any) {
 
       if (summaryText && (phasesList.length || featuresList.length)) {
         const plan = {
-          title: String(p.title || clean).slice(0, 60),
+          /* The model's own title is usually already short; `clean` is
+             the raw prompt and is not, so the same word-boundary cut
+             applies here rather than a flat slice mid-word. */
+          title: headline(p.title || clean, 60),
           summary: summaryText.slice(0, 240),
           overview: summaryText.slice(0, 400),
           features: featuresList.length ? featuresList : (phasesList.flatMap((ph: any) => ph.steps).slice(0, 5)),
@@ -3205,9 +3208,29 @@ const PLAN_TYPE_FEATURES = {
   booking:   ["A date and time picker", "A booking form", "A confirmation view"]
 };
 
+/* A heading, not a truncated paragraph.
+   -----------------------------------------------------------------
+   This cut the prompt at 58 characters flat, so a long request became
+   "Create a website of 5 AI structures 5 personality types wi\u2026" \u2014 a
+   word sliced in half, used as the card's title AND quoted again
+   inside its own overview sentence.
+
+   Cut on a word boundary, drop a trailing comma or conjunction so the
+   phrase ends somewhere a person would end it, and only add the
+   ellipsis when something was actually removed. */
+function headline(prompt: any, max = 58): string {
+  const text = String(prompt || "").replace(/\s+/g, " ").trim();
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const lastSpace = cut.lastIndexOf(" ");
+  // A single word longer than the limit has no boundary to cut on.
+  const stem = lastSpace > max * 0.5 ? cut.slice(0, lastSpace) : cut;
+  return stem.replace(/[\s,;:.\u2013\u2014-]+$/, "").replace(/\s+(and|or|with|for|of|the|a|an|to|in|on)$/i, "") + "\u2026";
+}
+
 function fallbackPlan(prompt: any, buildType: any) {
   const type = String(buildType || "website").toLowerCase();
-  const short = prompt.length > 58 ? prompt.slice(0, 58).trimEnd() + "\u2026" : prompt;
+  const short = headline(prompt);
   const typeFeatures = {
     website:    { screens: ["Home", "About", "Contact"], steps1: ["Hero section and headline", "Content sections", "Footer with links"], steps2: ["Responsive layout", "Smooth scroll behaviour"] },
     webapp:     { screens: ["Main view", "Empty state"], steps1: ["Main interactive view", "Add and edit items"], steps2: ["Local persistence", "State management"] },

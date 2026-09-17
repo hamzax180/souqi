@@ -18,22 +18,69 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=3.7">
+<link rel="stylesheet" href="/styles/pages/code.css?v=3.8">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
 /* ══════════════════════════════════════════════════════════════
    PLAN MODE v2 — Claude-style plan card & clarify UI
    ══════════════════════════════════════════════════════════════ */
+
+/* --surface, --surface2 and --ink2 are read twenty-five times below
+   and were never defined on this page. They live in admin.css,
+   login.css and mobile.css, and code.html loads none of those — so
+   every one of them fell back to its literal, and the literals are
+   light.
+
+   --ink is NOT in that group: code.css does define it, as #f5f9fc in
+   dark. That mismatch is the whole bug. The card painted itself with
+   a fallback white --surface and then wrote the title in the theme's
+   real near-white --ink, so in dark mode the plan had an invisible
+   heading on a white card in the middle of a dark page. The overview
+   stayed readable only because --ink2 was undefined too and fell back
+   to #666.
+
+   Defined here rather than renamed at each use: one place to look,
+   and nothing else loaded on this page reads var(--surface).
+
+   The dark values are warm deliberately. The rest of the dark theme
+   is neutral grey (--paper:#18191b, --card:#26282b), which reads cold
+   beside --tint (#3d3428) and --th-dot (#f6f1e8) — both already warm.
+   mobile.css reached the same conclusion on its own: its dark
+   --surface is #211e1b. */
+:root {
+  --surface: #ffffff;
+  --surface2: #f6f5f4;
+  --ink2: #5c6062;
+  --plan-line: var(--line, rgba(0,0,0,.12));
+  --plan-line-soft: rgba(0,0,0,.08);
+}
+:root[data-theme="dark"] {
+  --surface: #211e1b;
+  --surface2: #2a2623;
+  --ink2: #a49c93;
+  /* Borders and separators inside these cards only. --line is a
+     page-wide token and a cool #33363a; a warm card with a cold edge
+     looks like two designs touching. */
+  --plan-line: #3a342e;
+  --plan-line-soft: rgba(255,255,255,.07);
+}
+
 .ag-plan {
   background: var(--surface, #fff);
-  border: 1px solid var(--line, rgba(0,0,0,.12));
+  border: 1px solid var(--plan-line);
   border-radius: 14px;
   padding: 0;
   margin: 14px 0;
   overflow: hidden;
   box-shadow: 0 4px 20px rgba(0,0,0,.06), 0 1px 3px rgba(0,0,0,.04);
   animation: sqFadeUp .25s var(--ease-snappy) both;
+}
+/* A shadow tuned on white does nothing on a dark page — the card needs
+   depth from contrast with the surface instead, so it gets a lifted
+   edge rather than a drop. */
+:root[data-theme="dark"] .ag-plan {
+  box-shadow: 0 1px 0 rgba(255,255,255,.04) inset, 0 8px 28px rgba(0,0,0,.45);
 }
 .ag-plan.done { opacity: .65; box-shadow: none; }
 
@@ -2715,6 +2762,34 @@
   /* ---------- build confirmation card — Claude style ----------
      Shown before a fresh build. "Looks good → Build it" re-runs
      with confirmed:true, "Edit request" hands the prompt back. */
+  /* The card, thinking, shown the moment the request goes out.
+     -----------------------------------------------------------------
+     showPlan() used to be the first thing the user saw, and it opened
+     with an 820ms "Thinking…" shimmer — which meant the indicator
+     played AFTER the answer had already arrived, and the real wait
+     before it, which is the long one, showed nothing at all. The
+     animation was in the wrong place on the timeline.
+
+     This is the same card in its waiting state; showPlan() adopts it
+     rather than appending a second one. */
+  let agPlanPending = null;
+  function showPlanThinking() {
+    if (agPlanPending && agPlanPending.isConnected) return agPlanPending;
+    const card = el("ag-plan");
+    card.innerHTML = '<div class="pl2-think">'
+      + '<span class="pl2-think-dot"></span><span class="pl2-think-dot"></span><span class="pl2-think-dot"></span>'
+      + '<span class="pl2-think-txt">Working out a plan…</span></div>';
+    agLog.appendChild(card);
+    toBottom();
+    agPlanPending = card;
+    card.dataset.since = String(Date.now());
+    return card;
+  }
+  function clearPlanThinking() {
+    if (agPlanPending && agPlanPending.isConnected && !agPlanPending.dataset.filled) agPlanPending.remove();
+    agPlanPending = null;
+  }
+
   function showPlan(payload) {
     const raw = payload.plan || {};
     const plan = Object.assign({}, raw);
@@ -2738,9 +2813,14 @@
     if (!plan.tech || !plan.tech.length) {
       plan.tech = ["React", "Tailwind CSS", "TypeScript"];
     }
-    const card = el("ag-plan");
+    /* Adopt the card that has been thinking since the request went out,
+       so the plan fills in where the user has been watching instead of
+       appearing below a spinner that is still running. */
+    const card = (agPlanPending && agPlanPending.isConnected) ? agPlanPending : el("ag-plan");
+    const thinkingSince = Number(card.dataset.since) || Date.now();
+    card.dataset.filled = "1";
 
-    // --- Thinking shimmer (always show for ≥800ms for UX feel) ---
+    // --- Thinking shimmer, already running if the card was adopted ---
     let html = '<div class="pl2-think"><span class="pl2-think-dot"></span><span class="pl2-think-dot"></span><span class="pl2-think-dot"></span><span class="pl2-think-txt">Thinking\u2026</span></div>';
 
     // --- Title + overview ---
@@ -2813,13 +2893,19 @@
       + '</div>';
 
     card.innerHTML = html;
-    agLog.appendChild(card);
+    if (!card.isConnected) agLog.appendChild(card);
+    agPlanPending = null;
     toBottom();
 
-    // Reveal plan content after thinking shimmer (800ms)
+    /* The shimmer has a floor, not a fixed length. It used to run a flat
+       820ms after the plan had already arrived — pure delay. What it is
+       for is stopping a fast answer from flashing the spinner, so the
+       only wait left is whatever is still owed of that floor, and a
+       plan that took four seconds to come back reveals immediately. */
+    const owed = Math.max(0, 500 - (Date.now() - thinkingSince));
     setTimeout(function() {
       card.classList.add("pl2-revealed");
-    }, 820);
+    }, owed);
 
     const go = card.querySelector(".pl2-go");
     const edit = card.querySelector(".pl2-edit");
@@ -3035,6 +3121,10 @@
 
       // Plan mode before confirmation runs fast assess/plan card via /api/codeagent/build
       const isPlanConfirmation = agentMode === "plan" && !(opts && opts.confirmed);
+
+      /* Before the request, not after the answer. This is the only part
+         of the wait the user can see, and the plan call is the slow one. */
+      if (isPlanConfirmation) showPlanThinking();
 
       if (!isPlanConfirmation && !runId) {
         try {
@@ -3431,6 +3521,10 @@
       if (thinkPanel) {
         try { thinkPanel.done(); } catch (e) {}
       }
+      /* A turn that ended without a plan — an error, a clarifying
+         question, a cancel — must not leave a card thinking for ever.
+         A no-op once showPlan has filled it. */
+      try { clearPlanThinking(); } catch (e) {}
       finalizeThinking();
       /* Closed, not cleared. The block stays in the log as the record of
          what this run did — collapsed, so it is there when it is wanted

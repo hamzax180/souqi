@@ -266,6 +266,21 @@
      those are the platforms with overlay scrollbars, where the gutter is
      0px and there was never an offset to correct. */
   .ag-log{flex:1 1 auto;min-height:0;overflow-y:auto !important;overflow-x:hidden;scrollbar-gutter:stable both-edges;display:flex;flex-direction:column;gap:4px;padding-bottom:20px}
+  /* A transcript entry keeps the height it asks for.
+
+     This is a flex COLUMN with a bounded height, so its children take
+     flex-shrink:1 by default — and a tall entry was therefore squashed
+     to fit instead of making the log scroll. The log then measured its
+     own content as fitting (596px of children in a 760px box) and
+     reported nothing to scroll, which was true and useless.
+
+     What made it silent rather than merely ugly is .ag-plan's
+     overflow:hidden: the squashed-off part was clipped away. On a phone
+     that removed the plan card's "Looks good — Build it" button
+     entirely — laid out at y=1017 in an 812px viewport, clipped, and
+     unreachable by scrolling because the scroller did not believe it
+     existed. A plan could not be confirmed on mobile at all. */
+  .ag-log > *{flex:0 0 auto}
   /* The new-chat "hero": greeting + composer + tiles/examples centered as
      ONE group. Three earlier attempts tried to do this with
      justify-content on .ag-log alone and all of them clipped the

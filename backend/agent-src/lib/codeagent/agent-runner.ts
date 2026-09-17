@@ -155,8 +155,20 @@ const pendingCheckWaiters = new Map();
 
 /**
  * Called by index.js when browser WebContainer finishes a compile check.
+ *
+ * EXPORTED, and it has to be: index.js:5215 calls it on every
+ * check-result POST. The TypeScript port dropped the keyword, so that
+ * call was a TypeError — which, being uncaught in an Express handler,
+ * took the whole process down. The browser saw its in-flight request
+ * die and reported "Failed to fetch", naming neither the route nor the
+ * reason.
+ *
+ * Only the in-process path reaches this. A run on the durable worker is
+ * verified in the build sandbox and never asks the browser, which is
+ * why production builds through the worker were unaffected and this
+ * survived being on the critical path.
  */
-function reportCheckResult(runId: string, checkResult: any): boolean {
+export function reportCheckResult(runId: string, checkResult: any): boolean {
   const pending = pendingCheckWaiters.get(runId);
   if (!pending) return false;
   pendingCheckWaiters.delete(runId);
