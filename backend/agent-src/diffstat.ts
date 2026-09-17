@@ -1,0 +1,112 @@
+/* =================================================================
+   diffstat.ts — how many lines a write actually changed
+   -----------------------------------------------------------------
+   The build card listed the files it touched and nothing else, so a
+   one-word copy fix and a rewrite of the whole component looked
+   identical. The counts are what make that list readable at a glance.
+
+   Line-based, like every diff people already read. The shape is the
+   standard one: strip the common head and tail, then run an LCS over
+   whatever is left, because a real edit changes a handful of lines in
+   the middle of a file that is otherwise untouched — trimming first
+   turns an O(n*m) problem into an O(k*k) one on a k that is usually
+   tiny.
+
+   Not a patch, and deliberately not one. Nothing here reconstructs
+   what changed; it only counts. That keeps it cheap enough to run on
+   every file of every build without anyone noticing.
+   ================================================================= */
+
+/* Above this the DP matrix stops being free. A pair of 2000-line files
+   is 4M cells, which is both slow and pointless for a number displayed
+   as "+2000". Past the cap we report the coarse answer — every middle
+   line removed and every new one added — which is an over-count in the
+   only direction that cannot mislead: it never claims a big rewrite was
+   a small one. */
+export const MAX_CELLS = 4000000;
+
+export interface DiffStat {
+  added: number;
+  removed: number;
+  isNew: boolean;
+}
+
+export interface FileStat extends DiffStat {
+  path: string;
+}
+
+export interface WriteCall {
+  path: string;
+  content: string;
+}
+
+function lines(s: string): string[] {
+  const t = String(s);
+  if (t === "") return [];
+  // A trailing newline is a line terminator, not an empty final line —
+  // counting it makes every file report one more line than an editor does.
+  return t.replace(/\n$/, "").split("\n");
+}
+
+/** Length of the longest common subsequence, two rows at a time. */
+function lcsLength(a: string[], b: string[]): number {
+  // Iterate the SHORTER one in the inner dimension so the rolling array
+  // is min(n,m) wide rather than whatever order the caller passed.
+  if (b.length > a.length) { const t = a; a = b; b = t; }
+  let prev = new Int32Array(b.length + 1);
+  let cur = new Int32Array(b.length + 1);
+  for (let i = 1; i <= a.length; i++) {
+    const ai = a[i - 1];
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = ai === b[j - 1]
+        ? prev[j - 1] + 1
+        : (prev[j] >= cur[j - 1] ? prev[j] : cur[j - 1]);
+    }
+    const t = prev; prev = cur; cur = t;
+    cur.fill(0);
+  }
+  return prev[b.length] as number;
+}
+
+/**
+ * @param before  previous contents, undefined for a new file
+ * @param after   what was just written
+ */
+export function diffStat(before: string | undefined, after: string): DiffStat {
+  const b = lines(after);
+  if (typeof before !== "string") return { added: b.length, removed: 0, isNew: true };
+  if (before === after) return { added: 0, removed: 0, isNew: false };
+
+  const a = lines(before);
+  let head = 0;
+  while (head < a.length && head < b.length && a[head] === b[head]) head++;
+  let tail = 0;
+  while (tail < a.length - head && tail < b.length - head &&
+         a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
+
+  const am = a.slice(head, a.length - tail);
+  const bm = b.slice(head, b.length - tail);
+  if (!am.length) return { added: bm.length, removed: 0, isNew: false };
+  if (!bm.length) return { added: 0, removed: am.length, isNew: false };
+  if (am.length * bm.length > MAX_CELLS) {
+    return { added: bm.length, removed: am.length, isNew: false };
+  }
+  const common = lcsLength(am, bm);
+  return { added: bm.length - common, removed: am.length - common, isNew: false };
+}
+
+/**
+ * Stats for a whole build.
+ * @param calls      what was written this turn
+ * @param baseFiles  the tree before this turn
+ */
+export function statsFor(
+  calls: WriteCall[] | null | undefined,
+  baseFiles: Record<string, string> | null | undefined
+): FileStat[] {
+  const base = baseFiles || {};
+  return (calls || []).map((c) => {
+    const s = diffStat(base[c.path], c.content);
+    return { path: c.path, added: s.added, removed: s.removed, isNew: s.isNew };
+  });
+}

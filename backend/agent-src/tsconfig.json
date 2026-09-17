@@ -1,0 +1,46 @@
+{
+  /* Emits CommonJS into backend/lib/codeagent/, which is the directory
+     backend/index.js already require()s and the one Vercel uploads.
+
+     The sources live OUTSIDE that directory on purpose. .vercelignore's
+     own comment records what happens when Vercel's function bundler finds
+     TypeScript in the tree it is uploading: it transpiled the scaffold's
+     App.tsx into App.js while index.html still asked for main.tsx, and the
+     deployed app died in workbox with an empty dist. Shipping only the
+     compiled .js means the bundler has nothing to decide about. */
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "rootDir": ".",
+    "outDir": "../lib/codeagent",
+
+    "strict": true,
+    "noImplicitOverride": true,
+    /* Off deliberately. On, every `files[path]` in six thousand lines of
+       ported JavaScript becomes `string | undefined` and wants a guard the
+       original never needed — thousands of edits to already-tested code, in
+       exchange for catching a class of bug the suites already cover. New
+       code should still be written as though it were on. */
+    "noUncheckedIndexedAccess": false,
+    "exactOptionalPropertyTypes": false,
+    "forceConsistentCasingInFileNames": true,
+
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+
+    /* No .d.ts and no source maps in the output. The output directory is
+       shipped, and every extra file in it is another thing a bundler can
+       form an opinion about. The seam types live here in the source tree
+       as hand-written .d.ts instead (model-loop.d.ts, run-store.d.ts) —
+       those describe the hand-written JS this code calls into, and .d.ts
+       inputs emit nothing. */
+    "declaration": false,
+    "sourceMap": false,
+    "removeComments": false,
+
+    "types": ["node"]
+  },
+  "include": ["**/*.ts"]
+}

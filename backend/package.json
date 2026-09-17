@@ -31,7 +31,11 @@
     "test:model-loop": "node test/model-loop-test.js",
     "test:preflight": "node test/preflight-test.js",
     "test:memory": "node test/memory-test.js",
-    "ci": "npm run check:nlu && npm run lint && npm test && npm run test:nlu && npm run test:agent && npm run test:project && npm run test:sse && npm run test:refine && npm run test:microclaim && npm run test:isolation && npm run test:secrets && npm run test:stripe && npm run test:ai-client && npm run test:model-loop && npm run test:preflight && npm run test:memory && npm run test:csp && npm run test:voice && npm run smoke-test",
+    "test:run-store": "node test/run-store-test.js",
+    "test:agent-runner": "node test/agent-runner-test.js",
+    "build:agent": "node scripts/build-agent.js",
+    "typecheck": "tsc -p agent-src/tsconfig.json --noEmit",
+    "ci": "npm run check:nlu && npm run lint && npm test && npm run test:nlu && npm run test:agent && npm run test:project && npm run test:sse && npm run test:refine && npm run test:microclaim && npm run test:isolation && npm run test:secrets && npm run test:stripe && npm run test:ai-client && npm run test:model-loop && npm run test:preflight && npm run test:memory && npm run test:run-store && npm run test:agent-runner && npm run test:csp && npm run test:voice && npm run smoke-test",
     "test:stripe": "node test/stripe-test.js",
     "test:secrets": "node test/secretscan-test.js",
     "test:csp": "node test/csp-test.js",
@@ -65,8 +69,10 @@
     "pg": "^8.22.0"
   },
   "devDependencies": {
+    "@types/node": "^20.19.43",
     "eslint": "^8.57.0",
     "mongodb-memory-server": "^11.2.0",
-    "puppeteer": "^25.5.0"
+    "puppeteer": "^25.5.0",
+    "typescript": "^5.9.3"
   }
 }

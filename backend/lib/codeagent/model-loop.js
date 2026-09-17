@@ -3577,5 +3577,10 @@ module.exports = {
   // that, a prompt change cannot be attributed to a change in quality.
   PROMPT_VERSION,
   systemPromptFor, parseToolCalls, validateWriteFileArgs, cacheKey, clearCache, cacheStatsSnapshot,
+  // The /runs engine writes through the same two validators this file's own
+  // loop uses. It used to have its own, which is how it ended up with none:
+  // no path rules on write_file, and an edit_file that took the first of
+  // however many matches there were. tool-registry.js calls these instead.
+  applyEditFileArgs, validateReadPath,
   reviewBuild
 };

@@ -31,3 +31,13 @@ docs/
 # because a .json is neither compiled nor dropped.
 backend/lib/codeagent/scaffold/
 
+
+# The agent subsystem's TypeScript sources. They compile to
+# backend/lib/codeagent/*.js, which IS shipped and is what index.js
+# require()s; the .ts never needs to leave this machine.
+#
+# Excluded for the same reason the scaffold above is: Vercel's function
+# bundler transpiles TypeScript it finds in the upload, and this
+# directory would give it seven more files to form an opinion about
+# right next to the compiled output it should be using instead.
+backend/agent-src/
