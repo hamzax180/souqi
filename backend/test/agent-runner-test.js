@@ -567,6 +567,31 @@ async function check(name, fn) {
       ") — the raw record is not raw, so recovering it returns the same truncated text");
   });
 
+  await check("a finalizer that rejects is reported as a conflict, not abandoned", async () => {
+    /* The finalizer throws when the project moved under the run. Nothing
+       caught it: the throw escaped to the worker's catch, the run was
+       left mid-flight still holding its lease, and the stale sweep later
+       relabelled a run that had already emitted ok:true as "the agent
+       worker stopped before finishing". Seen on a live edit. */
+    useStub(completingStub("Done."));
+    const run = await runStore.createRun({
+      projectId: "pr_moved", owner, prompt: "edit it", mode: "auto", effort: "smart"
+    });
+
+    const outcome = await agentRunner.executeRun(run.id, {
+      finalize: async () => { throw new Error("Project changed during this run; candidate files are saved, but were not applied"); }
+    });
+
+    assert.strictEqual(outcome.conflict, true);
+    assert.strictEqual(outcome.stopReason, "conflict", "a conflict is not a tool error");
+    assert.ok(/Project changed/.test(outcome.reason));
+
+    const row = await runStore.getRun(run.id, owner);
+    assert.strictEqual(row.status, "partial", "the run must reach a terminal state, not be left running");
+    assert.strictEqual(row.stopReason, "conflict");
+    assert.ok(/Project changed/.test(row.latestError), "the row must say what actually happened");
+  });
+
   await check("every tool_start is closed by a tool_result", async () => {
     /* It was not. Writes closed with file_written, commands with a
        command/done and refusals with tool_denied — a successful

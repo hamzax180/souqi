@@ -32,6 +32,10 @@ export type StopReason =
      answering. Separated after a run died on a 402 and was filed as a
      tool error, which is the wrong thing to go and look at. */
   | "provider_error"
+  /* The work finished, but the project moved while it was running and
+     the result was not applied. Not a failure of the run — the files are
+     there — so it must not be filed as one. */
+  | "conflict"
   | "runtime_unavailable";
 
 export type ToolName =

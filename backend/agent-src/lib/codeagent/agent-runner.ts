@@ -236,7 +236,27 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
   async function settle(status: string, patch: any, outcome: any) {
     const stopReason = outcome && outcome.stopReason;
     if (typeof opts.finalize === "function") {
-      const committed = await opts.finalize(Object.assign({ stopReason }, outcome), status);
+      let committed: boolean;
+      try {
+        committed = await opts.finalize(Object.assign({ stopReason }, outcome), status);
+      } catch (e: any) {
+        /* A conflict is an answer, not a crash. The finalizer throws when
+           the project moved under the run, and nothing caught it: the
+           throw escaped to the worker's catch, the run was abandoned
+           still holding its lease, and the stale sweep later relabelled
+           it "the agent worker stopped before finishing" — which is both
+           wrong and unactionable. Recorded as what it is, with the files
+           kept so the next turn can start from them. */
+        const reason = (e && e.message) || "the result could not be committed";
+        await runStore.updateRun(runId, {
+          status: "partial", phase: "conflict",
+          stopReason: "conflict" as StopReason, latestError: reason
+        });
+        await runStore.appendEvent(runId, "error", { error: reason });
+        return Object.assign({}, outcome, {
+          ok: false, conflict: true, reason, stopReason: "conflict" as StopReason
+        });
+      }
       /* It refuses when the lease has moved on. Saying so is the point:
          another worker owns this run, and continuing as though we had
          written the result is how two workers both claim to have. */

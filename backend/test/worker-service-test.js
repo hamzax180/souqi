@@ -163,6 +163,28 @@ async function check(name, fn) {
     assert.ok(TERMINAL.has("partial") && !TERMINAL.has("running"));
   });
 
+  await check("a run started from the project's current head commits", async () => {
+    // The edit case. baseRevisionId was never set by the route, so it was
+    // null on every run — and null only matches a project that has never
+    // had a revision. First builds committed; every edit after one threw.
+    const s = scenario({ run: { baseRevisionId: "rv_earlier" } });
+    s.db.data.projects[0].headRevision = "rv_earlier";
+    assert.strictEqual(await s.finalize({
+      files: { "src/data.ts": "x" }, fileStats: [{ path: "src/data.ts", added: 1 }], summary: "Edited"
+    }, "succeeded"), true);
+    assert.strictEqual(s.db.data.projects[0].headRevision, "rv_run_1");
+  });
+
+  await check("a run started from a stale head is refused, and says so", async () => {
+    const s = scenario({ run: { baseRevisionId: "rv_earlier" } });
+    s.db.data.projects[0].headRevision = "rv_someone_elses_work";
+    await assert.rejects(() => s.finalize({
+      files: { "src/data.ts": "x" }, fileStats: [{ path: "src/data.ts", added: 1 }], summary: "Edited"
+    }, "succeeded"), /Project changed during this run/);
+    assert.strictEqual(s.db.data.projects[0].headRevision, "rv_someone_elses_work",
+      "the other work must not be overwritten");
+  });
+
   await check("a project that changed owner mid-run is refused", async () => {
     const s = scenario();
     s.db.data.projects[0].ownerAnonId = "an_someone_else";

@@ -5021,6 +5021,20 @@ function getConversationalFallback(prompt, history) {
     mode: buildMode,
     effort: effort.id,
     baseFiles,
+    /* The revision these baseFiles came from, and the reason an edit to
+       an existing project could never finish on the durable path.
+
+       The finalizer commits with `{ id, headRevision: run.baseRevisionId }`
+       so a run cannot overwrite work that landed while it was thinking.
+       Nothing ever set the field, so it was null on every run, and null
+       only matches a project that has never had a revision. A first build
+       therefore committed and every edit afterwards threw "Project changed
+       during this run" — which escapes to the worker's catch, leaves the
+       run mid-flight holding a lease, and lets the stale sweep relabel a
+       finished build as "the agent worker stopped before finishing".
+       Observed exactly that: a run that had already emitted ok:true was
+       overwritten sixty seconds later. */
+    baseRevisionId: (project && project.headRevision) || null,
     idempotencyKey,
     requestHash: idempotencyKey,
     chatId: String((req.body && req.body.chatId) || ""),
