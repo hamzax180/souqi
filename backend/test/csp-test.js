@@ -252,13 +252,17 @@ check("the WebContainer preview is left alone", () => {
   assert.ok(before.indexOf('removeAttribute("sandbox")') >= 0, "the sandbox is not cleared before the WebContainer URL loads — the same element may have just held a sandboxed srcdoc, and an opaque origin costs that dev server the storage it runs on");
 });
 
-/* Vercel applies EVERY matching headers block and the last one wins, so
-   the order of these two is load-bearing and invisible. Put the image
-   block above the /(api|auth) one and images silently go back to
-   no-store: nothing breaks, nothing logs, and every view of every image
-   on every published site becomes a function invocation plus a full read
-   of the bytes out of the database. That is exactly the kind of config
-   drift this file exists to catch.
+/* Vercel takes the FIRST matching headers block, not the last, so the
+   order of these two is load-bearing and invisible. Put the image block
+   below the /(api|auth) one and images silently go back to no-store:
+   nothing breaks, nothing logs, and every view of every image on every
+   published site becomes a function invocation plus a full read of the
+   bytes out of the database.
+
+   Asserted rather than assumed because I had it backwards first, shipped
+   it, and curl said no-store — the config was valid, the deploy was
+   green, and the header was simply the other one's. That is exactly the
+   kind of drift this file exists to catch.
 
    This assertion is also the only place the reasoning can live. JSON has
    no comments, and Vercel validates vercel.json against a schema that
@@ -274,7 +278,7 @@ check("the image cache header survives the /api no-store rule", () => {
   const img = list.findIndex((h) => h.source === "/api/img/(.*)");
   assert.ok(api >= 0, "the /api no-store block is gone");
   assert.ok(img >= 0, "there is no /api/img headers block — uploaded images are served no-store");
-  assert.ok(img > api, "the /api/img block must come AFTER /(api|auth) or no-store wins and the image is never cached");
+  assert.ok(img < api, "the /api/img block must come BEFORE /(api|auth), or the first match wins and the image is never cached");
   const cc = (list[img].headers || []).find((h) => h.key === "Cache-Control");
   assert.ok(cc && /immutable/.test(cc.value), "the image block does not declare the object immutable");
 });
