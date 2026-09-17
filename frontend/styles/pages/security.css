@@ -159,7 +159,11 @@
   .ag-chat-item i{flex:none;width:18px;height:18px;display:grid;place-items:center;color:var(--ink-2);opacity:.95}
   .ag-chat-item i svg{width:16px;height:16px}
   .ag-chat-item span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
-  .ag-chat-item .sdot{width:6px;height:6px;border-radius:50%;background:var(--mut);flex:none;margin:0 6px}
+  /* The resting dot is the brand blue, not grey. Grey reads as
+     disabled, and a project that has simply never been deployed is
+     not disabled — it is the normal state of most of this list.
+     The three status colours below still override it. */
+  .ag-chat-item .sdot{width:6px;height:6px;border-radius:50%;background:var(--accent);flex:none;margin:0 6px}
   .ag-chats-empty{padding:14px;color:var(--mut);font-size:.8rem;line-height:1.5;text-align:center}
   .ag-hist-foot{flex:0 0 auto;padding:8px 10px 8px;border-top:1px solid var(--line);background:var(--paper);width:100%;box-sizing:border-box}
   .ag-hist-foot .ttl{font-size:.84rem;font-weight:600;padding:0 2px;margin-bottom:4px;color:var(--ink)}

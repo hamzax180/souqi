@@ -272,7 +272,11 @@
   .ag-chat-item span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
   /* A dot instead of an icon for anything currently live, so the rail shows
      what is running without needing the page. */
-  .ag-chat-item .sdot{width:6px;height:6px;border-radius:50%;background:var(--mut);flex:none;margin:0 6px}
+  /* The resting dot is the brand blue, not grey. Grey reads as
+     disabled, and a project that has simply never been deployed is
+     not disabled — it is the normal state of most of this list.
+     The three status colours below still override it. */
+  .ag-chat-item .sdot{width:6px;height:6px;border-radius:50%;background:var(--accent);flex:none;margin:0 6px}
   .ag-chat-item .sdot.run{background:var(--ok)}
   .ag-chat-item .sdot.move{background:var(--warn)}
   .ag-chat-item .sdot.bad{background:var(--danger)}

@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=5.5">
+<link rel="stylesheet" href="/styles/pages/code.css?v=5.6">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -4211,8 +4211,12 @@
       showSuggestions(result.suggestions);
     } catch (err) {
       if (err.name === "AbortError") {
+        /* Silent on purpose. cancelTurn is the only thing that aborts
+           this controller, and it has already said so — the fetch
+           rejecting is the same cancellation arriving here a moment
+           later, not a second one. Both spoke, so the line appeared
+           twice for every stop. */
         if (thinkPanel) thinkPanel.done();
-        say('<span class="muted">Agent turn cancelled. You can type a new prompt anytime.</span>', "warn");
         return;
       }
       // If files exist from previous checkpoints or streamed writes, rescue preview
