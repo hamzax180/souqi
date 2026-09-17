@@ -90,7 +90,7 @@ const READ_ONLY_TOOLS = ["read_file", "search_code", "list_files"];
 exports.READ_ONLY_TOOLS = READ_ONLY_TOOLS;
 const ALL_TOOLS = [
     "write_file", "edit_file", "read_file", "list_files",
-    "search_code", "check_project", "ask_user_question", "complete_task"
+    "search_code", "check_project", "run_command", "ask_user_question", "complete_task"
 ];
 exports.ALL_TOOLS = ALL_TOOLS;
 /* Plan mode is offered the question tool and the other read-only modes

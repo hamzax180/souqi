@@ -51,7 +51,7 @@ const READ_ONLY_TOOLS: ToolName[] = ["read_file", "search_code", "list_files"];
 
 const ALL_TOOLS: ToolName[] = [
   "write_file", "edit_file", "read_file", "list_files",
-  "search_code", "check_project", "ask_user_question", "complete_task"
+  "search_code", "check_project", "run_command", "ask_user_question", "complete_task"
 ];
 
 /* Plan mode is offered the question tool and the other read-only modes

@@ -455,7 +455,17 @@ function startInternalServer() {
       });
     }
 
-    const result = await agentRunner.check({ checkId, runId, files: safe, sourceHash });
+    /* An optional command, validated HERE against the plane's own
+       allowlist. The tool that asked has its own copy of the rules for
+       the model to read; this is the process holding the Docker socket,
+       and it does not get to assume the caller checked anything. */
+    let argv = null;
+    if (body.command) {
+      try { argv = agentSandbox.assertAllowed(agentSandbox.tokenize(String(body.command))); }
+      catch (e) { return res.status(400).json({ error: String(e.message || e), refused: true }); }
+    }
+
+    const result = await agentRunner.check({ checkId, runId, files: safe, sourceHash, argv });
     res.json(Object.assign({ checkId, sourceHash }, result));
   });
 

@@ -37,6 +37,7 @@ export type ToolName =
   | "list_files"
   | "search_code"
   | "check_project"
+  | "run_command"
   | "ask_user_question"
   | "complete_task";
 
@@ -65,6 +66,8 @@ export interface ToolEffects {
   summary?: string;
   wrotePath?: string;
   editedPath?: string;
+  /** Set by run_command. The runner sends it to the build sandbox. */
+  commandRequested?: { command: string; reason: string };
   /** Set by ask_user_question. The runner persists these and stops. */
   questionAsked?: Array<{
     id: string;

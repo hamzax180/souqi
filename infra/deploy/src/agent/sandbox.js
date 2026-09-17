@@ -59,6 +59,67 @@ const DEFAULTS = {
   maxOutputChars: 60000
 };
 
+/* ── what the agent may run in there ─────────────────────────────
+   The allowlist is HERE, on the plane, not in the tool that asks. The
+   tool is a description the model reads; this is the thing holding the
+   Docker socket, and it does not get to assume the caller validated
+   anything. Both check, and this one is the one that counts.
+
+   Subcommands, not just binaries: "npm" alone would include `npm
+   publish` and `npm config set`, and the point is a bounded set of
+   things a build needs rather than a package manager. */
+const ALLOWED_COMMANDS = {
+  npm: new Set(["run", "install", "ci", "ls", "test"]),
+  npx: new Set(["tsc", "vite", "eslint"]),
+  node: new Set(["--version", "-v"]),
+  ls: null,      // null = no subcommand constraint; the binary itself is the whole grant
+  cat: null,
+  pwd: null
+};
+
+/** Quote-aware, so a path with a space does not silently become two
+    arguments. The same shape backend/lib/codeagent/tools.ts uses, and
+    for the same reason it gives. */
+function tokenize(cmd) {
+  const out = [];
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  let m;
+  while ((m = re.exec(String(cmd || "")))) out.push(m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3]);
+  return out;
+}
+
+/**
+ * Throws unless every part of this command is allowed.
+ *
+ * Shell metacharacters are refused outright rather than escaped. The
+ * argv never reaches a shell — it is exec'd directly — so a pipe or a
+ * semicolon in it is not dangerous so much as a sign the model thinks
+ * it is talking to one, and letting it through would teach it that it
+ * is. Refusing says what it can have instead.
+ */
+function assertAllowed(argv) {
+  if (!argv.length) throw new Error("empty command");
+  const joined = argv.join(" ");
+  if (/[;&|`$><\n\r]|\$\(/.test(joined)) {
+    throw new Error("shell syntax is not available here — commands are run directly, " +
+      "one at a time, with no shell to pipe or chain through");
+  }
+  const [bin, sub] = argv;
+  if (!Object.prototype.hasOwnProperty.call(ALLOWED_COMMANDS, bin)) {
+    throw new Error('"' + bin + '" is not available in the build sandbox (allowed: ' +
+      Object.keys(ALLOWED_COMMANDS).join(", ") + ")");
+  }
+  const subs = ALLOWED_COMMANDS[bin];
+  if (subs && !subs.has(sub)) {
+    throw new Error('"' + bin + " " + (sub || "") + '" is not allowed (allowed: ' +
+      [...subs].map((x) => bin + " " + x).join(", ") + ")");
+  }
+  return argv;
+}
+
+/** The default, and what check_project has always meant. */
+const DEFAULT_ARGV = ["npm", "run", "build"];
+
 function sandboxName(checkId) {
   return NAME_PREFIX + String(checkId).replace(/[^a-zA-Z0-9_.-]/g, "").slice(0, 48);
 }
@@ -162,4 +223,7 @@ function safeRelPath(p) {
   return clean;
 }
 
-module.exports = { NAME_PREFIX, IMAGE, DEFAULTS, sandboxName, buildSandboxArgs, hashFiles, safeRelPath };
+module.exports = {
+  NAME_PREFIX, IMAGE, DEFAULTS, DEFAULT_ARGV, ALLOWED_COMMANDS,
+  sandboxName, buildSandboxArgs, hashFiles, safeRelPath, tokenize, assertAllowed
+};

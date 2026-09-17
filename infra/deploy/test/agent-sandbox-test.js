@@ -145,6 +145,54 @@ check("image, command and limits are fixed, not parameters of the request", () =
     "the build command is baked into the run args rather than exec'd separately");
 });
 
+console.log("\nthe command allowlist is on this side of the wire");
+
+check("what a build needs is allowed", () => {
+  for (const c of ["npm run build", "npm ci", "npm install", "npx tsc --noEmit", "ls -la", "node --version"]) {
+    assert.doesNotThrow(() => sandbox.assertAllowed(sandbox.tokenize(c)), c + " was refused");
+  }
+});
+
+/* Subcommands, not just binaries: "npm" alone would carry `npm publish`
+   and `npm config set`, and the grant is meant to be a bounded set of
+   things a build needs rather than a package manager. */
+check("the rest of npm is not included by allowing npm", () => {
+  for (const c of ["npm publish", "npm config set registry http://evil", "npm adduser", "npm exec -- rm -rf /"]) {
+    assert.throws(() => sandbox.assertAllowed(sandbox.tokenize(c)), /is not allowed/, c + " got through");
+  }
+});
+
+check("a binary that is not on the list is refused whatever it is", () => {
+  for (const c of ["rm -rf /", "curl http://evil", "wget http://evil", "sh -c whoami", "bash", "chmod 777 /"]) {
+    assert.throws(() => sandbox.assertAllowed(sandbox.tokenize(c)), /not available in the build sandbox/, c);
+  }
+});
+
+/* Refused rather than escaped. The argv never reaches a shell — it is
+   exec'd directly — so a pipe in it is not so much dangerous as a sign
+   the model thinks it is talking to one, and letting it through would
+   teach it that it is. */
+check("shell syntax is refused rather than escaped", () => {
+  for (const c of ["npm run build; rm -rf /", "npm run build && curl x", "npm run build | tee /tmp/x",
+                   "npm run build > /tmp/out", "echo $(whoami)", "npm run `whoami`"]) {
+    assert.throws(() => sandbox.assertAllowed(sandbox.tokenize(c)), /shell syntax is not available/, c);
+  }
+});
+
+check("an empty command is refused, not run as the default", () => {
+  assert.throws(() => sandbox.assertAllowed(sandbox.tokenize("")), /empty command/);
+  assert.throws(() => sandbox.assertAllowed([]), /empty command/);
+});
+
+check("a quoted argument survives as one argument", () => {
+  assert.deepStrictEqual(sandbox.tokenize('npm run "build it"'), ["npm", "run", "build it"]);
+});
+
+check("the default is the build, and it is on the allowlist", () => {
+  assert.deepStrictEqual(sandbox.DEFAULT_ARGV, ["npm", "run", "build"]);
+  assert.doesNotThrow(() => sandbox.assertAllowed(sandbox.DEFAULT_ARGV));
+});
+
 console.log("\npaths are re-validated where they become real");
 
 check("a traversal, an absolute path and a null byte are all refused", () => {

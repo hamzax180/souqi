@@ -174,6 +174,26 @@ const SCHEMAS = [
     {
         type: "function",
         function: {
+            name: "run_command",
+            description: "Run one command in the isolated build sandbox and read its output. " +
+                "The sandbox has no network, no credentials and a read-only root; it holds only the files " +
+                "of this project. Allowed: npm run/install/ci/ls/test, npx tsc/vite/eslint, node --version, " +
+                "ls, cat, pwd. There is NO SHELL — no pipes, redirects, ; or && — so ask for one command at " +
+                "a time. Use check_project for the ordinary build; use this when you need to see something " +
+                "specific, such as whether a dependency resolves or what a directory actually contains.",
+            parameters: {
+                type: "object",
+                properties: {
+                    command: { type: "string", description: "One command, e.g. \"npm ls react\" or \"npx tsc --noEmit\"." },
+                    reason: { type: "string", description: "Why you are running it, in a few words." }
+                },
+                required: ["command"]
+            }
+        }
+    },
+    {
+        type: "function",
+        function: {
             name: "ask_user_question",
             description: "Ask the user to decide something you cannot decide for them, and stop until they answer. " +
                 "Use this ONLY when the choice is consequential and the answer is not already in the project " +
@@ -237,6 +257,50 @@ function schemaOf(name) {
     return found;
 }
 const str = (v) => (typeof v === "string" ? v : "");
+/* The model-facing half of the sandbox's allowlist. The authoritative
+   copy lives on the deploy plane beside the Docker socket
+   (infra/deploy/src/agent/sandbox.js); this one is here so a refusal
+   costs a sentence rather than a round trip, and so the tool is still
+   bounded if the verifier is ever misconfigured. Kept deliberately
+   identical — if they drift, the plane wins and the model is told
+   something slightly wrong, which is the safe direction. */
+const ALLOWED_COMMANDS = {
+    npm: new Set(["run", "install", "ci", "ls", "test"]),
+    npx: new Set(["tsc", "vite", "eslint"]),
+    node: new Set(["--version", "-v"]),
+    ls: null,
+    cat: null,
+    pwd: null
+};
+function tokenizeCommand(cmd) {
+    const out = [];
+    const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+    let m;
+    while ((m = re.exec(String(cmd || "")))) {
+        out.push((m[1] !== undefined ? m[1] : m[2] !== undefined ? m[2] : m[3]));
+    }
+    return out;
+}
+function assertCommandAllowed(command) {
+    const argv = tokenizeCommand(command);
+    if (!argv.length)
+        throw new Error("empty command");
+    if (/[;&|`$><]/.test(argv.join(" "))) {
+        throw new Error("there is no shell in the sandbox, so pipes, redirects, ; and && do not work — " +
+            "run one command at a time");
+    }
+    const bin = argv[0];
+    if (!Object.prototype.hasOwnProperty.call(ALLOWED_COMMANDS, bin)) {
+        throw new Error('"' + bin + '" is not available in the build sandbox (allowed: ' +
+            Object.keys(ALLOWED_COMMANDS).join(", ") + ")");
+    }
+    const subs = ALLOWED_COMMANDS[bin];
+    if (subs && !subs.has(argv[1])) {
+        throw new Error('"' + bin + " " + (argv[1] || "") + '" is not allowed (allowed: ' +
+            [...subs].map((x) => bin + " " + x).join(", ") + ")");
+    }
+    return argv;
+}
 async function emit(ctx, type, payload) {
     if (ctx.emit)
         await ctx.emit(type, payload);
@@ -369,6 +433,36 @@ const TOOLS = [
         schema: schemaOf("check_project"),
         run() {
             return { ok: true, content: "check_project initiated.", effects: { checkRequested: true } };
+        }
+    },
+    {
+        name: "run_command",
+        /* Not read-only. It runs in a sandbox rather than on the files, so
+           it cannot change the project — but it spends a container slot and
+           up to three minutes of wall clock, and plan mode is not entitled
+           to either. */
+        readOnly: false,
+        schema: schemaOf("run_command"),
+        run(args) {
+            const command = str(args.command).trim();
+            if (!command)
+                return { ok: false, content: "Error: run_command needs a command." };
+            /* Refused HERE as well as on the plane, and the plane's copy is
+               the one that counts — this one exists so the model gets the
+               reason in the same turn rather than after a round trip, and so
+               a misconfigured verifier cannot become the only thing standing
+               between a model and a shell. */
+            try {
+                assertCommandAllowed(command);
+            }
+            catch (e) {
+                return { ok: false, content: "Error: " + e.message };
+            }
+            return {
+                ok: true,
+                content: "Queued: " + command,
+                effects: { commandRequested: { command, reason: str(args.reason).slice(0, 200) } }
+            };
         }
     },
     {
