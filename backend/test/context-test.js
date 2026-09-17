@@ -384,7 +384,7 @@ await check("a constraint from turn two survives a hundred turns of compaction",
    there is nothing to clear and the summary is the only thing left
    before whole turns start being dropped. */
 await check("when the bulk is conversation rather than tool output, the summary runs", async () => {
-  let messages = [{ role: "system", content: "s" }, { role: "user", content: "TASK MARKER: dirhams only" }];
+  const messages = [{ role: "system", content: "s" }, { role: "user", content: "TASK MARKER: dirhams only" }];
   for (let i = 0; i < 60; i++) {
     messages.push({ role: "assistant", content: "Here is my reasoning in full. " + big(9000) });
     messages.push({ role: "user", content: "Understood, carry on. " + big(9000) });
@@ -404,7 +404,7 @@ await check("when the bulk is conversation rather than tool output, the summary 
 });
 
 await check("the head is never compacted or dropped", async () => {
-  let messages = [
+  const messages = [
     { role: "system", content: "SYSTEM MARKER " + big(1000) },
     { role: "user", content: "TASK MARKER" }
   ];
@@ -433,7 +433,7 @@ await check("a conversation that already fits is returned untouched", async () =
 });
 
 await check("every step it took is reported, so a run can say what it lost", async () => {
-  let messages = [{ role: "system", content: "s" }, { role: "user", content: "t" }];
+  const messages = [{ role: "system", content: "s" }, { role: "user", content: "t" }];
   for (let i = 0; i < 50; i++) {
     messages.push({ role: "assistant", content: "", tool_calls: [{ id: "c" + i }] });
     messages.push({ role: "tool", tool_call_id: "c" + i, content: big(8000) });

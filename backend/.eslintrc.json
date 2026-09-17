@@ -30,8 +30,11 @@
     // cannot be fixed without editing a file the next build overwrites.
     // The SOURCES are checked instead, by `npm run typecheck`, which is
     // strict and has no warning budget to drift.
-    "lib/codeagent/*.js",
-    "lib/codeagent/runtimes/*.js",
-    "worker/*.js"
+    // `**` and not `*`: a single star does not cross a directory
+    // separator, so listing lib/codeagent/*.js and its two known
+    // subdirectories left context/ — added later — being linted as
+    // though a person had written it, and the count jumped by 43.
+    "lib/codeagent/**/*.js",
+    "worker/**/*.js"
   ]
 }
