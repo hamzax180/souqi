@@ -21,7 +21,13 @@ export interface ChatMessage {
     function: { name: string; arguments: string };
   }>;
   tool_call_id?: string;
+  /* DeepSeek returns this and requires it back on the next call of a
+     tool conversation. It is protocol, not content — never shown. */
   reasoning_content?: string;
+  /* Providers add fields, and the context engine passes messages
+     through without caring which. Declared so a message survives a
+     round trip through it without being narrowed away. */
+  [extra: string]: unknown;
 }
 
 export interface ChatRequest {

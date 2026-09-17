@@ -14,6 +14,8 @@ import * as scaffoldFiles from "./scaffold-files";
 import * as theme from "./theme";
 import * as registry from "./tool-registry";
 import * as agentState from "./agent-state";
+import * as contextManager from "./context/context-manager";
+import * as retrieval from "./context/file-retrieval";
 import type { AgentMode, ToolContext } from "./types";
 import {
   systemPromptFor,
@@ -254,6 +256,27 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
   let finalSummary = "";
   let repairedCount = 0;
 
+  /* Where the opening request ends. Everything before this — the system
+     prompt, the history, the codebase, the task — is never compacted and
+     never dropped, because a run that has shed its own task is a run
+     doing something nobody asked for. */
+  const headLen = messages.length;
+
+  /* What the summary will be built from if this run gets long enough to
+     need one. Tracked as it happens rather than reconstructed from the
+     transcript afterwards, because by then the transcript is the thing
+     being thrown away. */
+  const facts: contextManager.PrepareInput["facts"] = {
+    prompt: run.prompt,
+    mode: state.mode,
+    approvalReason: (run.meta && run.meta.approval && run.meta.approval.reason) || undefined,
+    fileHashes: retrieval.hashAll(currentFiles),
+    filesWritten: [],
+    filesEdited: [],
+    errors: [],
+    verification: null
+  };
+
   for (let turn = 1; turn <= maxTurns; turn++) {
     // Check for cancellation
     const currentRun = await runStore.getRun(runId);
@@ -287,6 +310,30 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
       temperature: 0.3,
       timeoutMs: 90000
     };
+
+    /* Reassembled every call rather than accumulated: measure, then
+       shrink old tool output, then summarise the middle, and only then
+       let fitConversation drop anything. Its only move is to drop whole
+       turns, so everything above it is a turn it does not have to lose. */
+    facts.fileHashes = retrieval.hashAll(currentFiles);
+    const prepared = await contextManager.prepare({
+      messages,
+      headLen,
+      tools: toolsForTurn,
+      route: "json",
+      model: callOpts.model,
+      maxTokens: callOpts.maxTokens,
+      runId,
+      facts
+    });
+    messages = prepared.messages as client.ChatMessage[];
+
+    for (const action of prepared.actions) {
+      await runStore.appendEvent(runId, "context", {
+        step: action.step, removed: action.removed, detail: action.detail,
+        usedTokens: prepared.after.usedTokens, usableTokens: prepared.after.usableTokens
+      });
+    }
 
     const aiRes = await client.chat(Object.assign({}, callOpts, { messages }));
     totalCostUsd += aiRes.costUsd || 0;
@@ -409,8 +456,16 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
         await runStore.appendEvent(runId, "tool_denied", { tool: fnName, reason: outcome.content });
       }
 
+      if (!outcome.ok) (facts.errors as string[]).push(outcome.content.slice(0, 220));
+
       const effects = outcome.effects;
       if (effects) {
+        if (effects.wrotePath && !(facts.filesWritten as string[]).includes(effects.wrotePath)) {
+          (facts.filesWritten as string[]).push(effects.wrotePath);
+        }
+        if (effects.editedPath && !(facts.filesEdited as string[]).includes(effects.editedPath)) {
+          (facts.filesEdited as string[]).push(effects.editedPath);
+        }
         if (effects.checkRequested) needsBrowserCheck = true;
         if (effects.completed) {
           taskCompleted = true;

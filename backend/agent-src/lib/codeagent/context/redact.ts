@@ -1,0 +1,88 @@
+/* =================================================================
+   context/redact.ts — what must not survive into a summary
+   -----------------------------------------------------------------
+   Compaction and project memory both take text that was once
+   transient and make it durable: a summary is written back into
+   every later turn, and a remembered rule can outlive the project
+   that produced it. So a secret that appears once in a tool result
+   is a secret in a database afterwards.
+
+   The generated app is where this actually bites. A model writing a
+   payment integration puts a key in the file it is writing, the file
+   comes back through a tool result, and the tool result is what gets
+   summarised. Nothing here can stop the key being written — that is
+   the model's business and the scaffold's — but it can stop the key
+   being the one part of the turn that gets kept forever.
+
+   Deliberately conservative about what counts. A false positive
+   costs a summary the word "sk-something"; a false negative costs a
+   customer their Stripe key. The patterns are anchored to shapes
+   that are not ordinary prose.
+   ================================================================= */
+
+export interface RedactionResult {
+  text: string;
+  redacted: number;
+}
+
+/* Each entry is a shape, not a vendor list — a vendor list goes stale
+   the moment somebody adds a provider. `label` is what replaces the
+   match, so a reader can see WHAT was removed without seeing it. */
+const PATTERNS: Array<{ re: RegExp; label: string }> = [
+  // Anything that announces itself: sk-..., pk_live_..., ghp_..., xoxb-...
+  { re: /\b(?:sk|pk|rk|ak)[-_](?:live|test|prod)?[-_]?[A-Za-z0-9]{16,}\b/g, label: "[redacted: api key]" },
+  { re: /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, label: "[redacted: github token]" },
+  { re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, label: "[redacted: slack token]" },
+  { re: /\bAKIA[0-9A-Z]{16}\b/g, label: "[redacted: aws key id]" },
+
+  // A JWT is three base64url segments joined by dots, and nothing else is.
+  { re: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, label: "[redacted: jwt]" },
+
+  // Connection strings carry the password in the authority.
+  { re: /\b(?:mongodb(?:\+srv)?|postgres(?:ql)?|mysql|redis|amqp):\/\/[^\s"'<>]*:[^\s"'@<>]+@[^\s"'<>]+/gi,
+    label: "[redacted: connection string]" },
+
+  // `SOMETHING_SECRET = "..."` / `apiKey: '...'` — the assignment is the tell.
+  { re: /\b([A-Za-z_][A-Za-z0-9_]*(?:SECRET|PASSWORD|PASSWD|TOKEN|APIKEY|API_KEY|PRIVATE_KEY|ACCESS_KEY)[A-Za-z0-9_]*)\s*[:=]\s*["'`][^"'`\n]{6,}["'`]/gi,
+    label: "$1 = [redacted]" },
+
+  // -----BEGIN ... PRIVATE KEY----- ... -----END ... -----
+  { re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
+    label: "[redacted: private key block]" }
+];
+
+/**
+ * Returns the text with anything secret-shaped replaced, and a count.
+ *
+ * The count is the useful half: a caller that redacted something can
+ * say so in the log instead of logging the thing it redacted.
+ */
+export function redact(input: unknown): RedactionResult {
+  let text = typeof input === "string" ? input : String(input ?? "");
+  let redacted = 0;
+  for (const { re, label } of PATTERNS) {
+    text = text.replace(re, (...args) => {
+      redacted++;
+      // $1 in a label means "keep the name, drop the value".
+      return label.includes("$1") ? label.replace("$1", String(args[1] ?? "")) : label;
+    });
+  }
+  return { text, redacted };
+}
+
+/** True when the input contains something worth not keeping. */
+export function hasSecret(input: unknown): boolean {
+  return redact(input).redacted > 0;
+}
+
+/** Redact every string in a structure, leaving its shape alone. */
+export function redactDeep<T>(value: T): T {
+  if (typeof value === "string") return redact(value).text as unknown as T;
+  if (Array.isArray(value)) return value.map(redactDeep) as unknown as T;
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = redactDeep(v);
+    return out as unknown as T;
+  }
+  return value;
+}

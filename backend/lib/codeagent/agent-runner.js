@@ -55,6 +55,8 @@ const scaffoldFiles = __importStar(require("./scaffold-files"));
 const theme = __importStar(require("./theme"));
 const registry = __importStar(require("./tool-registry"));
 const agentState = __importStar(require("./agent-state"));
+const contextManager = __importStar(require("./context/context-manager"));
+const retrieval = __importStar(require("./context/file-retrieval"));
 const model_loop_1 = require("./model-loop");
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* A provider message's content is a string everywhere in this file, but
@@ -263,6 +265,25 @@ async function executeRun(runId, opts = {}) {
     let taskCompleted = false;
     let finalSummary = "";
     let repairedCount = 0;
+    /* Where the opening request ends. Everything before this — the system
+       prompt, the history, the codebase, the task — is never compacted and
+       never dropped, because a run that has shed its own task is a run
+       doing something nobody asked for. */
+    const headLen = messages.length;
+    /* What the summary will be built from if this run gets long enough to
+       need one. Tracked as it happens rather than reconstructed from the
+       transcript afterwards, because by then the transcript is the thing
+       being thrown away. */
+    const facts = {
+        prompt: run.prompt,
+        mode: state.mode,
+        approvalReason: (run.meta && run.meta.approval && run.meta.approval.reason) || undefined,
+        fileHashes: retrieval.hashAll(currentFiles),
+        filesWritten: [],
+        filesEdited: [],
+        errors: [],
+        verification: null
+    };
     for (let turn = 1; turn <= maxTurns; turn++) {
         // Check for cancellation
         const currentRun = await runStore.getRun(runId);
@@ -292,6 +313,28 @@ async function executeRun(runId, opts = {}) {
             temperature: 0.3,
             timeoutMs: 90000
         };
+        /* Reassembled every call rather than accumulated: measure, then
+           shrink old tool output, then summarise the middle, and only then
+           let fitConversation drop anything. Its only move is to drop whole
+           turns, so everything above it is a turn it does not have to lose. */
+        facts.fileHashes = retrieval.hashAll(currentFiles);
+        const prepared = await contextManager.prepare({
+            messages,
+            headLen,
+            tools: toolsForTurn,
+            route: "json",
+            model: callOpts.model,
+            maxTokens: callOpts.maxTokens,
+            runId,
+            facts
+        });
+        messages = prepared.messages;
+        for (const action of prepared.actions) {
+            await runStore.appendEvent(runId, "context", {
+                step: action.step, removed: action.removed, detail: action.detail,
+                usedTokens: prepared.after.usedTokens, usableTokens: prepared.after.usableTokens
+            });
+        }
         const aiRes = await client.chat(Object.assign({}, callOpts, { messages }));
         totalCostUsd += aiRes.costUsd || 0;
         if (!aiRes.ok) {
@@ -404,8 +447,16 @@ async function executeRun(runId, opts = {}) {
             if (!outcome.ok) {
                 await runStore.appendEvent(runId, "tool_denied", { tool: fnName, reason: outcome.content });
             }
+            if (!outcome.ok)
+                facts.errors.push(outcome.content.slice(0, 220));
             const effects = outcome.effects;
             if (effects) {
+                if (effects.wrotePath && !facts.filesWritten.includes(effects.wrotePath)) {
+                    facts.filesWritten.push(effects.wrotePath);
+                }
+                if (effects.editedPath && !facts.filesEdited.includes(effects.editedPath)) {
+                    facts.filesEdited.push(effects.editedPath);
+                }
                 if (effects.checkRequested)
                     needsBrowserCheck = true;
                 if (effects.completed) {
