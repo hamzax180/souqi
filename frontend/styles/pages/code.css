@@ -517,7 +517,15 @@
   .ag-thinking{margin:2px 0 8px;opacity:0;animation:agIn .35s var(--ease) forwards}
   .ag-th-head-row{display:flex;align-items:center;justify-content:space-between;width:100%}
   .ag-th-head{display:flex;align-items:center;gap:10px;flex:1;border:0;background:none;cursor:pointer;padding:10px 2px;font:inherit;text-align:left;color:var(--ink-2);border-radius:8px;transition:background .15s}
-  .ag-queue-banner{display:flex;align-items:center;justify-content:space-between;background:rgba(59,130,246,0.12);border:1px solid rgba(59,130,246,0.3);color:var(--ink);border-radius:10px;padding:6px 14px;margin-bottom:8px;font-size:.82rem;font-weight:600}
+  /* position:relative for the same reason .ag-box has it, and the bug
+     was the same shape: the composer feather is a positioned ::before at
+     z-index:0, and a STATIC child paints in an earlier step than a
+     positioned one — so the feather blurred and tinted the one element
+     telling you what you had typed. Relative puts the banner in the
+     feather's painting step, where tree order decides and a real
+     child comes after a ::before. No z-index: giving it one would lift it
+     over the box as well. */
+  .ag-queue-banner{position:relative;display:flex;align-items:center;justify-content:space-between;background:rgba(59,130,246,0.12);border:1px solid rgba(59,130,246,0.3);color:var(--ink);border-radius:10px;padding:6px 14px;margin-bottom:8px;font-size:.82rem;font-weight:600}
   .ag-queue-banner button{border:0;background:none;color:#ef4444;font-size:.78rem;font-weight:700;cursor:pointer;text-decoration:underline;padding:0;margin-left:10px}
   /* What is waiting, in the bar that already said how much was. A count
      on its own makes you remember what you typed; one line clipped with
