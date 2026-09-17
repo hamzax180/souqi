@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=4.8">
+<link rel="stylesheet" href="/styles/pages/code.css?v=5.1">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -663,6 +663,46 @@
    jumping back rather than arriving. */
 @keyframes th2Sweep { from { background-position: 0 0; } to { background-position: -200% 0; } }
 .th2-step.failed { color: #e0616d; }
+
+/* The one word in the sentence you are actually scanning for. The rest
+   is grammar; the filename is the fact. */
+.th2-name { color: var(--ink, #1b252b); font-weight: 500; }
+
+/* What the agent SAID, between the things it did.
+
+   This is the part that explains — "that fell to the other path", "let
+   me try it a different way" — and it is the only record of why a run
+   went the way it did. It streamed into the terminal, which meant it
+   was a console effect that scrolled away, and then vanished entirely
+   once the terminal stopped opening for runs with no commands. It
+   belongs in the transcript, at full contrast, and it stays. */
+.th2-said {
+  color: var(--ink, #1b252b);
+  font-size: .95rem;
+  line-height: 1.6;
+  margin: 9px 0 7px;
+  white-space: pre-wrap;
+  animation: th2In .3s var(--ease-snappy, ease) both;
+}
+.th2-said:first-child { margin-top: 2px; }
+
+/* A step that has actions inside it opens to show them. The sentence is
+   the summary of a batch — "edited code.html, ran a command" — and the
+   batch is the thing worth keeping, but not at the cost of never being
+   able to see what it was. */
+.th2-step.has-detail { cursor: pointer; }
+.th2-step.has-detail .th2-step-chev { transition: transform .18s var(--ease-snappy, ease); }
+.th2-step.open .th2-step-chev { transform: rotate(90deg); }
+.th2-sub {
+  border: 1px solid var(--line, rgba(0,0,0,.12));
+  border-radius: 10px;
+  margin: 5px 0 7px;
+  padding: 3px 0;
+  overflow: hidden;
+  animation: th2In .2s var(--ease-snappy, ease) both;
+}
+.th2-sub .th2-step { padding: 6px 12px; cursor: default; }
+.th2-sub .th2-step + .th2-step { border-top: 1px solid var(--plan-line-soft, rgba(0,0,0,.06)); }
 
 /* How much changed, beside what changed. Tabular so the numbers do not
    shuffle as they climb, and using the diff tokens the rest of the app
@@ -2096,6 +2136,9 @@
     const row = el("ag-say" + (cls ? " " + cls : ""), html);
     revealWords(row);
     agLog.appendChild(row); toBottom();
+    // Returned so a caller can put something before it — history inserts
+    // the turn's steps above the summary they produced.
+    return row;
   }
   // Claude/Replit-style live "thinking" panel for the whole turn — one
   // collapsible block whose body is a REAL step log, not cosmetic filler.
@@ -2159,6 +2202,271 @@
      as they happen, over one live line carrying the three things worth
      knowing while you wait — how long, what it has spent, and what it
      is doing right now. */
+  /* ONE SUMMARISER, for a turn happening now and for one being read back.
+
+     A step's sentence is derived from what the run did, and a reopened
+     chat has exactly the same material — the events are still in the
+     run store. Deriving it in two places is how the transcript you
+     watched and the transcript you come back to start disagreeing, so
+     these live out here and both paths call them. */
+  const baseName = (p) => String(p || "").split("/").pop();
+
+  /* A sentence as TOKENS rather than a string, because one word in it —
+     the filename — is the thing being scanned for and has to be able to
+     look different from the grammar around it. Built as data so the
+     renderer sets textContent on each piece and nothing here ever
+     concatenates markup. */
+  const tText = (t) => ({ t: t });
+  const tName = (n) => ({ name: n });
+
+  /** "a.ts, b.ts and 2 more" — names first, count only when it helps. */
+  function nameTokens(paths) {
+    const names = paths.map(baseName);
+    if (names.length === 1) return [tName(names[0])];
+    if (names.length === 2) return [tName(names[0]), tText(" and "), tName(names[1])];
+    if (names.length === 3) {
+      return [tName(names[0]), tText(", "), tName(names[1]), tText(" and "), tName(names[2])];
+    }
+    return [tName(names[0]), tText(", "), tName(names[1]),
+            tText(" and " + (names.length - 2) + " more")];
+  }
+
+  /** The same phrase as plain text, for anything that needs a string. */
+  function tokensToText(tokens) {
+    return (tokens || []).map((k) => (k.name !== undefined ? k.name : k.t)).join("");
+  }
+
+  /** Paint a token list into an element. */
+  function renderTokens(el2, tokens) {
+    el2.textContent = "";
+    for (const k of tokens || []) {
+      if (k.name !== undefined) {
+        const s = document.createElement("span");
+        s.className = "th2-name";
+        s.textContent = k.name;
+        el2.appendChild(s);
+      } else {
+        el2.appendChild(document.createTextNode(k.t));
+      }
+    }
+  }
+
+  function summariseGroup(g, done) {
+    const out = [];
+    const clause = (tokens) => { if (out.length) out.push(tText(", ")); out.push.apply(out, tokens); };
+
+    if (g.created.length) {
+      clause([tText((done ? "Created " : "Creating ") +
+        (g.created.length > 3 ? g.created.length + " files — " : ""))].concat(nameTokens(g.created)));
+    }
+    if (g.edited.length) {
+      clause([tText(out.length ? "edited " : done ? "Edited " : "Editing ")].concat(nameTokens(g.edited)));
+    }
+    if (g.commands.length) {
+      clause([tText((out.length ? "ran " : done ? "Ran " : "Running ") +
+        (g.commands.length === 1 ? g.commands[0] : g.commands.length + " commands"))]);
+    }
+    if (!out.length && g.reads) {
+      clause([tText((done ? "Read " : "Reading ") + g.reads + " file" + (g.reads === 1 ? "" : "s"))]);
+    }
+    return out;
+  }
+
+  /** One line per thing the batch actually did, for the expansion. */
+  function groupItems(g) {
+    return (g.items || []).map((it) => {
+      const tokens = it.command
+        ? [tText("Ran "), tName(it.command)]
+        : [tText(it.verb + " "), tName(baseName(it.path))];
+      return { tokens: tokens, added: it.added, removed: it.removed };
+    });
+  }
+
+  /* A finished run, read back as the steps it took.
+
+     A reopened chat used to show the agent's closing summary and a card
+     of files and nothing about how it got there — the steps existed only
+     as DOM built while the run was streaming, and were gone the moment
+     you navigated away. The events are still in the run store, so the
+     steps are still derivable; they just were not being derived.
+
+     Same grouping as the live panel and the same summariser, so a turn
+     reads the same whether you watched it or came back to it. */
+  function stepsFromEvents(events) {
+    const out = [];
+    let group = null;
+    const flush = () => {
+      if (!group) return;
+      const tokens = summariseGroup(group, true);
+      if (tokens.length) {
+        out.push({ tokens: tokens, added: group.added, removed: group.removed, items: groupItems(group) });
+      }
+      group = null;
+    };
+    for (const e of events || []) {
+      const p = e.payload || {};
+      if (e.type === "file_written" || e.type === "file_edited") {
+        if (!group) continue;
+        const bucket = e.type === "file_edited" ? group.edited : group.created;
+        if (bucket.indexOf(p.path) < 0) bucket.push(p.path);
+        const a = Number(p.added) || 0, r = Number(p.removed) || 0;
+        group.added += a;
+        group.removed += r;
+        group.items.push({ verb: e.type === "file_edited" ? "Edited" : "Created", path: p.path, added: a, removed: r });
+        continue;
+      }
+      if (e.type === "assistant_delta" && p.text) {
+        /* Coalesced back into paragraphs. They were flushed on a 600ms
+           timer while the run streamed, so the split between rows is an
+           artefact of the timer and not of anything the agent meant. */
+        const last = out[out.length - 1];
+        if (last && last.prose !== undefined) last.prose += p.text;
+        else { flush(); out.push({ prose: p.text }); }
+        continue;
+      }
+      if (e.type === "tool_result" && p.ok && ["read_file", "list_files", "search_code"].indexOf(p.tool) >= 0) {
+        if (group) group.reads += 1;
+        continue;
+      }
+      if (e.type === "command" && p.state === "start" && p.command) {
+        if (group) {
+          const short = String(p.command).split(/\s+/).slice(0, 3).join(" ");
+          group.commands.push(short);
+          group.items.push({ command: short });
+        }
+        continue;
+      }
+      if (e.type !== "stage") continue;
+      const id = String(p.id || "");
+      if (/^turn-\d+$/.test(id)) {
+        if (p.state === "start") {
+          flush();
+          group = { created: [], edited: [], commands: [], reads: 0, added: 0, removed: 0, items: [] };
+        } else {
+          flush();
+        }
+        continue;
+      }
+      if (id.indexOf("file-") === 0) continue;          // folded into its turn
+      if (id.indexOf("check") === 0 && p.state !== "start") {
+        out.push({ tokens: [tText(/fail|error/i.test(String(p.detail || "")) ? "The build did not compile" : "Verified the build")] });
+        continue;
+      }
+      if (p.state === "start" && p.detail) out.push({ tokens: [tText(p.detail)] });
+    }
+    flush();
+    return out;
+  }
+
+  /** The same panel the live turn drew, already finished. */
+  function renderPastSteps(prompt, steps, seconds, tokens) {
+    if (!steps || !steps.length) return null;
+    const wrap = el("ag-thinking th2 done");
+    wrap.innerHTML =
+      '<div class="th2-top">' +
+        '<span class="ag-th-gemini" aria-hidden="true">' +
+          '<span class="g-dot g-dot-1"></span><span class="g-dot g-dot-2"></span><span class="g-dot g-dot-3"></span>' +
+        '</span>' +
+        '<span class="th2-title"></span>' +
+      '</div><div class="th2-steps"></div>' +
+      '<div class="th2-status">' +
+        '<span class="th2-spark" aria-hidden="true"></span>' +
+        '<span class="th2-num th2-time"></span>' +
+      '</div>';
+    wrap.querySelector(".th2-title").textContent = seconds
+      ? "Thought for " + (seconds < 60 ? seconds + "s" : Math.floor(seconds / 60) + "m " + (seconds % 60) + "s")
+      : "Steps";
+    const st = wrap.querySelector(".th2-status");
+    const bits = [];
+    if (seconds) bits.push(seconds < 60 ? seconds + "s" : Math.floor(seconds / 60) + "m " + (seconds % 60) + "s");
+    if (tokens) bits.push((tokens >= 1000 ? (tokens / 1000).toFixed(1).replace(/\.0$/, "") + "k" : tokens) + " tokens");
+    if (!bits.length) st.remove(); else wrap.querySelector(".th2-time").textContent = bits.join("  ·  ");
+
+    const body = wrap.querySelector(".th2-steps");
+    for (const s of steps) {
+      if (s.prose !== undefined) {
+        const said = document.createElement("div");
+        said.className = "th2-said";
+        said.textContent = s.prose;
+        body.appendChild(said);
+        continue;
+      }
+      const row = el("th2-step",
+        '<span class="th2-step-text"></span><span class="th2-step-chev" hidden>›</span>');
+      renderTokens(row.firstChild, s.tokens);
+      if (s.added || s.removed) row.firstChild.appendChild(diffBadge(s.added, s.removed));
+      body.appendChild(row);
+      // The same expansion a live row gets — history is not a lesser copy.
+      if (s.items && s.items.length > 1) attachDetail(row, s.items);
+    }
+    return wrap;
+  }
+
+  /** Steps for one past turn, fetched and inserted where it happened. */
+  async function fillPastSteps(runId, anchorNode) {
+    try {
+      const res = await fetch("/api/codeagent/runs/" + encodeURIComponent(runId) + "/events?after=0",
+        { headers: { "Accept": "text/event-stream" }, credentials: "same-origin" });
+      if (!res.ok) return;
+      const text = await res.text();
+      const events = [];
+      for (const block of text.split("\n\n")) {
+        const em = /event: (.+)/.exec(block), dm = /data: (.+)/.exec(block);
+        if (!em || !dm) continue;
+        try { events.push({ type: em[1].trim(), payload: JSON.parse(dm[1]) }); } catch (e) { /* skip */ }
+      }
+      if (!events.length) return;
+      /* No elapsed time: the SSE frames carry the payloads and not the
+         `at` each row was written with, so a duration here would be
+         invented. Tokens are real — the run reported them. */
+      const usage = events.filter((e) => e.type === "usage").pop();
+      const panel = renderPastSteps("", stepsFromEvents(events), 0,
+        usage && usage.payload ? usage.payload.tokens : 0);
+      if (panel && anchorNode && anchorNode.parentNode) anchorNode.parentNode.insertBefore(panel, anchorNode);
+    } catch (e) { /* history without its steps is the old behaviour, not a failure */ }
+  }
+
+  /** "+21 −8", in the diff colours the rest of the app already defines. */
+  function diffBadge(added, removed) {
+    const n = document.createElement("span");
+    n.className = "th2-diff";
+    const a = document.createElement("span");
+    a.className = "th2-add"; a.textContent = "+" + (added | 0);
+    const d = document.createElement("span");
+    d.className = "th2-del"; d.textContent = "−" + (removed | 0);
+    n.appendChild(a); n.appendChild(d);
+    return n;
+  }
+
+  /* Hang the batch's actions off its summary row, closed.
+
+     Rebuilt rather than appended to on each repaint: a running batch
+     repaints every time a file lands, and the list has to match what the
+     sentence above it currently claims. */
+  function attachDetail(row, items) {
+    let sub = row.nextSibling;
+    if (!sub || !sub.classList || !sub.classList.contains("th2-sub")) {
+      sub = document.createElement("div");
+      sub.className = "th2-sub";
+      sub.hidden = true;
+      row.after(sub);
+      row.classList.add("has-detail");
+      row.lastChild.hidden = false;
+      row.addEventListener("click", function () {
+        sub.hidden = !sub.hidden;
+        row.classList.toggle("open", !sub.hidden);
+      });
+    }
+    sub.textContent = "";
+    for (const it of items) {
+      const line = el("th2-step",
+        '<span class="th2-step-text"></span><span class="th2-step-chev" hidden>›</span>');
+      renderTokens(line.firstChild, it.tokens);
+      if (it.added || it.removed) line.firstChild.appendChild(diffBadge(it.added, it.removed));
+      sub.appendChild(line);
+    }
+  }
+
   function thinkingBlock(promptText) {
     clearEmpty();
     const wrap = el("ag-thinking th2");
@@ -2227,16 +2535,15 @@
       return {
         /* Rewrites the row in place. A turn is one line that keeps
            getting truer, not a line per thing it happened to do. */
-        set(text, finished, stats) {
-          if (settled || !text) return;
-          row.firstChild.textContent = text;
+        set(tokens, finished, stats) {
+          if (settled || !tokens || !tokens.length) return;
+          renderTokens(row.firstChild, tokens);
           if (stats && (stats.added || stats.removed)) {
-            const n = document.createElement("span");
-            n.className = "th2-diff";
-            n.innerHTML = '<span class="th2-add">+' + (stats.added | 0) + '</span>' +
-                          '<span class="th2-del">−' + (stats.removed | 0) + '</span>';
-            row.firstChild.appendChild(n);
+            row.firstChild.appendChild(diffBadge(stats.added, stats.removed));
           }
+          /* The batch keeps what it was made of. The sentence is the
+             summary; the chevron is how you get back to the actions. */
+          if (stats && stats.items && stats.items.length > 1) attachDetail(row, stats.items);
           if (finished) {
             settled = true;
             row.classList.remove("busy");
@@ -2271,6 +2578,7 @@
        a run that has gone quiet for two minutes should not still be
        claiming it is running tools. */
     const t0 = Date.now();
+    let saidEl = null;
     let phase = "Thinking…";
     let phaseAt = t0;
     let stopped = false;
@@ -2307,6 +2615,22 @@
           done: function (next) { queueSettle(function () { sub.done(next); }); },
           fail: function (msg) { queueSettle(function () { sub.fail(msg); }); }
         };
+      },
+      /* The agent's own words, streamed in and kept.
+
+         Appended to the block it is already writing when that block is
+         still the last thing in the panel; a step landing in between
+         ends the paragraph, which is what a paragraph break means here —
+         it said something, it did something, it said something else. */
+      say(text) {
+        if (stopped || !text) return;
+        if (!saidEl || saidEl !== stepsEl.lastChild) {
+          saidEl = document.createElement("div");
+          saidEl.className = "th2-said";
+          stepsEl.appendChild(saidEl);
+        }
+        saidEl.textContent += text;
+        toBottom();
       },
       /** Said by an event: "Running tools…", "Waiting for Souqi…". */
       setPhase(text) {
@@ -2759,8 +3083,30 @@
   }
 
   /** One agent event -> zero or more terminal lines. */
+  /* A terminal only when there is something terminal to show.
+
+     It used to open on the first event of every run and fill with the
+     same writes and reads the steps above already report in words — a
+     black console under every build, duplicating the transcript in a
+     worse format. What it is actually good for is a shell: a command,
+     its exit code, its output, which is the one thing prose cannot
+     carry.
+
+     So it opens on a command and not before. Once open it keeps taking
+     the rest of the run's events, because the context around a command
+     is worth having; it just no longer invents itself for a run that
+     never ran one. */
+  function termWorthy(kind, p) {
+    if (kind === "command") return true;
+    // The tool's own start/result, so an allowlist refusal is visible.
+    if ((kind === "tool_start" || kind === "tool_result" || kind === "tool_denied") && p && p.tool === "run_command") return true;
+    return false;
+  }
+
   function termEvent(kind, p, runId) {
     if (!runId) return;
+    const open = agTerm && agTerm.runId === runId;
+    if (!open && !termWorthy(kind, p)) return;
     const t = termOpen(runId);
 
     if (kind === "tool_start") {
@@ -2773,7 +3119,9 @@
          lands. Dim, because it is an intention and not yet a fact. */
       t.write("·", p.tool, "term-dim");
     } else if (kind === "assistant_delta") {
-      t.stream(p.text);
+      /* Nothing: the thinking panel keeps this now, and a console copy
+         of the same words is the duplication the terminal was removed
+         for. */
     } else if (kind === "tool_result") {
       /* Only for the tools that close with nothing else. A write already
          prints its file_written line and a command prints its exit code,
@@ -3151,46 +3499,19 @@
        rewrites itself as the work lands, so it is still live. */
     let stepGroup = null;
 
-    const baseName = (p) => String(p || "").split("/").pop();
-
-    /** "a.ts, b.ts and 2 more" — names first, count only when it helps. */
-    function nameList(paths) {
-      const names = paths.map(baseName);
-      if (names.length === 1) return names[0];
-      if (names.length === 2) return names[0] + " and " + names[1];
-      if (names.length === 3) return names[0] + ", " + names[1] + " and " + names[2];
-      return names[0] + ", " + names[1] + " and " + (names.length - 2) + " more";
-    }
-
-    function summariseGroup(g, done) {
-      const parts = [];
-      if (g.created.length) {
-        parts.push((done ? "Created " : "Creating ") +
-          (g.created.length > 3 ? g.created.length + " files — " : "") + nameList(g.created));
-      }
-      if (g.edited.length) {
-        parts.push((parts.length ? "edited " : done ? "Edited " : "Editing ") + nameList(g.edited));
-      }
-      if (g.commands.length) {
-        parts.push((parts.length ? "ran " : done ? "Ran " : "Running ") +
-          (g.commands.length === 1 ? g.commands[0] : g.commands.length + " commands"));
-      }
-      if (!parts.length && g.reads) {
-        parts.push((done ? "Read " : "Reading ") + g.reads + " file" + (g.reads === 1 ? "" : "s"));
-      }
-      return parts.join(", ");
-    }
-
     /** Repaint the active group's single row from what it has collected. */
     function paintGroup(done) {
       if (!stepGroup || !stepGroup.handle) return;
       const text = summariseGroup(stepGroup, done);
-      if (!text) return;
+      // Tokens now, so emptiness is a length and not a falsy string.
+      if (!text.length) return;
       /* The counts are passed apart from the sentence so the sentence can
          stay text — how big a change is is most of what you want to know
          about it, and it is the one thing words cannot carry without
          becoming a paragraph. */
-      stepGroup.handle.set(text, done, { added: stepGroup.added, removed: stepGroup.removed });
+      stepGroup.handle.set(text, done, {
+        added: stepGroup.added, removed: stepGroup.removed, items: groupItems(stepGroup)
+      });
     }
     let result = null;
     /* Declared HERE, in runTurn's own scope, not inside the try below.
@@ -3316,7 +3637,7 @@
 
       /* A turn opens one row and owns it until it closes. */
       if (isTurn && state === "start") {
-        stepGroup = { id: id, created: [], edited: [], commands: [], reads: 0, added: 0, removed: 0, handle: null };
+        stepGroup = { id: id, created: [], edited: [], commands: [], reads: 0, added: 0, removed: 0, items: [], handle: null };
         stepGroup.handle = thinkPanel.addStep("Working on it…");
         handles[id] = stepGroup.handle;
         return;
@@ -3331,8 +3652,7 @@
              that carries the counts, and settling here is the last chance
              to show them: set() marks the row settled and ignores every
              paint after it. */
-          const text = summariseGroup(stepGroup, true);
-          if (text) paintGroup(true);
+          if (summariseGroup(stepGroup, true).length) paintGroup(true);
           else stepGroup.handle.done("Thought it through");
           stepGroup = null;
         } else if (handles[id]) { handles[id].done(); }
@@ -3658,7 +3978,11 @@
             else if (em[1] === "tool_intent" || em[1] === "tool_start") thinkPanel.setPhase("Running tools…");
             else if (em[1] === "command" && payload.state === "start") thinkPanel.setPhase("Running a command…");
             else if (em[1] === "check_needed") thinkPanel.setPhase("Verifying the build…");
-            else if (em[1] === "assistant_delta") thinkPanel.setPhase("Waiting for Souqi…");
+            else if (em[1] === "assistant_delta") {
+              thinkPanel.setPhase("Waiting for Souqi…");
+              // Into the transcript, permanently — see .th2-said.
+              thinkPanel.say(payload.text);
+            }
             else if (em[1] === "tool_result") thinkPanel.setPhase("Thinking…");
             else if (em[1] === "context") thinkPanel.setPhase("Making room in context…");
           }
@@ -3672,7 +3996,9 @@
               stepGroup.reads += 1;
               paintGroup(false);
             } else if (em[1] === "command" && payload.state === "start" && payload.command) {
-              stepGroup.commands.push(String(payload.command).split(/\s+/).slice(0, 3).join(" "));
+              const short = String(payload.command).split(/\s+/).slice(0, 3).join(" ");
+              stepGroup.commands.push(short);
+              stepGroup.items.push({ command: short });
               paintGroup(false);
             }
           }
@@ -3683,8 +4009,14 @@
                follows it — so they are banked here and the stage event
                finds them already waiting under the path it names. */
             if (stepGroup) {
-              stepGroup.added += Number(payload.added) || 0;
-              stepGroup.removed += Number(payload.removed) || 0;
+              const a = Number(payload.added) || 0, r = Number(payload.removed) || 0;
+              stepGroup.added += a;
+              stepGroup.removed += r;
+              // Kept per action, so the summary can be opened back up.
+              stepGroup.items.push({
+                verb: em[1] === "file_edited" ? "Edited" : "Created",
+                path: payload.path, added: a, removed: r
+              });
             }
             onStage("file-" + payload.path, "done",
               (em[1] === "file_edited" ? "Edited " : "Wrote ") + payload.path);
@@ -5947,9 +6279,25 @@
 
       agLog.innerHTML = "";
       let renderedAnyCard = false;
+      /* The last few turns get their steps back; older ones keep the
+         summary alone. Each one is a request, and a long project would
+         otherwise open by fetching every run it has ever had — the point
+         is the part of the conversation you are returning to. */
+      const REPLAY_LAST = 4;
+      const agentTurns = (data.turns || []).filter((t) => t.role !== "user");
+      const replayFrom = Math.max(0, agentTurns.length - REPLAY_LAST);
+      let agentSeen = 0;
+
       (data.turns || []).forEach((t) => {
         if (t.role === "user") { sayUser(t.body, false, t.at, t.images); return; }
-        say(t.body);
+        const said = say(t.body);
+        /* The run id is the turn id: the finalizer writes "turn_" + run.id,
+           which is the only link between a stored turn and the events that
+           produced it. Filled after the fact so history paints immediately
+           and the steps arrive into the place they belong. */
+        const runId = /^turn_(run_.+)$/.exec(String(t.id || ""));
+        if (runId && agentSeen >= replayFrom && said) fillPastSteps(runId[1], said);
+        agentSeen += 1;
         // Per build, with that build's own counts — see loadProjectPreview().
         if (t.fileStats && t.fileStats.length) {
           renderCard(t.fileStats.map((f) => f.path), 0, t.fileStats);
