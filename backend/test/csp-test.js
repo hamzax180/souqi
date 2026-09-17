@@ -252,35 +252,39 @@ check("the WebContainer preview is left alone", () => {
   assert.ok(before.indexOf('removeAttribute("sandbox")') >= 0, "the sandbox is not cleared before the WebContainer URL loads — the same element may have just held a sandboxed srcdoc, and an opaque origin costs that dev server the storage it runs on");
 });
 
-/* Vercel takes the FIRST matching headers block, not the last, so the
-   order of these two is load-bearing and invisible. Put the image block
-   below the /(api|auth) one and images silently go back to no-store:
-   nothing breaks, nothing logs, and every view of every image on every
-   published site becomes a function invocation plus a full read of the
-   bytes out of the database.
+/* WHY THERE IS NO /api/img HEADERS BLOCK IN vercel.json.
 
-   Asserted rather than assumed because I had it backwards first, shipped
-   it, and curl said no-store — the config was valid, the deploy was
-   green, and the header was simply the other one's. That is exactly the
-   kind of drift this file exists to catch.
+   There was one, twice, in both orders, and neither worked. Vercel
+   evaluates `headers` AFTER rewrites, and vercel.json rewrites
+   /api/:path* to /api/index — so by the time headers are matched the
+   path is /api/index, which matches /(api|auth)/(.*) and can never match
+   /api/img/(.*). A path-based header exception for anything this
+   function serves is not possible, whatever order it is written in.
 
-   This assertion is also the only place the reasoning can live. JSON has
-   no comments, and Vercel validates vercel.json against a schema that
-   permits exactly source/headers/has/missing — a "_comment" key there is
-   not ignored, it fails the deploy with "Schema verification failed".
+   What actually works is the route setting the header itself, which
+   Vercel then leaves alone. Confirmed against production on a real key:
+   200, Cache-Control: public, max-age=31536000, immutable, with the
+   ETag. The no-store that sent me chasing this was the 404 branch
+   returning before the handler sets anything, so the config's default
+   was all there was to see.
 
-   Vary: Cookie is dropped for this path on purpose: an image that varies
-   by cookie is one a CDN is not allowed to cache, and this one does not. */
-check("the image cache header survives the /api no-store rule", () => {
-  const v = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "vercel.json"), "utf8"));
-  const list = v.headers || [];
-  const api = list.findIndex((h) => h.source === "/(api|auth)/(.*)");
-  const img = list.findIndex((h) => h.source === "/api/img/(.*)");
-  assert.ok(api >= 0, "the /api no-store block is gone");
-  assert.ok(img >= 0, "there is no /api/img headers block — uploaded images are served no-store");
-  assert.ok(img < api, "the /api/img block must come BEFORE /(api|auth), or the first match wins and the image is never cached");
-  const cc = (list[img].headers || []).find((h) => h.key === "Cache-Control");
-  assert.ok(cc && /immutable/.test(cc.value), "the image block does not declare the object immutable");
+   So the assertion is on the CODE, not the config. Losing this header
+   breaks nothing visibly: every view of every image on every published
+   site just quietly becomes a function invocation and a full read of the
+   bytes out of the database. */
+check("uploaded images are served immutable by the route itself", () => {
+  const routes = fs.readFileSync(path.join(__dirname, "..", "lib", "uploads-routes.js"), "utf8");
+  const at = routes.indexOf('app.get("/api/img/*"');
+  assert.ok(at > 0, "the image route is gone — every URL already baked into a published site now 404s");
+  const body = routes.slice(at, at + 2000);
+  assert.ok(/max-age=31536000, immutable/.test(body),
+    "the image route no longer marks its response cacheable, so vercel.json's no-store is what ships");
+  assert.ok(/if-none-match/.test(body), "the 304 path is gone, so every revalidation reads the bytes again");
+  // Registered unconditionally: gating it on S3_PUBLIC_BASE_URL is what
+  // would 404 every URL minted before a CDN was configured.
+  const before = routes.slice(Math.max(0, at - 400), at);
+  assert.ok(!/if\s*\(!process\.env\.S3_PUBLIC_BASE_URL\)/.test(before),
+    "the image route is conditionally registered again");
 });
 
 if (failures) { console.log("\n✗ " + failures + " CSP CHECK(S) FAILED\n"); process.exit(1); }
