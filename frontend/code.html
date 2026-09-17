@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=6.0">
+<link rel="stylesheet" href="/styles/pages/code.css?v=6.2">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -615,7 +615,22 @@
 
 /* The three dots, leading. Their animation lives in code.css and is
    driven off .ag-thinking:not(.done), so it stops on its own. */
-.th2-top { display: flex; align-items: center; gap: 2px; padding: 2px 0 6px; }
+/* The header folds the steps away. The status line under them does not
+   go with it — how long the turn took and what it cost is the part you
+   still want when you have put the detail away. */
+.th2-top { display: flex; align-items: center; gap: 2px; padding: 2px 0 6px; cursor: pointer; }
+.th2-fold {
+  width: 15px; height: 15px; flex: none; margin-left: 6px;
+  color: var(--mut, #8a8f91); opacity: .7;
+  /* Down when open, which is the resting state, so the folded state is
+     the only one that needs a rule. Stating it the other way round meant
+     a base rotation fighting a `:not()` override. */
+  transform: rotate(0deg);
+  transition: transform .2s var(--ease-snappy, ease), opacity .15s ease;
+}
+.th2-top:hover .th2-fold { opacity: 1; }
+.th2.folded .th2-fold { transform: rotate(-90deg); }
+.th2.folded .th2-steps { display: none; }
 .th2-title {
   font-size: 1.05rem; font-weight: 600; color: var(--ink, #1b252b);
   letter-spacing: -.01em;
@@ -739,11 +754,17 @@
 @keyframes th2Shine { from { background-position: 0 0; } to { background-position: -200% 0; } }
 /* Stopped, and holding the brand's own three stops rather than a frame
    of the sweep — a finished run should look settled, not paused. */
-.th2.done .th2-spark {
+/* Keyed off the status row itself, not off an ancestor: the row is moved
+   out of the panel when the turn ends so it can sit under the reply, and
+   a rule that needed .th2 above it stopped applying the moment it left. */
+.th2-status.is-done .th2-spark {
   animation: none;
   background: linear-gradient(135deg, #1aa6df 0%, #18c8a8 55%, #5cb12f 100%);
   opacity: .8;
 }
+/* Standing on its own under the reply rather than tucked inside the
+   panel, it needs its own breathing room. */
+.th2-status.is-loose { margin: 2px 0 10px; }
 .th2-sep { opacity: .45; }
 .th2-phase { transition: opacity .2s ease; }
 .th2-num { font-variant-numeric: tabular-nums; }
@@ -2441,6 +2462,7 @@
           '<span class="g-dot g-dot-1"></span><span class="g-dot g-dot-2"></span><span class="g-dot g-dot-3"></span>' +
         '</span>' +
         '<span class="th2-title"></span>' +
+        '<svg class="th2-fold" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>' +
       '</div><div class="th2-steps"></div>' +
       '<div class="th2-status">' +
         '<span class="th2-spark" aria-hidden="true"></span>' +
@@ -2454,6 +2476,10 @@
     if (seconds) bits.push(seconds < 60 ? seconds + "s" : Math.floor(seconds / 60) + "m " + (seconds % 60) + "s");
     if (tokens) bits.push((tokens >= 1000 ? (tokens / 1000).toFixed(1).replace(/\.0$/, "") + "k" : tokens) + " tokens");
     if (!bits.length) st.remove(); else wrap.querySelector(".th2-time").textContent = bits.join("  ·  ");
+
+    wrap.querySelector(".th2-top").addEventListener("click", function () {
+      wrap.classList.toggle("folded");
+    });
 
     const body = wrap.querySelector(".th2-steps");
     for (const s of steps) {
@@ -2553,6 +2579,7 @@
           '<span class="g-dot g-dot-1"></span><span class="g-dot g-dot-2"></span><span class="g-dot g-dot-3"></span>' +
         '</span>' +
         '<span class="th2-title">Thinking</span>' +
+        '<svg class="th2-fold" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>' +
       '</div>' +
       '<div class="th2-steps"></div>' +
       '<div class="th2-status">' +
@@ -2564,6 +2591,13 @@
         '<span class="th2-phase">Thinking…</span>' +
       '</div>';
     logHost().appendChild(wrap); toBottom();
+
+    /* The whole header is the hit area, not just the chevron — a 15px
+       arrow is a hard thing to aim at, and there is nothing else in that
+       row to click. */
+    wrap.querySelector(".th2-top").addEventListener("click", function () {
+      wrap.classList.toggle("folded");
+    });
 
     const stepsEl = wrap.querySelector(".th2-steps");
     const timeEl = wrap.querySelector(".th2-time");
@@ -2723,11 +2757,27 @@
         tokEl.textContent = (tokens >= 1000 ? (tokens / 1000).toFixed(1).replace(/\.0$/, "") + "k" : tokens) + " tokens";
         tokEl.hidden = false; tokSep.hidden = false;
       },
+      /* Move the status row out from under the heading and put it after
+         whatever the turn produced.
+
+         It belongs at the END of the turn — the steps, then the answer,
+         then what the answer cost. Inside the panel it sat above the
+         reply, which read as a footer for the steps rather than for the
+         turn. Called after the reply is on screen, so "last child" means
+         what it says. */
+      releaseStatus(container) {
+        const st = wrap.querySelector(".th2-status");
+        if (!st || !container) return;
+        st.classList.add("is-loose");
+        container.appendChild(st);
+      },
       done(statusText) {
         flushSettles();
         stopped = true;
         clearInterval(clockTimer);
         wrap.classList.add("done");
+        const st = wrap.querySelector(".th2-status");
+        if (st) st.classList.add("is-done");
         stepsEl.querySelectorAll(".th2-step.busy").forEach(function (row) { row.classList.remove("busy"); });
         const secs = Math.max(1, Math.round((Date.now() - t0) / 1000));
         const spent = secs < 60 ? secs + (secs === 1 ? " second" : " seconds")
@@ -4298,6 +4348,10 @@
       if (openedStream) { agOpenStreams.delete(openedStream); openedStream = null; }
       if (thinkPanel) {
         try { thinkPanel.done(); } catch (e) {}
+        /* Last, so it lands under the reply and the file card rather than
+           between the steps and them. Everything this turn renders has
+           already been appended by the time the finally runs. */
+        try { thinkPanel.releaseStatus(agLog); } catch (e) {}
       }
       finalizeThinking();
       /* Closed, not cleared. The block stays in the log as the record of
