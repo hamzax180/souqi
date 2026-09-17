@@ -69,6 +69,7 @@
     "pg": "^8.22.0"
   },
   "devDependencies": {
+    "@types/cross-spawn": "^6.0.6",
     "@types/node": "^20.19.43",
     "eslint": "^8.57.0",
     "mongodb-memory-server": "^11.2.0",

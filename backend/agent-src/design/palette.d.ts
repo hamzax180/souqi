@@ -11,14 +11,39 @@
    ================================================================= */
 
 export interface PaletteBuildOpts {
-  seedHex?: string;
+  /** A hex seed. Named `seed`, not `seedHex` — theme.ts translates. */
+  seed?: string;
   industry?: string;
   tone?: string;
 }
 
-/** The computed system. Keys beyond these exist; theme.ts reads what it
-    reads and passes the rest through to the Tailwind config untouched. */
+/** Every pairing the build verifies, as a ratio. `passesAA` is true only
+    when all of them clear 4.5:1 — see palette.js, which moves lightness
+    until they do rather than hoping. */
+export interface ContrastReport {
+  inkOnSurface: number;
+  ink2OnSurface: number;
+  onAccentOnAccent: number;
+  inkOnTint: number;
+  onDarkOnDark: number;
+}
+
+/** The computed system. The index signature is there because palette.js
+    carries more tokens than the agent reads; the named ones are those
+    theme.ts actually puts into a Tailwind config. */
 export interface Palette {
+  accent: string;
+  accentHover: string;
+  onAccent: string;
+  surface: string;
+  tint: string;
+  line: string;
+  ink: string;
+  ink2: string;
+  dark: string;
+  onDark: string;
+  contrast: ContrastReport;
+  passesAA: boolean;
   [token: string]: unknown;
 }
 

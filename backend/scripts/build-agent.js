@@ -51,9 +51,13 @@ const collisions = emitted.filter(isHandWritten);
 
 if (collisions.length) {
   console.error(
-    "\n✗ build:agent refused: these would overwrite hand-written files in lib/codeagent/\n" +
+    "\n✗ build:agent refused: these would overwrite unstamped files under lib/\n" +
     collisions.map((c) => "    " + c).join("\n") +
-    "\n\n  Rename the source in agent-src/, or port the hand-written file deliberately.\n"
+    "\n\n  Either a person wrote them — rename the source in agent-src/, or port\n" +
+    "  the file deliberately by deleting it in the same commit — or a build\n" +
+    "  died between emitting and stamping, in which case deleting them and\n" +
+    "  rebuilding is safe. noEmitOnError in agent-src/tsconfig.json is what\n" +
+    "  stops the second case from happening again.\n"
   );
   process.exit(1);
 }

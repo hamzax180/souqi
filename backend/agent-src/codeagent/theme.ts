@@ -1,0 +1,187 @@
+/* =================================================================
+   theme.js — a computed palette and a typeface, per build
+   -----------------------------------------------------------------
+   "Sites look generic" was never a model-quality problem. The prompt has
+   sixty lines of design rules and not one colour in it, so every app
+   invented its own palette from whatever bg-blue-600 came to mind, and the
+   scaffold ships no font link at all — so every app is also system-sans.
+   Two apps built from two different prompts came out looking like each
+   other.
+
+   lib/design/palette.js has been sitting here the whole time doing the hard
+   part: it turns ONE seed colour into a full system in OKLCH and then moves
+   lightness until the pairings provably clear WCAG AA, rather than hoping
+   they do. Its own header puts it better than I can — "a generated site
+   here is never inaccessible, because accessibility is a computation, not a
+   judgement call". It was reachable only from the no-API builder, which no
+   UI calls any more.
+
+   So this is mostly wiring, and that is the point: the expensive, correct
+   part already existed. Nothing here costs a model call, and the same
+   prompt always produces the same palette.
+   ================================================================= */
+import * as palette from "../design/palette";
+
+export interface BuildTheme {
+  palette: palette.Palette;
+  fonts: FontPairing;
+  tone: string;
+  industry: string;
+  seededFromLogo: boolean;
+}
+
+export interface FontPairing {
+  heading: string;
+  body: string;
+  headingWeights: string;
+  bodyWeights: string;
+}
+
+export interface ForBuildOpts {
+  buildType?: string;
+  seedHex?: string;
+}
+
+/* Build type -> the industry seed and tone palette.js already understands.
+   Chosen so two different KINDS of app look different before either has
+   written a line: a game should not open the same way a dashboard does. */
+const TYPE_THEME: Record<string, { industry: string; tone: string }> = {
+  ecommerce: { industry: "retail", tone: "neutral" },
+  storefront: { industry: "retail", tone: "neutral" },
+  landing: { industry: "services", tone: "premium" },
+  portfolio: { industry: "fashion", tone: "premium" },
+  blog: { industry: "services", tone: "neutral" },
+  dashboard: { industry: "logistics", tone: "technical" },
+  webapp: { industry: "logistics", tone: "technical" },
+  mobile: { industry: "retail", tone: "playful" },
+  game: { industry: "construction", tone: "playful" }
+};
+
+/* One pairing per tone rather than per type, because a typeface carries
+   tone and not subject matter. All four are on Google Fonts, which both CSP
+   blocks already allow — the permission was there and nothing used it.
+
+   A display face for headings and a quiet one for body is the single
+   cheapest thing that stops a page looking like an unstyled document. */
+const TYPE_FONTS: Record<string, FontPairing> = {
+  premium:   { heading: "Fraunces", body: "Inter", headingWeights: "400;600;700", bodyWeights: "400;500;600" },
+  technical: { heading: "Inter", body: "Inter", headingWeights: "600;700", bodyWeights: "400;500;600" },
+  playful:   { heading: "Outfit", body: "Outfit", headingWeights: "500;700;800", bodyWeights: "400;500;600" },
+  neutral:   { heading: "Plus Jakarta Sans", body: "Inter", headingWeights: "600;700;800", bodyWeights: "400;500;600" }
+};
+
+/* Written as the literal array text rather than built from a string, because
+   deriving it was how "Segoe UI" came out as \"Segoe UI\" — a family name
+   needs quotes inside the CSS value, and running that through JSON.stringify
+   twice escapes the quotes into the output. A font stack is a fixed list; it
+   does not need generating. */
+const FALLBACK_SANS = '"ui-sans-serif", "system-ui", "-apple-system", "Segoe UI", "Roboto", "sans-serif"';
+
+/**
+ * Everything visual this build should be handed.
+ *
+ * `seedHex` wins when there is one — that is the uploaded logo's dominant
+ * colour, and a site whose palette comes from the customer's own logo is the
+ * thing that makes this feel designed rather than themed.
+ */
+export function forBuild(opts?: ForBuildOpts): BuildTheme {
+  const o = opts || {};
+  const t = TYPE_THEME[String(o.buildType || "").toLowerCase()] || { industry: "retail", tone: "neutral" };
+  const pal = palette.build({ seed: o.seedHex || undefined, industry: t.industry, tone: t.tone });
+  const fonts = TYPE_FONTS[t.tone] || (TYPE_FONTS.neutral as FontPairing);
+  return { palette: pal, fonts: fonts, tone: t.tone, industry: t.industry, seededFromLogo: !!o.seedHex };
+}
+
+/**
+ * The Tailwind config the container builds against.
+ *
+ * Tokens rather than raw hex in the prompt, because a token is ENFORCED: the
+ * model writes bg-accent and gets the computed, contrast-checked colour, and
+ * cannot drift a shade over the course of six files the way it does when
+ * copying hex by hand. The hex still goes into the prompt as well — a model
+ * that ignores the tokens should at least ignore them toward the right
+ * colours.
+ *
+ * Sent with the files frame, so it lands on top of the scaffold's static
+ * copy. The model cannot write it (not under src/), which is what keeps the
+ * palette from being edited away mid-build.
+ */
+export function tailwindConfig(theme: BuildTheme): string {
+  const p = theme.palette;
+  const f = theme.fonts;
+  return `/** Generated per build — see server/lib/codeagent/theme.js.
+ *  Colours are computed from one seed and verified against WCAG AA
+ *  (contrast: ink/surface ${p.contrast.inkOnSurface}:1, label/accent ${p.contrast.onAccentOnAccent}:1).
+ *  Do not hand-edit; write the token names instead. */
+export default {
+  // "./*.html" and not just index.html: a multi-page site keeps its markup
+  // in about.html, menu.html and the rest, and a class Tailwind never scans
+  // is a class that does not exist in the stylesheet.
+  content: ["./*.html", "./src/**/*.{js,ts,jsx,tsx}"],
+  theme: {
+    extend: {
+      colors: {
+        accent: "${p.accent}",
+        "accent-hover": "${p.accentHover}",
+        "on-accent": "${p.onAccent}",
+        surface: "${p.surface}",
+        "surface-2": "${p.surface2}",
+        tint: "${p.tint}",
+        line: "${p.line}",
+        ink: "${p.ink}",
+        "ink-2": "${p.ink2}",
+        dark: "${p.dark}",
+        "on-dark": "${p.onDark}"
+      },
+      fontFamily: {
+        sans: ["${f.body}", ${FALLBACK_SANS}],
+        display: ["${f.heading}", ${FALLBACK_SANS}]
+      }
+    }
+  },
+  plugins: []
+};
+`;
+}
+
+/** The Google Fonts link, for the container's index.html. */
+export function fontLinkTag(theme: BuildTheme): string {
+  const f = theme.fonts;
+  const fam = (name: string, weights: string) => "family=" + name.replace(/ /g, "+") + ":wght@" + weights;
+  const families = f.heading === f.body
+    ? fam(f.heading, f.headingWeights)
+    : fam(f.heading, f.headingWeights) + "&" + fam(f.body, f.bodyWeights);
+  return '<link rel="preconnect" href="https://fonts.googleapis.com">\n' +
+    '    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n' +
+    '    <link href="https://fonts.googleapis.com/css2?' + families + '&display=swap" rel="stylesheet">';
+}
+
+/**
+ * What the model is told.
+ *
+ * Deliberately short. SYSTEM_PROMPT is already sixty lines of imperatives and
+ * a sixty-first does less than any of the first ten — so this names the
+ * tokens, says the contrast is already handled, and stops.
+ */
+export function promptBlock(theme: BuildTheme): string {
+  const p = theme.palette;
+  const f = theme.fonts;
+  return "THIS BUILD'S DESIGN SYSTEM — use these, do not invent a palette.\n" +
+    "Tailwind tokens are already configured and every pairing below is verified against WCAG AA, " +
+    "so you do not need to reason about contrast: use the token and it is correct.\n" +
+    "  bg-surface / bg-surface-2   page and card backgrounds (" + p.surface + ", " + p.surface2 + ")\n" +
+    "  text-ink / text-ink-2       body text and secondary text ON those surfaces (" + p.ink + ", " + p.ink2 + ")\n" +
+    "  bg-accent + text-on-accent  buttons and primary actions — always together (" + p.accent + ", " + p.onAccent + ")\n" +
+    "  hover:bg-accent-hover       the hover state for those\n" +
+    "  bg-tint                     quiet highlight blocks, with text-ink on top\n" +
+    "  border-line                 every border and divider\n" +
+    "  bg-dark + text-on-dark      dark sections — always together\n" +
+    "  font-display                headings (" + f.heading + "). Body text inherits " + f.body + ", so it needs no class.\n" +
+    (theme.seededFromLogo
+      ? "This palette was derived from the logo the person uploaded, so the site already matches their brand — keep it.\n"
+      : "") +
+    "Prefer these tokens over Tailwind's stock palette (blue-600, gray-100 and so on). " +
+    "Mixing the two is what makes a page look assembled rather than designed.\n\n";
+}
+
+export { TYPE_THEME, TYPE_FONTS };

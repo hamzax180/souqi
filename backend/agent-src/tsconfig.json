@@ -46,6 +46,14 @@
        as hand-written .d.ts instead (model-loop.d.ts, run-store.d.ts) —
        those describe the hand-written JS this code calls into, and .d.ts
        inputs emit nothing. */
+    /* A failing typecheck must emit NOTHING. tsc's default is to write
+       the output anyway, which here means a half-ported module landing
+       in the directory that ships — and because build-agent.js bails
+       before it stamps, the next build then sees an unstamped file,
+       decides a person wrote it, and refuses. One failed compile would
+       wedge the build. */
+    "noEmitOnError": true,
+
     "declaration": false,
     "sourceMap": false,
     "removeComments": false,

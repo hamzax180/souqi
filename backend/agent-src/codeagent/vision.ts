@@ -1,0 +1,148 @@
+/* =================================================================
+   vision.ts — looking at a photo someone attached
+   -----------------------------------------------------------------
+   The build model cannot see. Both routes in this deployment point at
+   deepseek-chat, and dom-snapshot.ts exists because of exactly that: it
+   proves a route rendered by reading text out of a real browser, because
+   looking at a screenshot was never an option.
+
+   So this is the one place an image is actually looked at, and its whole
+   output is a paragraph of ENGLISH that gets pasted into the build prompt
+   as text. The build model never receives an image; it receives a
+   description of one. That is what lets a text-only model place a photo
+   sensibly, and it is why the result is worth caching forever.
+
+   Called once per image ever, from the upload completion step — not per
+   turn, not per build. The description is a property of the image, and an
+   image does not change. That is the entire cost story.
+
+   Every failure here is soft. A build with no description still runs; it
+   just places photos by filename and by what the person typed.
+   ================================================================= */
+
+import * as client from "../ai/client";
+
+/* 6s (the client default) is a text-completion timeout. A vision call
+   uploads an image as part of the request and reasons over it, so it is a
+   different order of latency — and this runs while someone is watching an
+   upload spinner, so it cannot hang either. */
+const TIMEOUT_MS = 25000;
+
+/* Long enough for four sentences and the colours; short enough that a
+   rambling model cannot turn one photo into a page of prose that then rides
+   in every future build prompt for that project. */
+const MAX_TOKENS = 300;
+
+/* Vision is a describe-what-is-there task, not a creative one. */
+const TEMPERATURE = 0.2;
+
+/* An image is billed as input tokens, so a 12MP phone photo is expensive to
+   look at and no more informative than a downscaled one. The client
+   downscales before upload; this is the backstop for anything that arrives
+   larger anyway — better a skipped description than a surprise bill. */
+export const MAX_BYTES = 8 * 1024 * 1024;
+
+export const PROMPT =
+  "Describe this image for a web designer who will place it on a website and cannot see it.\n" +
+  "In 2-4 sentences, state:\n" +
+  "- what the subject actually is;\n" +
+  "- which of these it most resembles: a logo or brand mark, a product shot, a photo of people, " +
+  "an interior or exterior scene, or a texture/background;\n" +
+  "- the two or three dominant colours, as hex codes;\n" +
+  "- whether it reads light or dark overall, and its orientation " +
+  "(landscape, portrait or square);\n" +
+  "- whether there is uncluttered space where text could sit and stay legible.\n" +
+  "If it contains readable text — a business name, a price, a slogan — quote it exactly.\n" +
+  "Do not guess at the business, the brand or the location. No preamble, no markdown, plain prose.";
+
+export { TIMEOUT_MS };
+
+export interface DescribeOpts {
+  prompt?: string;
+  timeoutMs?: number;
+}
+
+export interface Description {
+  description: string;
+  costUsd: number;
+  model: string | undefined;
+}
+
+/**
+ * Describe one image.
+ *
+ * `bytes` is a Buffer the caller has already fetched and verified. It is
+ * passed in rather than fetched here on purpose: the completion step has
+ * just pulled the object to sniff its magic bytes, so re-fetching it would
+ * be a second round trip to storage to look at the same thing twice.
+ *
+ * Returns null when there is nothing trustworthy to say — unconfigured,
+ * over size, refused, or served by a model that cannot see. Null means "no
+ * description", never "this image is bad".
+ */
+export async function describe(
+  bytes: Buffer,
+  mime: string,
+  opts?: DescribeOpts
+): Promise<Description | null> {
+  const o = opts || {};
+  if (!Buffer.isBuffer(bytes) || !bytes.length) return null;
+  if (bytes.length > MAX_BYTES) return null;
+  if (!/^image\//.test(String(mime || ""))) return null;
+
+  const dataUrl = "data:" + mime + ";base64," + bytes.toString("base64");
+
+  let res;
+  try {
+    res = await client.chat({
+      route: "vision",
+      messages: [{
+        role: "user",
+        /* A content ARRAY, which is the one place in this codebase a message
+           is not a plain string. client.js JSON.stringifies req.messages
+           verbatim, so it passes through untouched — but note that
+           ai/anthropic.js coerces user content with String(), so this must
+           never be routed BYOK to Claude without teaching that adapter
+           blocks first. The vision route is never a BYOK route today. */
+        content: [
+          { type: "text", text: o.prompt || PROMPT },
+          { type: "image_url", image_url: { url: dataUrl } }
+        ]
+      }],
+      maxTokens: MAX_TOKENS,
+      temperature: TEMPERATURE,
+      timeoutMs: o.timeoutMs || TIMEOUT_MS
+    });
+  } catch {
+    // An unknown-route throw is a caller bug; anything else is operational.
+    // Neither is worth failing an upload over.
+    return null;
+  }
+
+  if (!res || !res.ok) return null;
+
+  /* Belt and braces. resolveRoute() already refuses to serve vision from a
+     text-only route, so this should be unreachable — but the cost of being
+     wrong is a confident description of an image nobody looked at, cached
+     permanently and used to lay out a customer's site. Worth two lines. */
+  if (res.servedFallback) return null;
+
+  const text = res.message && typeof res.message.content === "string"
+    ? res.message.content.trim()
+    : "";
+  if (!text) return null;
+
+  return { description: text, costUsd: res.costUsd || 0, model: res.route };
+}
+
+/**
+ * Is there any point calling describe()?
+ *
+ * Lets the upload route skip the storage round-trip entirely when vision is
+ * not configured, rather than fetching bytes to hand to something that will
+ * refuse them.
+ */
+export function available(): boolean {
+  try { return client.routeConfigured("vision"); }
+  catch { return false; }
+}
