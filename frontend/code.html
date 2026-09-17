@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=4.4">
+<link rel="stylesheet" href="/styles/pages/code.css?v=4.5">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -2469,17 +2469,14 @@
       const esc2 = (s) => String(s).replace(/[&<>"']/g, (c) =>
         ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
       qb.innerHTML =
-        '<div class="qb-head">' +
-          '<span class="qb-label">Queued</span>' +
-          (buildQueue.length > 1 ? '<span class="qb-count">' + buildQueue.length + '</span>' : '') +
-        '</div>' +
-        '<div class="qb-list">' +
-          buildQueue.map((p) => '<div class="qb-item">' + esc2(p) + '</div>').join('') +
-        '</div>' +
-        '<div class="qb-actions">' +
+        '<span class="qb-text">' +
+          buildQueue.length + (buildQueue.length === 1 ? ' prompt queued' : ' prompts queued') +
+          ' — <span class="qb-said">“' + esc2(buildQueue[0]) + '”</span>' +
+        '</span>' +
+        '<span class="qb-actions">' +
           '<button type="button" id="agQueueNow" class="qb-now">Send now</button>' +
-          '<button type="button" id="agClearQueue" class="qb-cancel">Cancel</button>' +
-        '</div>';
+          '<button type="button" id="agClearQueue">Cancel queue</button>' +
+        '</span>';
 
       const now = $("agQueueNow");
       if (now) {
