@@ -160,10 +160,27 @@
      transitions everywhere. */
   .ag-split{max-width:1440px;margin:0 auto;width:100%;display:flex;flex:1;min-height:0;height:calc(100vh - 56px);overflow:hidden}
   .ag-topbar{display:flex;align-items:center;width:100%;border-bottom:none;flex:none}
+  /* THE COLUMN'S SIDE INSET LIVES ON ITS CHILDREN, NOT ON IT.
+
+     It was padding on .ag, so the scrolling log stopped 20-28px short of
+     the column's edge and took its scrollbar with it — a bar floating in
+     from the edge with dead space to its right. The inset is the same
+     distance; it is just applied inside the scroll box now, so the box
+     reaches the edge and the bar sits where a scrollbar belongs.
+
+     The floor is smaller on a phone, where 20px a side out of 375 is
+     width the conversation could have had. */
+  :root{--ag-inset:clamp(20px,2.4vw,28px)}
+  @media (max-width:640px){ :root{--ag-inset:12px} }
   .ag{text-align:left;display:flex;flex-direction:column;min-width:0;min-height:0;height:100%;max-height:100%;
-    padding:0 clamp(20px,2.4vw,28px);border-right:none;
+    padding:0;border-right:none;
     flex:1 1 100%;transition:flex-basis .4s var(--ease);
     overflow:hidden !important}
+  /* Named, not `.ag > *`: .ag-hero sits between them as display:contents,
+     so the log is .ag's child for layout but its GRANDCHILD to a
+     selector — the universal child rule missed it and the text ran
+     edge to edge. */
+  .ag-log{padding-inline:var(--ag-inset)}
   .ag::-webkit-scrollbar{width:0px;display:none}
   /* No build yet: .ag is the only visible column (.ag-preview collapses to
      0 below), so its own content is centred to a comfortable reading
@@ -782,7 +799,10 @@
      the card was 6px wider on each side than the messages and the scroll
      thumb travelled underneath its rounded corner. Falls back to 0, which is
      correct on overlay-scrollbar platforms where there is no gutter to match. */
-  .ag-composer{padding-inline:var(--log-gutter, 0px)}
+  /* The column's own inset as well as the gutter, now that .ag no
+     longer carries it: the input's left edge has to land on the same
+     column as the words above it, and those are inset by both. */
+  .ag-composer{padding-inline:calc(var(--ag-inset) + var(--log-gutter, 0px))}
   /* Lifted off the page for the length of the travel: the shadow grows as it
      leaves the middle of the screen and settles as it lands, so the move
      reads as the composer being placed rather than teleporting. will-change
@@ -1038,7 +1058,11 @@
     .ag:not(.is-new) #agLog,
     .ag.has-convo #agLog,
     .ag:has(#agLog > *:not(.ag-empty)) #agLog{
-      padding-bottom:calc(var(--composer-h, 110px) + 26px);
+      /* margin, not padding. Padding kept the log's BOX running to the
+         bottom of the screen behind the fixed bar, so its scrollbar ran
+         down past the composer and ended beside it. A margin ends the box
+         above the bar, which is where the scroll should stop. */
+      margin-bottom:calc(var(--composer-h, 110px) + 12px);
     }
   }
   /* ---------------------------------------------------------------
@@ -2931,7 +2955,10 @@
     .ag:not(.is-new) #agLog,
     .ag.has-convo #agLog,
     .ag:has(#agLog > *:not(.ag-empty)) #agLog {
-      padding-bottom: calc(var(--composer-h, 108px) + 26px + env(safe-area-inset-bottom, 0px));
+      /* margin, not padding — see the note on the other copy of this rule:
+         padding left the scroll box running behind the fixed bar and took
+         the scrollbar with it. */
+      margin-bottom: calc(var(--composer-h, 108px) + 12px + env(safe-area-inset-bottom, 0px));
     }
 
     /* Messages sit ON the composer, the way a chat does, instead of stacking
