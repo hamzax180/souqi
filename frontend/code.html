@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=5.1">
+<link rel="stylesheet" href="/styles/pages/code.css?v=5.2">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -3501,10 +3501,15 @@
 
     /** Repaint the active group's single row from what it has collected. */
     function paintGroup(done) {
-      if (!stepGroup || !stepGroup.handle) return;
+      if (!stepGroup) return;
       const text = summariseGroup(stepGroup, done);
       // Tokens now, so emptiness is a length and not a falsy string.
       if (!text.length) return;
+      // Created here, under whatever the model has said so far.
+      if (!stepGroup.handle) {
+        stepGroup.handle = thinkPanel.addStep(tokensToText(text));
+        handles[stepGroup.id] = stepGroup.handle;
+      }
       /* The counts are passed apart from the sentence so the sentence can
          stay text — how big a change is is most of what you want to know
          about it, and it is the one thing words cannot carry without
@@ -3637,9 +3642,12 @@
 
       /* A turn opens one row and owns it until it closes. */
       if (isTurn && state === "start") {
+        /* The group opens with no row. The row is created by the first
+           thing it actually does — see paintGroup — because the model
+           speaks before it acts, and a row created at turn start pins
+           itself above prose that has not arrived yet. Claimed at the
+           top, the summary sat over the sentence explaining it. */
         stepGroup = { id: id, created: [], edited: [], commands: [], reads: 0, added: 0, removed: 0, items: [], handle: null };
-        stepGroup.handle = thinkPanel.addStep("Working on it…");
-        handles[id] = stepGroup.handle;
         return;
       }
       if (isTurn && state !== "start") {
@@ -3653,7 +3661,7 @@
              to show them: set() marks the row settled and ignores every
              paint after it. */
           if (summariseGroup(stepGroup, true).length) paintGroup(true);
-          else stepGroup.handle.done("Thought it through");
+          else if (stepGroup.handle) stepGroup.handle.done("Thought it through");
           stepGroup = null;
         } else if (handles[id]) { handles[id].done(); }
         return;

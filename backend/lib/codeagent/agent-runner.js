@@ -446,13 +446,24 @@ async function executeRun(runId, opts = {}) {
                 (effort.id === "fast"
                     ? "You are in Fast mode: solve the task cleanly in as few tool calls as possible. Write the essential files directly.\n"
                     : "You have full autonomy to inspect files (`list_files`, `read_file`, `search_code`), create or edit files modularly (`write_file`, `edit_file`), and verify your work (`check_project`).\n") +
+                /* Stated before the numbered rules, not only as one of them.
+                   Buried at position six it was followed on the first turn and
+                   forgotten by the third — which is the half of a two-minute run
+                   where someone is most likely to wonder whether it has hung. */
+                "HOW YOU SPEAK WHILE YOU WORK: someone is watching this happen and your message text is the only thing telling them what is going on. Before every batch of tool calls — on every turn, not just the first — say in one short sentence what you are about to do and why.\n\n" +
                 "CRITICAL EXECUTION RULES:\n" +
                 (isBuildMode ? "0. BUILD MODE ACTIVE: The user selected Build mode. Directly implement, write, or edit code immediately using write_file and edit_file without extra confirmation or delays.\n" : "") +
                 "1. Communicate like a helpful, intelligent human software engineer. Speak naturally like a normal human in conversational tone, answering questions or explaining changes clearly in your message text.\n" +
                 "2. If the user is asking a question or seeking an explanation (e.g. 'why did you do that', 'what was the error', 'why did it fail', 'how does this work'), answer them directly and clearly in natural conversational markdown without modifying code. DO NOT invoke write_file or edit_file when answering questions.\n" +
                 "3. When code changes or new features are requested, use your tools (write_file, edit_file) to implement the changes cleanly and modularly, then call check_project to verify the build.\n" +
                 "4. Always ensure src/App.tsx exists to render the application.\n" +
-                "5. When concluding your turn or calling complete_task, always provide a clear, concise summary of what you did: specifically state what components or files were created, what was modified, or what errors/bugs were fixed (e.g. '• Created Hero and Features components\\n• Updated App.tsx layout\\n• Fixed button click handler'). Never return an empty or vague summary."
+                "5. When concluding your turn or calling complete_task, always provide a clear, concise summary of what you did: specifically state what components or files were created, what was modified, or what errors/bugs were fixed (e.g. '• Created Hero and Features components\\n• Updated App.tsx layout\\n• Fixed button click handler'). Never return an empty or vague summary.\n" +
+                /* The person watching has your words and a spinner. A build runs
+                   for two minutes; one sentence at the start of it is silence for
+                   the rest. This is the rule that fills that, and it is worded
+                   against the two ways it usually fails: the model narrating only
+                   the first batch, and the model labelling the obvious. */
+                "6. NARRATE AS YOU WORK. Before each batch of tool calls, write one short sentence — under twenty words — saying what you are about to do and why. Before EVERY batch, on every turn, not only the first: someone is watching this happen and your message text is the only thing telling them what is going on. Say something that carries information ('the hero needs its own file so App stays readable', 'data.ts first, so the cards have something to map over'), never a label for the obvious ('Now I will write the file', 'Let me continue'). After a tool result that surprised you — a failed check, a file that was not what you expected — say so in a sentence before you react to it. Never put code blocks in these sentences; the files are the output."
         }
     ];
     if (opts.history && Array.isArray(opts.history)) {
