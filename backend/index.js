@@ -4752,6 +4752,65 @@ app.post("/api/codeagent/repair", codeAgentLimiter, async (req, res) => {
 });
 
 /**
+ * What an in-process run leaves behind: the revision, and the turn that
+ * says what happened.
+ *
+ * One function rather than a `.then()` body, because there are two places a
+ * run finishes here and only one of them had this. A run that paused for a
+ * clarifying question and was resumed through /runs/:id/answer persisted
+ * NOTHING — no revision, no reply — so the conversation simply stopped at
+ * the question.
+ *
+ * It also writes a turn when the run did not succeed. That used to be
+ * skipped, which was invisible while no user turn was written either; now
+ * that every message is recorded, a failed run would leave the person's
+ * message sitting at the end of the transcript with no answer under it. The
+ * steps of a run that failed are the ones most worth keeping.
+ *
+ * The durable worker's finalizer owns the same duty for runs that go to the
+ * worker, and names its turn the same way — `turn_<runId>` — so if both
+ * ever ran for one run, the second is a no-op instead of a second reply.
+ */
+async function persistRunOutcome(run, project, attachedImages, outcome) {
+  if (!project) return;
+  const ms = Math.max(0, Date.now() - Date.parse(run.createdAt || "") || 0);
+  try {
+    if (outcome && outcome.ok) {
+      const hasChanges = outcome.fileStats && outcome.fileStats.length > 0;
+      let rev = null;
+      if (hasChanges && outcome.files) {
+        rev = await projects.addRevision(
+          project.id,
+          { files: outcome.files },
+          outcome.summary || "Autonomous build completed"
+        );
+      }
+      await projects.addTurn(project.id, {
+        id: "turn_" + run.id,
+        role: "agent", kind: hasChanges ? "result" : "text",
+        body: outcome.summary || "Task completed",
+        fileStats: outcome.fileStats || [],
+        revisionId: rev ? rev.id : undefined, chatId: run.chatId,
+        // So reopening this chat can find the steps this run took.
+        runId: run.id, ms
+      });
+      if (attachedImages && attachedImages.length) {
+        try { await uploads.attachToProject(attachedImages.map((i) => i.id), project.id); } catch (e) {}
+      }
+    } else {
+      await projects.addTurn(project.id, {
+        id: "turn_" + run.id,
+        role: "agent", kind: "text",
+        body: (outcome && (outcome.summary || outcome.reason)) || "The run stopped before it finished",
+        chatId: run.chatId, runId: run.id, ms
+      });
+    }
+  } catch (e) {
+    console.warn("[codeagent] could not record the run outcome:", e && e.message);
+  }
+}
+
+/**
  * POST /api/codeagent/runs
  * Starts an autonomous dynamic agent run. Returns 202 Accepted.
  * Returns 200 with { chitchat } when the prompt is noise/question (non-build mode).
@@ -4960,9 +5019,6 @@ function getConversationalFallback(prompt, history) {
         meta: { kind: "code", buildType: (req.body && req.body.buildType) || "website" },
         owner
       });
-      await projects.addTurn(project.id, {
-        role: "user", kind: "text", body: prompt, chatId: String((req.body && req.body.chatId) || "")
-      });
     } catch (e) {
       console.warn("Could not pre-create project:", e.message);
     }
@@ -5075,6 +5131,31 @@ function getConversationalFallback(prompt, history) {
     });
   }
 
+  /* What the person said, written down — once, here, for every message.
+
+     It used to be written only inside the `if (!project)` branch above, so
+     a project kept exactly one user message however long the conversation
+     ran: reopening it showed the prompt that created it, then a column of
+     replies to questions nobody could see. The worker never wrote one
+     either — its finalizer is hardcoded role "agent".
+
+     Named after the run, because createRun hands back the EXISTING run on
+     an idempotency hit and the caller cannot tell that from a fresh one; a
+     double-submit would otherwise say the same thing twice. Non-fatal: a
+     transcript that loses a line is worse than a build that refuses to
+     start, but not by enough to refuse the build. */
+  if (project) {
+    try {
+      await projects.addTurn(project.id, {
+        id: "turn_user_" + run.id,
+        role: "user", kind: "text", body: prompt, chatId: run.chatId, runId: run.id,
+        // Dropped until now even from the one turn that was written, so a
+        // reopened chat said "make the logo like this" beside nothing.
+        images: attachedImages.map((i) => ({ id: i.id, url: i.url, name: i.name }))
+      });
+    } catch (e) { console.warn("[codeagent] could not record the user turn:", e && e.message); }
+  }
+
   /* Hand the run to the durable worker, or run it here.
 
      With CODEAGENT_DURABLE_RUNS=1 and a worker whose heartbeat is
@@ -5126,34 +5207,8 @@ function getConversationalFallback(prompt, history) {
     history: req.body && req.body.conversation,
     imagesBlock,
     attachedImages
-  }).then(async (outcome) => {
-    if (outcome && outcome.ok && project) {
-      try {
-        const hasChanges = outcome.fileStats && outcome.fileStats.length > 0;
-        let rev = null;
-        if (hasChanges && outcome.files) {
-          rev = await projects.addRevision(
-            project.id,
-            { files: outcome.files },
-            outcome.summary || "Autonomous build completed"
-          );
-        }
-        await projects.addTurn(project.id, {
-          role: "agent", kind: hasChanges ? "result" : "text",
-          body: outcome.summary || "Task completed",
-          fileStats: outcome.fileStats || [],
-          revisionId: rev ? rev.id : undefined, chatId: run.chatId,
-          // So reopening this chat can find the steps this run took.
-          runId: run.id
-        });
-        if (attachedImages.length) {
-          try { await uploads.attachToProject(attachedImages.map(i => i.id), project.id); } catch (e) {}
-        }
-      } catch (e) {
-        /* background persistence */
-      }
-    }
-  }).catch(async (err) => {
+  }).then((outcome) => persistRunOutcome(run, project, attachedImages, outcome))
+  .catch(async (err) => {
     await runStore.updateRun(run.id, { status: "failed", latestError: err.message });
   });
 
@@ -5302,9 +5357,18 @@ app.post("/api/codeagent/runs/:id/answer", async (req, res) => {
      in the background and the client follows it on the events stream it
      is already subscribed to. */
   const run = await runStore.getRun(req.params.id, owner);
+  /* Resolved before the run is launched, because persisting what it
+     produced needs it and the run is fire-and-forget. Answering a question
+     used to persist nothing at all: the run carried on, wrote its files,
+     and the conversation stayed frozen at the question. */
+  let answered = null;
+  if (run && run.projectId) {
+    try { answered = await projects.get(run.projectId); } catch (e) {}
+  }
   agentRunner.executeRun(req.params.id, {
     history: (run && run.context && run.context.history) || []
-  }).catch(async (err) => {
+  }).then((outcome) => persistRunOutcome(run, answered, [], outcome))
+  .catch(async (err) => {
     await runStore.updateRun(req.params.id, { status: "failed", latestError: String(err && err.message || err) })
       .catch(() => {});
   });

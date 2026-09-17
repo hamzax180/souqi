@@ -54,6 +54,13 @@ async function ensureIndexes() {
     await db.collection("turns").createIndex({ projectId: 1, seq: 1 });
     await db.collection("revisions").createIndex({ projectId: 1, at: -1 });
     await db.collection("revisions").createIndex({ id: 1 }, { unique: true });
+    /* Last, and unique, because addTurn upserts on it: a turn named after
+       its run is how a retried request stays one message instead of two,
+       and without the constraint two concurrent upserts both insert and the
+       de-duplication is decorative. Last in the list because a legacy
+       duplicate would throw here, and the indexes above are worth more than
+       this one. */
+    await db.collection("turns").createIndex({ id: 1 }, { unique: true });
   } catch (e) { /* indexes are an optimisation, never a hard dependency */ }
 }
 
@@ -460,9 +467,24 @@ async function materialize(projectId) {
 async function addTurn(projectId, turn) {
   const existing = await listTurns(projectId);
   const row = {
-    id: id("tn"),
+    /* Usually generated, but a caller may name it — and when it does, the
+       write below becomes insert-if-absent rather than insert.
+
+       createRun hands back the EXISTING run on an idempotency hit and the
+       caller cannot tell that from a fresh one, so a double-submitted
+       message would otherwise be posted into the transcript twice. Naming
+       the turn after its run makes the second write a no-op. The durable
+       worker's finalizer has always done this (`turn_<runId>`); this is the
+       same trick, available to everyone. */
+    id: turn.id ? String(turn.id).slice(0, 80) : id("tn"),
     projectId: projectId,
-    seq: existing.length,
+    /* One past the highest, not the count.
+       These two agree while seqs are dense, and the finalizer computes its
+       own as `lastTurn.seq + 1`. Now that a user turn is written for every
+       message, one can land while a worker run is finalizing — and two rows
+       claiming the same seq sort arbitrarily, which puts the reply above the
+       message that asked for it. */
+    seq: existing.length ? Math.max.apply(null, existing.map((t) => Number(t.seq) || 0)) + 1 : 0,
     role: turn.role === "user" ? "user" : "agent",
     kind: turn.kind || "text",
     /* Which conversation inside the project this turn belongs to.
@@ -515,9 +537,12 @@ async function addTurn(projectId, turn) {
   };
 
   const c = col("turns");
-  if (c) await c.insertOne(Object.assign({}, row));
+  // Insert-if-absent, so a caller-supplied id is a de-duplication key. A row
+  // that is already there wins; nothing here ever rewrites a stored turn.
+  if (c) await c.updateOne({ id: row.id }, { $setOnInsert: Object.assign({}, row) }, { upsert: true });
   else {
     const arr = mem.turns.get(projectId) || [];
+    if (arr.some((t) => t.id === row.id)) return row;
     arr.push(row);
     mem.turns.set(projectId, arr.slice(-MAX_TURNS));
   }

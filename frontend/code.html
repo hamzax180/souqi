@@ -2416,7 +2416,15 @@
         const last = out[out.length - 1];
         // Only into the block this turn started; see openedProse.
         if (last && last.prose !== undefined && openedProse) last.prose += p.text;
-        else { flush(); out.push({ prose: p.text }); openedProse = true; }
+        /* Opening a paragraph does NOT close the turn's group.
+           It used to flush here, which set group = null — and the agent
+           narrates before it works, so on every real run the very first
+           delta of a turn threw the group away and the file rows,
+           commands and reads that came after it were dropped on the
+           floor. A replayed turn showed the prose and "Verified the
+           build" and nothing about what it had actually changed. The
+           group closes where it opens: at turn-N. */
+        else { out.push({ prose: p.text }); openedProse = true; }
         continue;
       }
       if (e.type === "tool_result" && p.ok && ["read_file", "list_files", "search_code"].indexOf(p.tool) >= 0) {
@@ -2452,6 +2460,10 @@
     return out;
   }
 
+  /** "47s" / "2m 8s". One formatter, because the title and the status row
+      under it have to agree and there were two copies of this ternary. */
+  function secsText(s) { return s < 60 ? s + "s" : Math.floor(s / 60) + "m " + (s % 60) + "s"; }
+
   /** The same panel the live turn drew, already finished. */
   function renderPastSteps(prompt, steps, seconds, tokens) {
     if (!steps || !steps.length) return null;
@@ -2468,12 +2480,10 @@
         '<span class="th2-spark" aria-hidden="true"></span>' +
         '<span class="th2-num th2-time"></span>' +
       '</div>';
-    wrap.querySelector(".th2-title").textContent = seconds
-      ? "Thought for " + (seconds < 60 ? seconds + "s" : Math.floor(seconds / 60) + "m " + (seconds % 60) + "s")
-      : "Steps";
+    wrap.querySelector(".th2-title").textContent = seconds ? "Thought for " + secsText(seconds) : "Steps";
     const st = wrap.querySelector(".th2-status");
     const bits = [];
-    if (seconds) bits.push(seconds < 60 ? seconds + "s" : Math.floor(seconds / 60) + "m " + (seconds % 60) + "s");
+    if (seconds) bits.push(secsText(seconds));
     if (tokens) bits.push((tokens >= 1000 ? (tokens / 1000).toFixed(1).replace(/\.0$/, "") + "k" : tokens) + " tokens");
     if (!bits.length) st.remove(); else wrap.querySelector(".th2-time").textContent = bits.join("  ·  ");
 
@@ -2501,28 +2511,172 @@
     return wrap;
   }
 
+  /* One past run's events, fetched and turned back into steps.
+
+     Split out of fillPastSteps because the folded placeholder below needs
+     exactly this and nothing else. The block parsing is fiddly enough that
+     a second copy of it would drift — which is precisely how the two
+     restore paths ended up disagreeing about whether history has steps. */
+  async function fetchRunSteps(runId) {
+    const res = await fetch("/api/codeagent/runs/" + encodeURIComponent(runId) + "/events?after=0",
+      { headers: { "Accept": "text/event-stream" }, credentials: "same-origin" });
+    if (!res.ok) return null;
+    const text = await res.text();
+    const events = [];
+    for (const block of text.split("\n\n")) {
+      const em = /event: (.+)/.exec(block), dm = /data: (.+)/.exec(block);
+      if (!em || !dm) continue;
+      try { events.push({ type: em[1].trim(), payload: JSON.parse(dm[1]) }); } catch (e) { /* skip */ }
+    }
+    if (!events.length) return null;
+    /* Tokens are real — the run reported them. The elapsed time is not in
+       here: the frames carry the payloads and not the `at` each row was
+       written with, so the caller passes it in off the turn row instead. */
+    const usage = events.filter((e) => e.type === "usage").pop();
+    return { steps: stepsFromEvents(events), tokens: usage && usage.payload ? usage.payload.tokens : 0 };
+  }
+
   /** Steps for one past turn, fetched and inserted where it happened. */
-  async function fillPastSteps(runId, anchorNode) {
+  async function fillPastSteps(runId, anchorNode, seconds) {
     try {
-      const res = await fetch("/api/codeagent/runs/" + encodeURIComponent(runId) + "/events?after=0",
-        { headers: { "Accept": "text/event-stream" }, credentials: "same-origin" });
-      if (!res.ok) return;
-      const text = await res.text();
-      const events = [];
-      for (const block of text.split("\n\n")) {
-        const em = /event: (.+)/.exec(block), dm = /data: (.+)/.exec(block);
-        if (!em || !dm) continue;
-        try { events.push({ type: em[1].trim(), payload: JSON.parse(dm[1]) }); } catch (e) { /* skip */ }
-      }
-      if (!events.length) return;
-      /* No elapsed time: the SSE frames carry the payloads and not the
-         `at` each row was written with, so a duration here would be
-         invented. Tokens are real — the run reported them. */
-      const usage = events.filter((e) => e.type === "usage").pop();
-      const panel = renderPastSteps("", stepsFromEvents(events), 0,
-        usage && usage.payload ? usage.payload.tokens : 0);
+      const got = await fetchRunSteps(runId);
+      if (!got) return;
+      const panel = renderPastSteps("", got.steps, seconds || 0, got.tokens);
       if (panel && anchorNode && anchorNode.parentNode) anchorNode.parentNode.insertBefore(panel, anchorNode);
     } catch (e) { /* history without its steps is the old behaviour, not a failure */ }
+  }
+
+  /* A turn's steps, folded, not yet fetched.
+
+     Only the last few turns fetch on open, because each one is a request
+     and a long project would otherwise load by asking for every run it has
+     ever had. Everything older used to lose its steps for good. This is
+     the rest of them: the same settled panel drawn closed, which goes and
+     gets its own contents the first time you open it. */
+  function lazyStepsPanel(runId, seconds) {
+    /* Folded from birth, and .th2.folded is the whole affordance — it
+       rotates the chevron and hides .th2-steps — so an empty body here is
+       invisible until the click that fills it. */
+    const wrap = el("ag-thinking th2 done folded");
+    wrap.innerHTML =
+      '<div class="th2-top">' +
+        '<span class="ag-th-gemini" aria-hidden="true">' +
+          '<span class="g-dot g-dot-1"></span><span class="g-dot g-dot-2"></span><span class="g-dot g-dot-3"></span>' +
+        '</span>' +
+        '<span class="th2-title"></span>' +
+        '<svg class="th2-fold" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>' +
+      '</div><div class="th2-steps"></div>' +
+      '<div class="th2-status">' +
+        '<span class="th2-spark" aria-hidden="true"></span>' +
+        '<span class="th2-num th2-time"></span>' +
+      '</div>';
+    wrap.querySelector(".th2-title").textContent = seconds ? "Thought for " + secsText(seconds) : "Steps";
+    if (seconds) wrap.querySelector(".th2-time").textContent = secsText(seconds);
+    else wrap.querySelector(".th2-status").remove();
+
+    let loading = false;
+    /* Bound to the node, not delegated off agLog: restore builds this
+       inside a detached div and re-parents it at the end, and a listener
+       moves with the node it sits on. renderPastSteps binds its own fold
+       handler the same way, for the same reason. */
+    wrap.querySelector(".th2-top").addEventListener("click", async function () {
+      if (loading) return;
+      const opening = wrap.classList.contains("folded");
+      wrap.classList.toggle("folded");
+      if (!opening) return;
+      loading = true;
+      const body = wrap.querySelector(".th2-steps");
+      body.textContent = "";
+      /* A plain row, not .busy: .th2.done kills the sweep on busy text, so
+         on a settled panel that class buys nothing but a misleading name. */
+      body.appendChild(el("th2-step", '<span class="th2-step-text">Loading steps…</span>'));
+      let got = null;
+      try { got = await fetchRunSteps(runId); } catch (e) { /* swallowed, as fillPastSteps does */ }
+      loading = false;
+      const panel = got && renderPastSteps("", got.steps, seconds || 0, got.tokens);
+      /* Nothing to show is not an error state. A run whose events yield no
+         steps, or a fetch that failed, leaves the transcript reading the
+         way it did before any of this existed — the header goes away
+         rather than standing open and empty. */
+      if (!panel) { wrap.remove(); return; }
+      if (wrap.parentNode) wrap.parentNode.replaceChild(panel, wrap);
+    });
+    return wrap;
+  }
+
+  /* One transcript, rebuilt — for both ways into a project.
+
+     /agent/<slug> at boot and the recent-projects list each had their own
+     copy of this, and the copies drifted: only one of them ever grew the
+     code that puts a turn's steps back, so which door you came through
+     decided whether your history had any. */
+  let restoreSeq = 0;
+  async function restoreTurns(data) {
+    /* Built off screen, shown once. The skeleton — or, from the recent
+       list, the chat still on screen — stays up until the turns, the cards
+       and the steps each turn took are all assembled; a conversation
+       appearing in pieces is the same jitter the skeleton replaced. */
+    const mine = ++restoreSeq;
+    const restored = document.createElement("div");
+    agRestoreHost = restored;
+    const pendingSteps = [];
+    let renderedAnyCard = false;
+    /* The last few turns fetch their steps now; everything older gets a
+       folded placeholder that fetches on first open. Each fetch is a
+       request, and a long project would otherwise open by asking for every
+       run it has ever had — the point is the part you are returning to. */
+    const REPLAY_LAST = 4;
+    const turns = data.turns || [];
+    const replayFrom = Math.max(0, turns.filter((t) => t.role !== "user").length - REPLAY_LAST);
+    let agentSeen = 0;
+
+    turns.forEach((t) => {
+      if (t.role === "user") { sayUser(t.body, false, t.at, t.images); return; }
+      const said = say(t.body);
+      /* Two shapes, one link. The worker's finalizer names the turn after
+         its run (`turn_<runId>`); the in-process path stores the id in a
+         field. Older turns predate both and have no steps to fetch. */
+      const runId = t.runId || (/^turn_(run_.+)$/.exec(String(t.id || "")) || [])[1];
+      /* How long it took, off the row rather than the event stream — the
+         frames carry no timing, which is why every replayed panel said
+         "Steps" where the live one said "Thought for 47s". Turns written
+         before anything set ms fall back to that same word rather than to
+         an invented number. */
+      const seconds = typeof t.ms === "number" && t.ms > 0 ? Math.max(1, Math.round(t.ms / 1000)) : 0;
+      if (runId && said) {
+        if (agentSeen >= replayFrom) pendingSteps.push(fillPastSteps(runId, said, seconds));
+        else said.parentNode.insertBefore(lazyStepsPanel(runId, seconds), said);
+      }
+      agentSeen += 1;
+      /* Each build's own card, with its own numbers. One card at the end
+         could only ever carry the whole project's file list against the
+         last turn's counts — so a file changed three turns ago showed with
+         no +/- at all, which is most of them. */
+      if (t.fileStats && t.fileStats.length) {
+        renderCard(t.fileStats.map((f) => f.path), 0, t.fileStats);
+        renderedAnyCard = true;
+      }
+    });
+
+    // Older projects have turns with no stats on them. They still get the
+    // list they always got, once, rather than nothing.
+    if (!renderedAnyCard && data.files && data.files.length) renderCard(data.files, 0);
+
+    /* Waited on, not raced. fillPastSteps swallows its own failures, so a
+       chat that loads without its steps is the old behaviour rather than a
+       reason to hold the whole transcript back. */
+    try { await Promise.all(pendingSteps); } catch (e) { /* nothing to add */ }
+
+    /* Someone opened another project while this one was fetching. Whoever
+       started last owns the log; finishing here would null the host out
+       from under them and then wipe what they had already built. */
+    if (mine !== restoreSeq) return;
+
+    agRestoreHost = null;
+    agLog.innerHTML = "";
+    while (restored.firstChild) agLog.appendChild(restored.firstChild);
+    agLog.classList.add("ag-log-entered");
+    toBottom();
   }
 
   /** "+21 −8", in the diff colours the rest of the app already defines. */
@@ -5933,42 +6087,13 @@
       $("agRecent").hidden = true;
       agSection.classList.remove("is-new");
 
-      // Clear previous chat and replay turns
-      /* Built off screen, shown once. The skeleton stays up until the
-         whole thing — turns, cards and the steps each turn took — is
-         assembled, because a conversation appearing in pieces is the
-         same jitter the skeleton replaced, just later. */
-      const restored = document.createElement("div");
-      agRestoreHost = restored;
-      const pendingSteps = [];
-      let renderedAnyCard = false;
-      (data.turns || []).forEach((t) => {
-        if (t.role === "user") { sayUser(t.body, false, t.at, t.images); return; }
-        say(t.body);
-        /* Each build's own card, with its own numbers. One card at the end
-           could only ever carry the whole project's file list against the
-           last turn's counts — so a file changed three turns ago showed with
-           no +/- at all, which is most of them. */
-        if (t.fileStats && t.fileStats.length) {
-          renderCard(t.fileStats.map((f) => f.path), 0, t.fileStats);
-          renderedAnyCard = true;
-        }
-      });
-
-      // Older projects have turns with no stats on them. They still get the
-      // list they always got, once, rather than nothing.
-      if (!renderedAnyCard && data.files && data.files.length) renderCard(data.files, 0);
-
-      /* Their own failures are already swallowed; this only waits. A
-         chat that loads without its steps is the old behaviour, not a
-         reason to hold the whole transcript back. */
-      try { await Promise.all(pendingSteps); } catch (e) { /* nothing to add */ }
-
-      agRestoreHost = null;
-      agLog.innerHTML = "";
-      while (restored.firstChild) agLog.appendChild(restored.firstChild);
-      agLog.classList.add("ag-log-entered");
-      toBottom();
+      /* Clear the previous chat and replay this one. Shared with boot() —
+         this was a copy of that block and fell behind it: it declared a
+         pendingSteps array and never pushed anything into it, and threw
+         away say()'s return value, so there was no anchor to hang a panel
+         on. Opening a project from the recent list therefore restored the
+         summaries and nothing underneath them. */
+      await restoreTurns(data);
 
       // Render the real app through the same path a fresh build uses —
       // GET /api/projects/:key/preview is a placeholder ("hasn't been
@@ -6469,55 +6594,8 @@
       $("agRecent").hidden = true;
       agSection.classList.remove("is-new");
 
-      /* Built off screen, shown once — the same as the chat switcher
-         above. The skeleton stays up until the turns, the cards and the
-         steps each turn took are all assembled; a conversation appearing
-         in pieces is the jitter the skeleton was added to replace. */
-      const restored = document.createElement("div");
-      agRestoreHost = restored;
-      const pendingSteps = [];
-      let renderedAnyCard = false;
-      /* The last few turns get their steps back; older ones keep the
-         summary alone. Each one is a request, and a long project would
-         otherwise open by fetching every run it has ever had — the point
-         is the part of the conversation you are returning to. */
-      const REPLAY_LAST = 4;
-      const agentTurns = (data.turns || []).filter((t) => t.role !== "user");
-      const replayFrom = Math.max(0, agentTurns.length - REPLAY_LAST);
-      let agentSeen = 0;
-
-      (data.turns || []).forEach((t) => {
-        if (t.role === "user") { sayUser(t.body, false, t.at, t.images); return; }
-        const said = say(t.body);
-        /* The run id is the turn id: the finalizer writes "turn_" + run.id,
-           which is the only link between a stored turn and the events that
-           produced it. Filled after the fact so history paints immediately
-           and the steps arrive into the place they belong. */
-        /* Two shapes, one link. The worker's finalizer names the turn
-           after its run (`turn_<runId>`); the in-process path stores the
-           id in a field. Older turns predate both and simply have no
-           steps to fetch. */
-        const runId = t.runId || (/^turn_(run_.+)$/.exec(String(t.id || "")) || [])[1];
-        if (runId && agentSeen >= replayFrom && said) pendingSteps.push(fillPastSteps(runId, said));
-        agentSeen += 1;
-        // Per build, with that build's own counts — see loadProjectPreview().
-        if (t.fileStats && t.fileStats.length) {
-          renderCard(t.fileStats.map((f) => f.path), 0, t.fileStats);
-          renderedAnyCard = true;
-        }
-      });
-      if (!renderedAnyCard && data.files && data.files.length) renderCard(data.files, 0);
-
-      /* Waited on, not raced. fillPastSteps swallows its own failures, so
-         a chat that loads without its steps is the old behaviour rather
-         than a reason to hold the transcript back. */
-      try { await Promise.all(pendingSteps); } catch (e) { /* nothing to add */ }
-
-      agRestoreHost = null;
-      agLog.innerHTML = "";
-      while (restored.firstChild) agLog.appendChild(restored.firstChild);
-      agLog.classList.add("ag-log-entered");
-      toBottom();
+      // The same rebuild the recent-projects list does; see restoreTurns().
+      await restoreTurns(data);
 
       // Show preview panel
       $("agentView").classList.add("has-preview");

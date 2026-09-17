@@ -94,7 +94,13 @@ export function createFinalizer({ withTransaction, run, workerId, generation }: 
         id: "turn_" + run.id, projectId: project.id, seq: ((lastTurn && lastTurn.seq) || 0) + 1,
         chatId: run.chatId || "", role: "agent", kind: status === "succeeded" ? "result" : "text",
         body: String(outcome.summary || outcome.reason || status).slice(0, 4000),
-        revisionId: result.revisionId || null, fileStats: outcome.fileStats || [], at: now
+        revisionId: result.revisionId || null, fileStats: outcome.fileStats || [],
+        /* How long it took, so a replayed panel can say "Thought for 47s"
+           the way the live one does. The event stream cannot supply it —
+           the frames carry payloads and not the time each was written — so
+           the turn row is the only place it can come from. */
+        ms: Math.max(0, Date.now() - Date.parse(run.createdAt || "") || 0),
+        at: now
       } }, { upsert: true, session });
       const usd = Number(outcome.costUsd) || 0;
       if (usd > 0 && !(run.context && run.context.byokEncrypted)) {
