@@ -567,6 +567,18 @@ async function executeRun(runId, opts = {}) {
             imageUrls: (opts.attachedImages || []).map((i) => String(i && i.url || "")).filter(Boolean),
             emit: (type, payload) => runStore.appendEvent(runId, type, payload)
         };
+        /* NOT parallelised, and that is a finding rather than an omission.
+    
+           read_file, list_files and search_code look like the obvious
+           candidates — the registry even marks them readOnly. But all three
+           are SYNCHRONOUS functions over ctx.files, an object already in
+           memory. There is no I/O to overlap, so Promise.all over them buys
+           nothing and costs a second code path.
+    
+           The reference agent parallelises its equivalents because they
+           shell out, touch a real filesystem and call networks. If a tool
+           here ever does actual I/O — a real sandbox read, an MCP call —
+           this is the place to revisit, and readOnly is the flag to key on. */
         for (const tc of toolCalls) {
             const fnName = (tc.function && tc.function.name) || "";
             let args = {};
@@ -678,6 +690,20 @@ async function executeRun(runId, opts = {}) {
             }
         }
         // Save checkpoint of current files after tool batch
+        /* One budget across the whole batch. Each result is already capped
+           on its own, but several under the cap still add up past it — and
+           the request has to fit before any of this is worth having.
+           Spent in call order, so the first answers stay whole. */
+        const budgeted = registry.applyTurnBudget(toolResults);
+        if (budgeted.trimmed) {
+            await runStore.appendEvent(runId, "context", {
+                step: "tool-budget",
+                detail: budgeted.trimmed + " tool result" + (budgeted.trimmed === 1 ? "" : "s") +
+                    " trimmed to fit this turn's output budget"
+            });
+        }
+        toolResults.length = 0;
+        toolResults.push(...budgeted.results);
         await runStore.saveCheckpoint(runId, currentFiles, "Step " + turn + " tool updates");
         await runStore.recordStep(runId, { turn, toolCalls, toolResults, costUsd: aiRes.costUsd || 0 });
         messages = messages.concat(toolResults);

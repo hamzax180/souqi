@@ -371,6 +371,53 @@ await check("an empty command is refused", async () => {
   }
 });
 
+console.log("\n── what comes back is bounded, twice ───");
+
+/* The old engine capped reads at 24,000 chars and said so; the cap was
+   lost in the move to this registry. One large generated file can then
+   make the next request refuse to fit — client.chat declines locally
+   rather than paying for a round trip to be told so. */
+await check("a huge file comes back capped, and says it was", async () => {
+  const f = { "src/Big.tsx": "x".repeat(60000) };
+  const r = await registry.dispatch("read_file", { path: "src/Big.tsx" }, ctx("act", f));
+  assert.strictEqual(r.ok, true);
+  assert.ok(r.content.length < 26000, "returned " + r.content.length + " chars");
+  assert.match(r.content, /truncated/);
+  assert.match(r.content, /search_code/, "does not say what to do instead");
+});
+
+await check("a file under the cap is returned whole", async () => {
+  const body = "export const Hero = () => null;";
+  const r = await registry.dispatch("read_file", { path: "src/Hero.tsx" },
+    ctx("act", { "src/Hero.tsx": body }));
+  assert.strictEqual(r.content, body);
+});
+
+/* Results each under the per-tool cap still add up past what one
+   request can carry, so there is a second budget across the turn. */
+await check("a turn's results are trimmed in call order, and errors never are", () => {
+  const results = [
+    { content: "a".repeat(30000), ok: true },
+    { content: "b".repeat(30000), ok: true },
+    { content: "c".repeat(30000), ok: true },
+    { content: "Error: write_file refused", ok: false }
+  ];
+  const out = registry.applyTurnBudget(results);
+  const total = out.results.reduce((n, r) => n + r.content.length, 0);
+  assert.ok(total <= registry.MAX_TURN_RESULT_CHARS + 500, "budget overrun: " + total);
+  assert.ok(out.trimmed > 0, "nothing was trimmed");
+  assert.strictEqual(out.results[0].content.length, 30000, "the FIRST result was trimmed");
+  assert.strictEqual(out.results[3].content, "Error: write_file refused", "an error was trimmed");
+});
+
+await check("a turn already inside its budget is untouched", () => {
+  const out = registry.applyTurnBudget([
+    { content: "small", ok: true }, { content: "also small", ok: true }
+  ]);
+  assert.strictEqual(out.trimmed, 0);
+  assert.deepStrictEqual(out.results.map((r) => r.content), ["small", "also small"]);
+});
+
 console.log("\n── a refusal is always a reply ──────────");
 
 /* A thrown refusal leaves an assistant tool_call with no matching tool

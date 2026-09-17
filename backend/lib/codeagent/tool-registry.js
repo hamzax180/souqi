@@ -74,11 +74,12 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SCHEMAS = exports.TOOLS = void 0;
+exports.SCHEMAS = exports.TOOLS = exports.MAX_TURN_RESULT_CHARS = exports.MAX_RESULT_CHARS = void 0;
 exports.names = names;
 exports.byName = byName;
 exports.schemas = schemas;
 exports.dispatch = dispatch;
+exports.applyTurnBudget = applyTurnBudget;
 const model_loop_1 = require("./model-loop");
 const agentState = __importStar(require("./agent-state"));
 const file_retrieval_1 = require("./context/file-retrieval");
@@ -257,6 +258,32 @@ function schemaOf(name) {
     return found;
 }
 const str = (v) => (typeof v === "string" ? v : "");
+/* ── bounding what comes back ────────────────────────────────────
+   Two layers, because one is not enough and they fail differently.
+
+   PER TOOL: a single read of a large generated file used to come back
+   whole. The old engine capped reads at 24,000 characters and said it
+   had; that cap was lost in the move to this registry, and one big file
+   can now make the next request refuse to fit — client.chat declines
+   locally rather than paying for a round trip to be told so.
+
+   PER TURN: several results that are each under the cap can still add
+   up past it. The budget is spent in call order, so the first results
+   are whole and later ones are trimmed — the model asked for the early
+   ones first, and a turn where everything is equally truncated is worse
+   than one where the first answers are intact.
+
+   Both say they truncated. Silently returning less than was asked for
+   is how a model concludes a file is short and rewrites it. */
+exports.MAX_RESULT_CHARS = 24000;
+exports.MAX_TURN_RESULT_CHARS = 60000;
+function truncate(text, limit, what) {
+    if (text.length <= limit)
+        return text;
+    return text.slice(0, limit) +
+        "\n\n[... truncated: " + what + " is " + text.length + " characters, showing the first " +
+        limit + ". Use search_code to find a specific part rather than reading the whole file.]";
+}
 /* The model-facing half of the sandbox's allowlist. The authoritative
    copy lives on the deploy plane beside the Docker socket
    (infra/deploy/src/agent/sandbox.js); this one is here so a refusal
@@ -388,7 +415,7 @@ const TOOLS = [
                rather than applied to a file that has moved on. */
             if (ctx.seen)
                 ctx.seen[path] = (0, file_retrieval_1.hashOf)(content);
-            return { ok: true, content };
+            return { ok: true, content: truncate(content, exports.MAX_RESULT_CHARS, path) };
         }
     },
     {
@@ -583,4 +610,32 @@ async function dispatch(name, rawArgs, ctx) {
         const message = e instanceof Error ? e.message : String(e);
         return { ok: false, content: "Error: " + message };
     }
+}
+/**
+ * Trim a turn's results to a whole-turn budget, in call order.
+ *
+ * Applied after the batch rather than inside each tool, because no tool
+ * can know what its siblings returned. Errors are never trimmed: they
+ * are short, and they are the most load-bearing text in the request.
+ */
+function applyTurnBudget(results, budget = exports.MAX_TURN_RESULT_CHARS) {
+    let spent = 0;
+    let trimmed = 0;
+    const out = results.map((r) => {
+        const text = String(r.content ?? "");
+        if (r.ok === false || spent + text.length <= budget) {
+            spent += text.length;
+            return r;
+        }
+        const room = Math.max(0, budget - spent);
+        spent = budget;
+        trimmed++;
+        return Object.assign({}, r, {
+            content: room > 400
+                ? truncate(text, room, "this result")
+                : "[... omitted: this turn's tool output reached its budget of " + budget +
+                    " characters. Read fewer files at once, or use search_code.]"
+        });
+    });
+    return { results: out, trimmed };
 }
