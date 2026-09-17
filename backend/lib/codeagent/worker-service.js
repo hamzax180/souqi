@@ -118,7 +118,19 @@ function createFinalizer({ withTransaction, run, workerId, generation }) {
                        of the document never wrote it down. */
                     stopReason: outcome.stopReason || null,
                     latestError: status === "succeeded" ? null : outcome.reason || outcome.summary || status
-                }, $unset: { "context.byokEncrypted": "" } }, { session });
+                }, $unset: {
+                    "context.byokEncrypted": "",
+                    /* The same three run-store.updateRun releases on a terminal
+                       status, and for the same reason: activeOwnerKey carries a
+                       unique partial index, so a finished run that keeps it refuses
+                       the owner's next build with RUN_ALREADY_ACTIVE for ever.
+            
+                       It never mattered while nothing called this finalizer —
+                       updateRun was doing the release. Making this the one writer
+                       moved that duty here, and the first live run after the change
+                       came back terminal with all three still set. */
+                    activeProjectId: "", activeOwnerKey: "", leaseExpiresAt: ""
+                } }, { session });
             return true;
         });
     };
