@@ -4936,6 +4936,13 @@ function getConversationalFallback(prompt, history) {
 
     if (isConv || isNoiseOrGreeting) {
       let reply = "";
+      /* What the answer actually cost. This branch calls the model like
+         any other and the provider returns a usage block; it was simply
+         thrown away, so a conversational turn showed a duration and no
+         number beside it while every build turn showed both. Measured,
+         never estimated — the count is the provider's own. */
+      let chatTokens = 0;
+      const chatStartedAt = Date.now();
       try {
         const history = Array.isArray(req.body && req.body.conversation) ? req.body.conversation : [];
         const answerRes = await aiClient.chat({
@@ -4968,6 +4975,10 @@ function getConversationalFallback(prompt, history) {
         if (answerRes && answerRes.message && answerRes.message.content) {
           reply = answerRes.message.content.trim();
         }
+        // Both spellings, because the block is the provider's and they differ
+        // — the same reason agent-runner reads it twice over.
+        const u = answerRes && answerRes.usage;
+        chatTokens = Number(u && (u.total_tokens !== undefined ? u.total_tokens : u.totalTokens)) || 0;
       } catch (e) {
         console.warn("[runs guard] conversational AI reply failed:", e.message);
       }
@@ -5004,13 +5015,21 @@ function getConversationalFallback(prompt, history) {
         try {
           const chatId = String((req.body && req.body.chatId) || "");
           await projects.addTurn(project.id, { role: "user", kind: "text", body: prompt, chatId });
-          await projects.addTurn(project.id, { role: "agent", kind: "text", body: reply, chatId });
+          /* The cost travels with the turn. A conversational reply has no
+             run behind it and therefore no agent_events, so the row is the
+             only place the number can be read back from — without it the
+             turn came back from history with nothing under it. */
+          await projects.addTurn(project.id, {
+            role: "agent", kind: "text", body: reply, chatId,
+            tokens: chatTokens, ms: Date.now() - chatStartedAt
+          });
         } catch (e) {}
       }
       // The slug is what lets the client move off /agent, so a refresh has
       // an address to reload. The 202 path has always returned one.
       return res.status(200).json({
         chitchat: reply,
+        tokens: chatTokens,
         projectId: project ? project.id : null,
         projectSlug: project ? (project.slug || project.id) : null
       });

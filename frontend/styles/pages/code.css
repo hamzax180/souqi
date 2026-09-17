@@ -969,15 +969,22 @@
   .ag:has(#agLog > *:not(.ag-empty)) .ag-composer::before{
     content:"";
     position:absolute;
-    /* Spans the column, not the box: the messages are wider than the
-       composer's inset and a feather that stopped at the box's edge would
-       leave two sharp columns either side of a soft middle. */
-    left:calc(var(--ag-inset) * -1);
-    right:calc(var(--ag-inset) * -1);
-    /* Ends at the composer's own padding edge, which is the top of the
-       box. Below that line the glass takes over. */
-    bottom:calc(100% - 8px);
-    height:var(--ag-feather, 64px);
+    /* AROUND the box, not a band in front of it.
+
+       It used to be a strip ending at the box's top edge, and that is
+       worse than no feather at all: a line of text went soft crossing the
+       strip and then the next line, sitting beside the box or in the gap
+       under it, was perfectly sharp. A rectangle of blur with hard
+       corners, which reads as a rendering fault rather than as depth.
+
+       So it covers the whole bottom of the column — over the box, past
+       both sides, and down through the gap below it. The sides overshoot
+       by far more than the column is wide and .ag clips them
+       (overflow:hidden, and it always will), so there is no edge to see. */
+    left:-240px;
+    right:-240px;
+    top:calc(var(--ag-feather, 48px) * -1);
+    bottom:calc(var(--ag-feather, 48px) * -1);
     pointer-events:none;
     /* Below the box, above the log. The box is position:relative with
        z-index:auto, and an auto-positioned element paints BEFORE a
@@ -989,14 +996,27 @@
     backdrop-filter:blur(5px);
     /* Two gradients doing two jobs. The mask ramps the BLUR in — a
        backdrop-filter has a hard boundary of its own, and an unmasked one
-       here would just move the snap 64px up the screen. The background
-       ramps the PAPER in, so the text dims as it softens rather than
-       staying at full contrast until it disappears under the box. */
+       would just move the snap somewhere else on the screen. The
+       background ramps the PAPER in, so text dims as it softens instead
+       of staying at full contrast right up to the edge of the box.
+
+       The ramp is long and the plateau is short: most of the height is
+       spent arriving, which is what separates a feather from a band. It
+       never reaches full paper, because the gap under the box is meant to
+       show the conversation passing through it — softened, not erased.
+
+       Stops in PIXELS, not percentages. The element is as tall as the
+       composer plus a feather at each end — around 200px — so a ramp
+       written as "opaque by 68%" would still be arriving well below the
+       box. In px the ramp is exactly the feather above the box's edge,
+       whatever height the composer happens to be at two lines of text. */
     background:linear-gradient(to bottom,
-      color-mix(in srgb,var(--paper) 0%,transparent),
-      color-mix(in srgb,var(--paper) 62%,transparent));
-    -webkit-mask-image:linear-gradient(to bottom,transparent 0%,#000 78%,#000 100%);
-    mask-image:linear-gradient(to bottom,transparent 0%,#000 78%,#000 100%);
+      color-mix(in srgb,var(--paper) 0%,transparent) 0px,
+      color-mix(in srgb,var(--paper) 20%,transparent) 30px,
+      color-mix(in srgb,var(--paper) 40%,transparent) 62px,
+      color-mix(in srgb,var(--paper) 40%,transparent) 100%);
+    -webkit-mask-image:linear-gradient(to bottom,transparent 0px,rgba(0,0,0,.5) 26px,#000 56px,#000 100%);
+    mask-image:linear-gradient(to bottom,transparent 0px,rgba(0,0,0,.5) 26px,#000 56px,#000 100%);
   }
   /* No backdrop-filter, no feather: the background gradient alone over
      live text is a grey veil with nothing to justify it. */
@@ -1188,7 +1208,7 @@
          The resting position does not change: content stops at the padding
          edge, so the newest message still sits just above the bar rather
          than under it. */
-      padding-bottom:calc(var(--composer-h, 110px) + 12px);
+      padding-bottom:calc(var(--composer-h, 110px) + 28px);
     }
   }
   /* ---------------------------------------------------------------
@@ -3105,7 +3125,7 @@
       /* Padding, not margin — see the note on the other copy of this rule.
          The box has to run under the bar or there is nothing behind the
          glass and nothing allowed into the strip below it. */
-      padding-bottom: calc(var(--composer-h, 108px) + 12px + env(safe-area-inset-bottom, 0px));
+      padding-bottom: calc(var(--composer-h, 108px) + 28px + env(safe-area-inset-bottom, 0px));
     }
 
     /* Messages sit ON the composer, the way a chat does, instead of stacking

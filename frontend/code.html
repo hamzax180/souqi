@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=6.6">
+<link rel="stylesheet" href="/styles/pages/code.css?v=6.9">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -2485,6 +2485,58 @@
     return out;
   }
 
+  /** "12.4k" / "558" — how a token count is written wherever it appears. */
+  function tokText(n) {
+    return n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, "") + "k" : String(n);
+  }
+
+  /* Count a number up to where it belongs, quickly, and land on it exactly.
+
+     The counter used to jump: a usage event arrived and the status line
+     swapped 4.1k for 12.4k between two frames, which reads as the number
+     being replaced rather than as work accumulating. Eased out over a
+     third of a second, so it leaves fast and settles, and the last frame
+     assigns the target itself rather than whatever the easing rounded to
+     — a spinner that stops at 12.3k when the run cost 12.4k is worse than
+     no animation, because the number is the one thing here that has to be
+     true.
+
+     Each call starts from whatever is on screen, so several usage events
+     in a row read as one climb rather than a series of restarts. */
+  const countUpTimers = new WeakMap();
+  function countUp(node, to, format) {
+    const prev = countUpTimers.get(node);
+    if (prev) cancelAnimationFrame(prev.raf);
+    const from = prev ? prev.current : (Number(node.dataset.countValue) || 0);
+    node.dataset.countValue = String(to);
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches || to <= from) {
+      node.textContent = format(to);
+      countUpTimers.delete(node);
+      return;
+    }
+    /* The clock starts on the first FRAME, not on the call.
+
+       Measured from the call, a busy frame eats the whole duration before
+       anything paints: the turn settles, the reply reveals, the status row
+       is re-parented, and by the time the first callback runs the easing
+       is already at p=1 — so the counter jumped to the final number in one
+       step and the animation existed only in the source. */
+    const DUR = 340;
+    const state = { current: from, raf: 0, t0: 0 };
+    const step = function (now) {
+      if (!state.t0) state.t0 = now;
+      const p = Math.min(1, (now - state.t0) / DUR);
+      // Ease-out cubic: most of the distance early, then a settle.
+      const eased = 1 - Math.pow(1 - p, 3);
+      state.current = p === 1 ? to : Math.round(from + (to - from) * eased);
+      node.textContent = format(state.current);
+      if (p < 1) { state.raf = requestAnimationFrame(step); countUpTimers.set(node, state); }
+      else countUpTimers.delete(node);
+    };
+    state.raf = requestAnimationFrame(step);
+    countUpTimers.set(node, state);
+  }
+
   /** "47s" / "2m 8s" — the compact form, for the status row's numbers. */
   function secsText(s) { return s < 60 ? s + "s" : Math.floor(s / 60) + "m " + (s % 60) + "s"; }
   /** "8 seconds" / "2m 8s" — the spoken form, for the heading. Word for
@@ -2493,6 +2545,31 @@
   function spentText(s) {
     return s < 60 ? s + (s === 1 ? " second" : " seconds")
                   : Math.floor(s / 60) + "m " + (s % 60) + "s";
+  }
+
+  /* The receipt on its own, for a turn that has no steps to put it under.
+
+     A conversational reply never starts a run, so there are no events to
+     replay and no panel to hang the numbers off — and it came back from
+     history as a bare line with nothing saying what it cost, while the
+     live version of the same turn showed "5s · Done" underneath it. The
+     turn row carries ms and tokens for exactly this case. Same markup and
+     the same is-loose the live panel releases, so the two are one thing. */
+  function looseStatus(seconds, tokens) {
+    /* Nothing recorded at all means a turn written before these fields
+       existed. No row for those: "0 tokens" would be a measurement, and
+       the honest statement is that we never took one. */
+    if (!seconds && !tokens) return null;
+    const bits = [];
+    if (seconds) bits.push(secsText(seconds));
+    // Always, even at zero — the counter is a column of the row, not an
+    // optional extra, and a turn missing it reads as a turn missing data.
+    bits.push(tokText(tokens || 0) + " tokens");
+    bits.push("Done");
+    const st = el("th2-status is-loose is-done",
+      '<span class="th2-spark" aria-hidden="true"></span><span class="th2-num th2-time"></span>');
+    st.querySelector(".th2-time").textContent = bits.join("  ·  ");
+    return st;
   }
 
   /** The same panel the live turn drew, already finished. */
@@ -2518,7 +2595,9 @@
     wrap.querySelector(".th2-title").textContent = seconds ? "Thought for " + spentText(seconds) : "Thought it through";
     const bits = [];
     if (seconds) bits.push(secsText(seconds));
-    if (tokens) bits.push((tokens >= 1000 ? (tokens / 1000).toFixed(1).replace(/\.0$/, "") + "k" : tokens) + " tokens");
+    // Always, even at zero — the counter is a column of the row, not an
+    // optional extra, and a turn missing it reads as a turn missing data.
+    bits.push(tokText(tokens || 0) + " tokens");
     bits.push("Done");
     wrap.querySelector(".th2-time").textContent = bits.join("  ·  ");
 
@@ -2693,6 +2772,12 @@
       if (runId && said) {
         if (agentSeen >= replayFrom) pendingSteps.push(fillPastSteps(runId, said, seconds));
         else said.parentNode.insertBefore(lazyStepsPanel(runId, seconds), said);
+      } else if (said) {
+        /* No run, so no steps and no panel to carry the numbers. The row
+           carries them instead; without this a conversational turn came
+           back with nothing under it where the live one had a receipt. */
+        const st = looseStatus(seconds, Number(t.tokens) || 0);
+        if (st) said.parentNode.insertBefore(st, said.nextSibling);
       }
       agentSeen += 1;
       /* Each build's own card, with its own numbers. One card at the end
@@ -2786,8 +2871,14 @@
       '<div class="th2-status">' +
         '<span class="th2-spark" aria-hidden="true"></span>' +
         '<span class="th2-num th2-time">0s</span>' +
-        '<span class="th2-sep th2-tok-sep" hidden>·</span>' +
-        '<span class="th2-num th2-tok" hidden></span>' +
+        /* Never hidden. The slot used to appear only once a usage event
+           landed, so the status row grew a column mid-turn and everything
+           after it shifted sideways — and a turn the provider reported
+           nothing for showed no counter at all, which reads as the number
+           being missing rather than as the work being free. It starts at
+           zero and counts up. */
+        '<span class="th2-sep th2-tok-sep">·</span>' +
+        '<span class="th2-num th2-tok">0 tokens</span>' +
         '<span class="th2-sep">·</span>' +
         '<span class="th2-phase">Thinking…</span>' +
       '</div>';
@@ -2955,8 +3046,7 @@
       setTokens(n) {
         const tokens = Number(n) || 0;
         if (!tokens || stopped) return;
-        tokEl.textContent = (tokens >= 1000 ? (tokens / 1000).toFixed(1).replace(/\.0$/, "") + "k" : tokens) + " tokens";
-        tokEl.hidden = false; tokSep.hidden = false;
+        countUp(tokEl, tokens, function (v) { return tokText(v) + " tokens"; });
       },
       /* Move the status row out from under the heading and put it after
          whatever the turn produced.
@@ -4113,6 +4203,8 @@
           } else if (spawnRes.status === 200) {
             // Server decided this is a question/chitchat — answer conversationally
             const data = await spawnRes.json();
+            // Before done(), which stops the panel accepting numbers.
+            if (thinkPanel && data.tokens) thinkPanel.setTokens(data.tokens);
             if (thinkPanel) thinkPanel.done();
             finalizeThinking();
             resetBootScreen();

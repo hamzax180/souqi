@@ -507,6 +507,14 @@ async function addTurn(projectId, turn) {
        why only in-process turns had no way back to their history. */
     runId: turn.runId ? String(turn.runId).slice(0, 60) : null,
     ms: typeof turn.ms === "number" ? turn.ms : null,
+    /* What the turn cost, when the row is the only record of it.
+
+       A turn with a run behind it can be measured from its agent_events;
+       a conversational reply has no run, so the count the provider gave
+       us lives here or nowhere. Named explicitly for the same reason
+       `ms`, `runId` and `images` are: this row is built field by field
+       and silently drops anything the caller passes that is not listed. */
+    tokens: typeof turn.tokens === "number" && turn.tokens > 0 ? turn.tokens : null,
     /* Photos attached to this message, so a reloaded conversation still
        shows them. Just enough to render a chip — the upload rows are the
        record, this is the transcript.
