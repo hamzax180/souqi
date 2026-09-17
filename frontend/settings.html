@@ -117,7 +117,7 @@
         <p>The account this workspace belongs to.</p>
         <div class="srow">
           <span class="txt"><span class="t" id="ovEmail">—</span><span class="d" id="ovCountry"></span></span>
-          <a class="btn" href="/pricing">Upgrade</a>
+          <a class="btn" target="_top" href="/pricing">Upgrade</a>
         </div>
       </div>
     </section>
@@ -285,7 +285,7 @@
         <p>Change plans any time — your apps are never deleted when a plan changes.</p>
         <div class="srow">
           <span class="txt"><span class="t" id="bPlan">Free</span><span class="d" id="bPlanD">1 free build, then 3 free edits once you sign in.</span></span>
-          <a class="btn-primary" href="/pricing" style="text-decoration:none;display:inline-block">See plans</a>
+          <a class="btn-primary" target="_top" href="/pricing" style="text-decoration:none;display:inline-block">See plans</a>
         </div>
       </div>
       <div class="sec">
@@ -320,7 +320,7 @@
           <div class="kv">
             <div class="k">Plan</div>
             <div class="v" id="pPlan">—</div>
-            <a href="/pricing">Upgrade</a>
+            <a target="_top" href="/pricing">Upgrade</a>
           </div>
           <div class="kv">
             <div class="k">Account ID</div>
@@ -382,7 +382,7 @@
         </div>
         <div class="srow">
           <span class="txt"><span class="t">Password</span><span class="d">Change it by signing in again from the login page.</span></span>
-          <a class="btn" href="/login">Go to login</a>
+          <a class="btn" target="_top" href="/login">Go to login</a>
         </div>
         <div class="note" id="secNote" hidden></div>
       </div>
@@ -568,7 +568,7 @@
       + '<span id="mrtPlan">Free</span></span></span>' + CHEV + '</button></div>';
 
     html += '<div class="mrt-card" style="margin-top:12px">'
-      + '<a class="mrt-row accent" href="/pricing">'
+      + '<a class="mrt-row accent" target="_top" href="/pricing">'
       + '<span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
       + 'stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 2.6 5.6 6.4.8-4.7 4.3 1.3 6.3L12 17l-5.6 3 1.3-6.3L3 9.4l6.4-.8z"/></svg></span>'
       + '<span class="lb">Upgrade your plan</span>' + CHEV + '</a></div>';
@@ -608,7 +608,7 @@
     html += '<div class="mrt-about"><div class="mrt-grp">About</div><div class="mrt-card">'
       + '<a class="mrt-row" href="/terms" target="_blank" rel="noopener"><span class="lb">Terms</span>' + CHEV + '</a>'
       + '<a class="mrt-row" href="/privacy" target="_blank" rel="noopener"><span class="lb">Privacy Policy</span>' + CHEV + '</a>'
-      + '<a class="mrt-row" href="/pricing"><span class="lb">Plans</span>' + CHEV + '</a>'
+      + '<a class="mrt-row" target="_top" href="/pricing"><span class="lb">Plans</span>' + CHEV + '</a>'
       + '</div></div>';
 
     root.innerHTML = html;
@@ -866,7 +866,7 @@
   var signedIn = false;
   function signedOutPanel(el, what) {
     el.innerHTML = '<div class="signedout"><p>Sign in to ' + esc(what) + '.</p>'
-      + '<a class="btn" href="/login">Sign in</a></div>';
+      + '<a class="btn" target="_top" href="/login">Sign in</a></div>';
   }
 
   fetch("/api/account/me").then(function (r) { return r.json(); }).then(function (d) {
