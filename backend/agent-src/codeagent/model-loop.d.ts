@@ -61,21 +61,29 @@ export function validateReadPath(path: unknown): string;
 
 export interface EffortLevel {
   id: "fast" | "balanced" | "smart" | "max";
+  label: string;
+  tier: "eco" | "power";
   maxTokens: number;
   rounds: number;
-  tier: "eco" | "power";
+  blurb: string;
 }
 
-export function effortFor(id?: string): EffortLevel;
+/** `legacyMode` exists because a cached page can still be sending the old
+    "power", which lands on `smart` rather than being demoted to default. */
+export function effortFor(value?: string, legacyMode?: string): EffortLevel;
 
 export function systemPromptFor(mode?: string): string;
 
+/** Takes the same options object callOptions() does — NOT an effort id.
+    Handing it the string "balanced" leaves o.effort undefined and silently
+    returns the default tier's budget, which is what the /runs engine was
+    doing before this was typed. */
 export function codeBudgetChars(opts?: {
   effort?: string;
   mode?: string;
-  systemPrompt?: string;
-  history?: string;
-  errors?: string;
+  tools?: unknown[];
+  byok?: unknown;
+  thinking?: boolean;
 }): number;
 
 export function buildCodebaseContext(
@@ -83,6 +91,12 @@ export function buildCodebaseContext(
   opts?: { prompt?: string; budget?: number }
 ): { text: string; included: string[]; excerpted: string[]; omitted: string[] };
 
-export function buildHistory(turns: unknown[]): string;
+/** Returns MESSAGES, not a string — callers concat it onto the protocol
+    array. Walks the turns backwards so the budget drops the oldest
+    context rather than the message the user just referred to. */
+export function buildHistory(turns: unknown[]): Array<{
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+}>;
 
 export const PROMPT_VERSION: string;
