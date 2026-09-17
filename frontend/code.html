@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=6.9">
+<link rel="stylesheet" href="/styles/pages/code.css?v=7.1">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -2625,6 +2625,29 @@
     return wrap;
   }
 
+  /* Move a restored panel's receipt out from under its heading and put it
+     after the message, exactly as the live turn's releaseStatus() does.
+
+     Inside the panel it is a footer for the STEPS, and it disappears with
+     them when the panel is folded; the live turn ends with it under the
+     answer, where it is a footer for the message. Two placements for one
+     thing, decided by whether you were watching when it happened. */
+  function releasePastStatus(panel, afterNode) {
+    const st = panel && panel.querySelector(".th2-status");
+    if (!st || !afterNode || !afterNode.parentNode) return;
+    st.classList.add("is-loose");
+    /* Replaces, never stacks. A folded placeholder releases its own
+       footer, and expanding it releases the real one a moment later — two
+       receipts under one message if the first is not cleared out. */
+    const existing = afterNode.nextSibling;
+    if (existing && existing.classList && existing.classList.contains("th2-status")
+        && existing.classList.contains("is-loose")) {
+      afterNode.parentNode.replaceChild(st, existing);
+      return;
+    }
+    afterNode.parentNode.insertBefore(st, afterNode.nextSibling);
+  }
+
   /* One past run's events, fetched and turned back into steps.
 
      Split out of fillPastSteps because the folded placeholder below needs
@@ -2665,7 +2688,10 @@
       const got = await fetchRunSteps(runId);
       if (!got) return;
       const panel = renderPastSteps("", got.steps, seconds || got.seconds, got.tokens);
-      if (panel && anchorNode && anchorNode.parentNode) anchorNode.parentNode.insertBefore(panel, anchorNode);
+      if (panel && anchorNode && anchorNode.parentNode) {
+        anchorNode.parentNode.insertBefore(panel, anchorNode);
+        releasePastStatus(panel, anchorNode);
+      }
     } catch (e) { /* history without its steps is the old behaviour, not a failure */ }
   }
 
@@ -2725,7 +2751,14 @@
          way it did before any of this existed — the header goes away
          rather than standing open and empty. */
       if (!panel) { wrap.remove(); return; }
-      if (wrap.parentNode) wrap.parentNode.replaceChild(panel, wrap);
+      if (wrap.parentNode) {
+        /* The message this panel belongs to is the node after it — restore
+           inserts the placeholder directly before the reply. Held before
+           the swap, because afterwards the placeholder is gone. */
+        const reply = wrap.nextSibling;
+        wrap.parentNode.replaceChild(panel, wrap);
+        releasePastStatus(panel, reply);
+      }
     });
     return wrap;
   }
@@ -2771,7 +2804,12 @@
       const seconds = typeof t.ms === "number" && t.ms > 0 ? Math.max(1, Math.round(t.ms / 1000)) : 0;
       if (runId && said) {
         if (agentSeen >= replayFrom) pendingSteps.push(fillPastSteps(runId, said, seconds));
-        else said.parentNode.insertBefore(lazyStepsPanel(runId, seconds), said);
+        else {
+          const ph = lazyStepsPanel(runId, seconds);
+          said.parentNode.insertBefore(ph, said);
+          // Its receipt is a footer for the message too, not for the fold.
+          releasePastStatus(ph, said);
+        }
       } else if (said) {
         /* No run, so no steps and no panel to carry the numbers. The row
            carries them instead; without this a conversational turn came

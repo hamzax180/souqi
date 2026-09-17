@@ -983,8 +983,8 @@
        (overflow:hidden, and it always will), so there is no edge to see. */
     left:-240px;
     right:-240px;
-    top:calc(var(--ag-feather, 48px) * -1);
-    bottom:calc(var(--ag-feather, 48px) * -1);
+    top:calc(var(--ag-feather, 92px) * -1);
+    bottom:calc(var(--ag-feather, 92px) * -1);
     pointer-events:none;
     /* Below the box, above the log. The box is position:relative with
        z-index:auto, and an auto-positioned element paints BEFORE a
@@ -992,8 +992,13 @@
        the thing it is feathering. 0 keeps it in the same painting step,
        where tree order wins and ::before comes first. */
     z-index:0;
-    -webkit-backdrop-filter:blur(5px);
-    backdrop-filter:blur(5px);
+    /* Thick glass, not frosting. A heavier blur with a LIGHT tint keeps
+       the conversation legible as shape and colour under the bar — you can
+       see a paragraph is there and roughly where it ends. The previous
+       pairing was the wrong way round: a light blur under a heavy wash,
+       which does not read as depth, it reads as the text being greyed out. */
+    -webkit-backdrop-filter:blur(9px);
+    backdrop-filter:blur(9px);
     /* Two gradients doing two jobs. The mask ramps the BLUR in — a
        backdrop-filter has a hard boundary of its own, and an unmasked one
        would just move the snap somewhere else on the screen. The
@@ -1012,11 +1017,17 @@
        whatever height the composer happens to be at two lines of text. */
     background:linear-gradient(to bottom,
       color-mix(in srgb,var(--paper) 0%,transparent) 0px,
-      color-mix(in srgb,var(--paper) 20%,transparent) 30px,
-      color-mix(in srgb,var(--paper) 40%,transparent) 62px,
-      color-mix(in srgb,var(--paper) 40%,transparent) 100%);
-    -webkit-mask-image:linear-gradient(to bottom,transparent 0px,rgba(0,0,0,.5) 26px,#000 56px,#000 100%);
-    mask-image:linear-gradient(to bottom,transparent 0px,rgba(0,0,0,.5) 26px,#000 56px,#000 100%);
+      color-mix(in srgb,var(--paper) 6%,transparent) 48px,
+      color-mix(in srgb,var(--paper) 16%,transparent) 96px,
+      color-mix(in srgb,var(--paper) 22%,transparent) 140px,
+      color-mix(in srgb,var(--paper) 22%,transparent) 100%);
+    /* Five stops tracing an ease-in, not two tracing a straight line. A
+       linear ramp changes fastest at the start, which is the one place
+       there is nothing to hide — the eye catches the blur switching on.
+       Slow at the top, most of the change through the middle, arriving
+       just as the text reaches the box. */
+    -webkit-mask-image:linear-gradient(to bottom,transparent 0px,rgba(0,0,0,.06) 30px,rgba(0,0,0,.24) 58px,rgba(0,0,0,.56) 86px,rgba(0,0,0,.86) 112px,#000 134px,#000 100%);
+    mask-image:linear-gradient(to bottom,transparent 0px,rgba(0,0,0,.06) 30px,rgba(0,0,0,.24) 58px,rgba(0,0,0,.56) 86px,rgba(0,0,0,.86) 112px,#000 134px,#000 100%);
   }
   /* No backdrop-filter, no feather: the background gradient alone over
      live text is a grey veil with nothing to justify it. */
@@ -1208,7 +1219,7 @@
          The resting position does not change: content stops at the padding
          edge, so the newest message still sits just above the bar rather
          than under it. */
-      padding-bottom:calc(var(--composer-h, 110px) + 28px);
+      padding-bottom:calc(var(--composer-h, 110px) + 38px);
     }
   }
   /* ---------------------------------------------------------------
@@ -3125,7 +3136,7 @@
       /* Padding, not margin — see the note on the other copy of this rule.
          The box has to run under the bar or there is nothing behind the
          glass and nothing allowed into the strip below it. */
-      padding-bottom: calc(var(--composer-h, 108px) + 28px + env(safe-area-inset-bottom, 0px));
+      padding-bottom: calc(var(--composer-h, 108px) + 38px + env(safe-area-inset-bottom, 0px));
     }
 
     /* Messages sit ON the composer, the way a chat does, instead of stacking
