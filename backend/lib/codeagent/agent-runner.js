@@ -66,6 +66,38 @@ const model_loop_1 = require("./model-loop");
 function textOf(content) {
     return typeof content === "string" ? content : "";
 }
+/* ── retrying a blip, but not a mistake ──────────────────────────
+   lib/ai/client.js has a circuit breaker and no retry at all — the only
+   two mentions of the word in it are prose in comments. So one
+   transient 429 or 503 from the provider failed an entire build, which
+   is a bad trade for a wait of half a second.
+
+   It lives HERE rather than in the client on purpose. The client is a
+   shared adapter: every route goes through it, and its own tests assert
+   how quickly the breaker trips, which a retry changes. This is the
+   caller that actually wants retries, so this is where they are until
+   there is a reason to move them.
+
+   WHAT IS NOT RETRIED is the point. client.chat already separates a
+   provider fault from a `badRequest` — the latter being this process
+   sending something the model would not take, which will be refused the
+   same way for ever. Retrying that burns the budget to arrive at the
+   same answer more slowly. Nor is an aborted call retried: the user
+   pressed stop.
+
+   ERROR WITHHOLDING: nothing is reported to the run until the retries
+   are spent. A recoverable error that surfaces immediately is a run
+   that looks broken while it is in fact recovering. */
+const RETRY_BACKOFF_MS = [500, 1500, 4000];
+function retryableReason(res) {
+    if (!res || res.ok)
+        return null;
+    if (res.badRequest || res.disabled || res.budgetExceeded)
+        return null;
+    if (res.overflow)
+        return null; // a fit problem; retrying sends the same thing
+    return String(res.reason || "provider error");
+}
 /* The schema lives in tool-registry now, beside the code that runs each
    tool and the gate that decides whether it may. Re-exported under the
    old name because that is what this module has always exported. */
@@ -473,7 +505,29 @@ async function executeRun(runId, opts = {}) {
             };
         }
         calls++;
-        const aiRes = await client.chat(Object.assign({}, callOpts, { messages }));
+        /* Retried here, and withheld until the retries are spent. */
+        let aiRes = await client.chat(Object.assign({}, callOpts, { messages }));
+        for (let attempt = 0; attempt < RETRY_BACKOFF_MS.length; attempt++) {
+            const why = retryableReason(aiRes);
+            if (!why)
+                break;
+            if (abort.signal.aborted)
+                break;
+            /* Never wait past the deadline to retry — a backoff that runs out
+               the clock turns a recoverable blip into a dead run. */
+            const wait = RETRY_BACKOFF_MS[attempt];
+            if (msLeft() - wait <= FINISH_RESERVE_MS)
+                break;
+            await runStore.appendEvent(runId, "stage", {
+                id: "retry-" + turn + "-" + attempt, state: "start",
+                detail: "The model did not answer (" + why.slice(0, 80) + "). Retrying…"
+            });
+            await new Promise((r) => setTimeout(r, wait));
+            if (abort.signal.aborted)
+                break;
+            calls++;
+            aiRes = await client.chat(Object.assign({}, callOpts, { messages }));
+        }
         totalCostUsd += aiRes.costUsd || 0;
         if (!aiRes.ok) {
             await runStore.updateRun(runId, { status: "failed", latestError: aiRes.reason });
