@@ -83,8 +83,14 @@ function scenario(overrides) {
   });
 
   const withTransaction = async (fn) => fn(db, { id: "sess" });
-  const finalize = createFinalizer({ withTransaction, run, workerId: "w_1", generation: 3 });
-  return { db, finalize, row: () => db.data.agent_runs[0] };
+  // Records what the finalizer handed to the attach hook, so a test can
+  // assert the photos were claimed and not merely that nothing threw.
+  const attached = [];
+  const finalize = createFinalizer({
+    withTransaction, run, workerId: "w_1", generation: 3,
+    onAttach: async (finished) => { attached.push(finished); }
+  });
+  return { db, finalize, attached, row: () => db.data.agent_runs[0] };
 }
 
 let passed = 0, failed = 0;
@@ -189,6 +195,44 @@ async function check(name, fn) {
     const s = scenario();
     s.db.data.projects[0].ownerAnonId = "an_someone_else";
     await assert.rejects(() => s.finalize({ summary: "x" }, "succeeded"), /deleted or its owner changed/);
+  });
+
+  /* An uploaded photo carries a 24h expiry until something builds with it.
+     Both calls to attachToProject live in index.js — the in-process path
+     and /build — and neither of them runs when the work went to a worker.
+     So on the durable path, which is the one production uses, nothing ever
+     claimed the image: the row and its bytes kept the expiry and Mongo
+     swept them the next day, leaving a published site pointing at a 404.
+     Found in live data, two rows reading "project: NONE, expires
+     tomorrow" while their project was still being worked on. */
+  const built = { ok: true, summary: "built", files: { "a.tsx": "x" },
+    fileStats: [{ path: "a.tsx", isNew: true, added: 1 }] };
+
+  await check("a successful run claims the photos it was given", async () => {
+    const s = scenario({ run: { context: { attachedImages: [{ id: "img_1", url: "/api/img/u/a.png" }] } } });
+    await s.finalize(built, "succeeded");
+    assert.strictEqual(s.attached.length, 1,
+      "the run finished and nothing claimed its images — they expire 24h later");
+    assert.strictEqual(s.attached[0].projectId, "pr_1");
+    assert.strictEqual(s.attached[0].context.attachedImages[0].id, "img_1");
+  });
+
+  await check("a run that did not succeed claims nothing", async () => {
+    const s = scenario({ run: { context: { attachedImages: [{ id: "img_1" }] } } });
+    await s.finalize({ ok: false, reason: "stopped" }, "failed");
+    assert.strictEqual(s.attached.length, 0,
+      "nothing was built with them, so they are still litter and must still expire");
+  });
+
+  await check("a refused finalize claims nothing either", async () => {
+    // Lease lost: the commit returns false and another worker owns the
+    // outcome, so this one must not reach outside the transaction.
+    const s = scenario({
+      run: { context: { attachedImages: [{ id: "img_1" }] } },
+      runRow: { leaseOwner: "someone_else" }
+    });
+    assert.strictEqual(await s.finalize(built, "succeeded"), false);
+    assert.strictEqual(s.attached.length, 0);
   });
 
   console.log("\n" + (failed === 0 ? "✓ ALL WORKER-SERVICE TESTS PASSED (" + passed + ")" : "✗ " + failed + " FAILED, " + passed + " passed"));

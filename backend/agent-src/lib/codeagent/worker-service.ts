@@ -60,10 +60,10 @@ export function createVerifier({ url, token, fetchImpl = globalThis.fetch }: any
 
 /* The run and the project must agree even if the worker dies just after commit.
    Full source snapshots also survive pruning an earlier revision's delta. */
-export function createFinalizer({ withTransaction, run, workerId, generation }: any): any {
+export function createFinalizer({ withTransaction, run, workerId, generation, onAttach }: any): any {
   return async function finalize(outcome: any, status: any) {
     if (!TERMINAL.has(status)) throw new Error("Invalid terminal run state");
-    return withTransaction(async (db: any, session: any) => {
+    const committed = await withTransaction(async (db: any, session: any) => {
       const runs = db.collection("agent_runs");
       const current = await runs.findOne({ id: run.id }, { session });
       if (!current || TERMINAL.has(current.status) || current.cancelled && status !== "cancelled" ||
@@ -133,10 +133,31 @@ export function createFinalizer({ withTransaction, run, workerId, generation }: 
       } }, { session });
       return true;
     });
+
+    /* THE PHOTOS BECOME PART OF THE PROJECT HERE, OR THEY EXPIRE.
+
+       An upload is litter until something builds with it, so it carries a
+       24h TTL that attachToProject clears for ever. Both calls to that
+       live in index.js — the in-process path and /build — and neither of
+       them runs when the work went to a worker. So on the durable path,
+       which is the one production uses, nothing ever claimed the image:
+       the row and its bytes kept the expiry and Mongo swept them the next
+       day, leaving a published site pointing at a 404. Seen in live data,
+       two rows reading "project: NONE, expires tomorrow".
+
+       After the commit rather than inside it: the bytes live in a sibling
+       database and this transaction is scoped to the master one. A
+       successful build whose image could not be marked permanent is worth
+       a warning, not a rollback — the revision is already correct. */
+    if (committed && status === "succeeded" && typeof onAttach === "function") {
+      try { await onAttach(run); }
+      catch (e: any) { console.warn("[worker] could not attach the run's images:", e && e.message); }
+    }
+    return committed;
   };
 }
 
-export async function executeClaim({ run, workerId, store, runner, verifier, withTransaction, signal }: any): Promise<any> {
+export async function executeClaim({ run, workerId, store, runner, verifier, withTransaction, signal, onAttach }: any): Promise<any> {
   const controller = new AbortController();
   const abort = () => controller.abort(signal && signal.reason);
   if (signal) signal.addEventListener("abort", abort, { once: true });
@@ -157,7 +178,7 @@ export async function executeClaim({ run, workerId, store, runner, verifier, wit
     return await runner.executeRun(run.id, Object.assign({}, context, {
       byok, signal: controller.signal, claimed: { workerId, generation },
       checkProject: verifier.check,
-      finalize: createFinalizer({ withTransaction, run, workerId, generation })
+      finalize: createFinalizer({ withTransaction, run, workerId, generation, onAttach })
     }));
   } finally {
     clearInterval(timer);

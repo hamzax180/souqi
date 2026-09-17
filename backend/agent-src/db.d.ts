@@ -20,6 +20,10 @@ import type { MongoDb } from "./lib/codeagent/mongo";
 export function connect(): Promise<MongoDb>;
 export function getDb(): MongoDb | null;
 export function getMasterDb(): MongoDb | null;
+/* A sibling database on the same client — the blob store. See the
+   comment on the implementation for why the bytes do not share a
+   cache with projects and sessions. */
+export function getSiblingDb(suffix: string): MongoDb | null;
 export function close(): Promise<void>;
 export function withTransaction<T>(
   fn: (db: MongoDb, session: unknown) => Promise<T>

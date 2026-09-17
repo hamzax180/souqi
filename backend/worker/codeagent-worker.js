@@ -45,10 +45,18 @@ const db = __importStar(require("../db"));
 const store = __importStar(require("../lib/codeagent/run-store"));
 const runner = __importStar(require("../lib/codeagent/agent-runner"));
 const worker_service_1 = require("../lib/codeagent/worker-service");
+/* The worker has to make an uploaded photo permanent, same as the route
+   does. Both modules are wired exactly as index.js wires them, so the
+   two executors clear the expiry through one code path rather than two
+   that can drift. */
+const uploads = __importStar(require("../lib/uploads"));
+const blobs = __importStar(require("../lib/storage/blobs"));
 async function main() {
     const verifier = (0, worker_service_1.createVerifier)({ url: process.env.AGENT_VERIFIER_URL, token: process.env.AGENT_VERIFIER_TOKEN });
     await db.connect();
     store.init({ getMasterDb: db.getMasterDb });
+    blobs.init({ getMasterDb: db.getMasterDb, getBlobDb: () => db.getSiblingDb("blobs") });
+    uploads.init({ getMasterDb: db.getMasterDb, onPersist: (keys) => blobs.persist(keys) });
     await store.ensureIndexes();
     const workerId = "agent_" + crypto.randomUUID();
     const shutdown = new AbortController();
@@ -88,7 +96,20 @@ async function main() {
             const run = health.healthy ? await store.claimNext(workerId) : null;
             if (run) {
                 try {
-                    await (0, worker_service_1.executeClaim)({ run, workerId, store, runner, verifier, withTransaction: db.withTransaction, signal: shutdown.signal });
+                    await (0, worker_service_1.executeClaim)({
+                        run, workerId, store, runner, verifier,
+                        withTransaction: db.withTransaction, signal: shutdown.signal,
+                        /* Called after the finalizer commits. attachToProject clears the
+                           24h expiry on the row for ever and fires onPersist, which does
+                           the same for the bytes — the one thing standing between a
+                           published site and a 404 the day after it was built. */
+                        onAttach: async (finished) => {
+                            const imgs = (finished.context && finished.context.attachedImages) || [];
+                            const ids = imgs.map((i) => i && i.id).filter(Boolean);
+                            if (ids.length && finished.projectId)
+                                await uploads.attachToProject(ids, finished.projectId);
+                        }
+                    });
                 }
                 catch (error) {
                     console.error("[agent-worker] run", run.id, error.message);
