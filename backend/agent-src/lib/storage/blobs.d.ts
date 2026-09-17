@@ -19,3 +19,7 @@ export function init(deps: {
 }): void;
 
 export function persist(keys: string[]): Promise<{ persisted: number }>;
+
+/* The worker creates them at boot. Its own comment says why they were
+   missing in production; this line is what lets it say so in TypeScript. */
+export function ensureIndexes(): Promise<void>;

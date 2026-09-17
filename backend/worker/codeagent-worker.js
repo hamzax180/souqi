@@ -58,6 +58,11 @@ async function main() {
     blobs.init({ getMasterDb: db.getMasterDb, getBlobDb: () => db.getSiblingDb("blobs") });
     uploads.init({ getMasterDb: db.getMasterDb, onPersist: (keys) => blobs.persist(keys) });
     await store.ensureIndexes();
+    /* The blob store's indexes were created on one path only — the legacy
+       in-process SSE build — which this worker replaced, so in production
+       neither existed: no unique key to make a retried part overwrite
+       itself, and no TTL, so every abandoned upload's bytes stayed forever. */
+    await blobs.ensureIndexes();
     const workerId = "agent_" + crypto.randomUUID();
     const shutdown = new AbortController();
     process.once("SIGTERM", () => shutdown.abort());

@@ -2630,6 +2630,11 @@ const agentRunner = require("./lib/codeagent/agent-runner");
 const agentState = require("./lib/codeagent/agent-state");
 runStore.init({ getMasterDb });
 runStore.ensureIndexes().catch(() => {});
+/* Beside runStore's, and for the same reason: the only other call to this
+   sits at the end of the in-process SSE build, which the durable worker
+   replaced. A store whose indexes are created by a code path nobody runs
+   is a store with no indexes. */
+blobs.ensureIndexes().catch(() => {});
 
 /* Ten per fifteen minutes PER ADDRESS was too tight for the thing it
    guards, and the counter it shares is the reason.
