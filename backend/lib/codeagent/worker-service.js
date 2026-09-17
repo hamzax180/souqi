@@ -25,10 +25,20 @@ function createVerifier({ url, token, fetchImpl = globalThis.fetch }) {
     const endpoint = new URL(url);
     if (!["http:", "https:"].includes(endpoint.protocol) || endpoint.username || endpoint.password)
         throw new Error("Invalid verifier URL");
+    /* The deploy plane's convention, not a second one invented here: its
+       internal surface authenticates with x-internal-token and compares
+       it in constant time (infra/deploy/src/api/auth.js). AGENT_VERIFIER_TOKEN
+       and the plane's INTERNAL_TOKEN are the same secret.
+  
+       Paths are joined RELATIVE to the configured base. `new URL("/health",
+       base)` discards the base's path and asks the origin, which would have
+       hit the plane's own public /health and read a healthy plane as a
+       healthy verifier. */
     async function request(path, body, signal) {
-        const response = await fetchImpl(new URL(path, endpoint), {
+        const base = endpoint.href.endsWith("/") ? endpoint.href : endpoint.href + "/";
+        const response = await fetchImpl(new URL(String(path).replace(/^\//, ""), base), {
             method: body ? "POST" : "GET", redirect: "error", signal,
-            headers: { "Authorization": "Bearer " + token, "Content-Type": "application/json" },
+            headers: { "x-internal-token": token, "Content-Type": "application/json" },
             body: body ? JSON.stringify(body) : undefined
         });
         if (!response.ok)
@@ -36,8 +46,8 @@ function createVerifier({ url, token, fetchImpl = globalThis.fetch }) {
         return response.json();
     }
     return {
-        health: () => request("/health", null, AbortSignal.timeout(5000)),
-        check: (files, context) => request("/check", {
+        health: () => request("health", null, AbortSignal.timeout(5000)),
+        check: (files, context) => request("check", {
             runId: context.runId, checkId: context.checkId, sourceHash: context.sourceHash, files
         }, context.signal)
     };

@@ -22,6 +22,8 @@ const engine = require("../docker/engine");
 const caddy = require("../proxy/caddy");
 const domains = require("../domains");
 const capacity = require("../monitor/capacity");
+const agentRunner = require("../agent/runner");
+const agentSandbox = require("../agent/sandbox");
 const pipeline = require("./pipeline");
 const cleanup = require("../monitor/cleanup");
 
@@ -395,6 +397,68 @@ function startInternalServer() {
     next();
   });
 
+  /* ── the code agent's build verifier ────────────────────────────
+     Here rather than on the api for the same reason runtime logs are:
+     this process holds the Docker socket and the api does not. A
+     verifier that cannot create a container reports every check as a
+     defect in the user's code instead of as its own missing
+     permission, which is the mistake the note above describes. */
+
+  app.get("/internal/agent/health", async (req, res) => {
+    /* Whether a check COULD run, not whether this process is up. The
+       agent worker refuses to claim work when this says no, so an
+       unreachable daemon has to surface here and not three minutes
+       into somebody's build. */
+    const v = await engine.version().catch(() => null);
+    const st = agentRunner.state();
+    res.json({
+      ok: !!v, image: agentSandbox.IMAGE,
+      slots: st.slots, inFlight: st.inFlight,
+      limits: {
+        cpu: agentSandbox.DEFAULTS.cpu, memoryMb: agentSandbox.DEFAULTS.memoryMb,
+        pids: agentSandbox.DEFAULTS.pids, timeoutMs: agentSandbox.DEFAULTS.timeoutMs
+      }
+    });
+  });
+
+  app.post("/internal/agent/check", express.json({ limit: "24mb" }), async (req, res) => {
+    const body = req.body || {};
+    const checkId = String(body.checkId || "").replace(/[^a-zA-Z0-9_.-]/g, "").slice(0, 64);
+    const runId = String(body.runId || "").slice(0, 64);
+    if (!checkId) return res.status(400).json({ error: "checkId is required" });
+
+    const files = body.files;
+    if (!files || typeof files !== "object" || Array.isArray(files)) {
+      return res.status(400).json({ error: "files must be an object of path -> contents" });
+    }
+
+    /* Re-validated here, not trusted. The model's own write boundary
+       already refuses a traversal, but this is a different process
+       reading a payload off a network and it does not get to assume the
+       sender was the one that checked it. */
+    const safe = {};
+    for (const [p, contents] of Object.entries(files)) {
+      const rel = agentSandbox.safeRelPath(p);
+      if (!rel) return res.status(400).json({ error: "unsafe path in files: " + String(p).slice(0, 80) });
+      if (typeof contents !== "string") return res.status(400).json({ error: "contents must be a string: " + rel });
+      safe[rel] = contents;
+    }
+    if (!Object.keys(safe).length) return res.status(400).json({ error: "files is empty" });
+
+    /* Computed here, not taken from the caller. A result carrying the
+       caller's idea of the hash proves nothing about what was built. */
+    const sourceHash = agentSandbox.hashFiles(safe);
+    if (body.sourceHash && body.sourceHash !== sourceHash) {
+      return res.status(409).json({
+        error: "the files do not hash to the sourceHash given",
+        expected: body.sourceHash, actual: sourceHash
+      });
+    }
+
+    const result = await agentRunner.check({ checkId, runId, files: safe, sourceHash });
+    res.json(Object.assign({ checkId, sourceHash }, result));
+  });
+
   app.get("/internal/logs/:id", async (req, res) => {
     const tail = Math.min(Number(req.query.tail) || 500, 2000);
     // The id comes from the api, which resolved it from a row the caller
@@ -455,6 +519,13 @@ async function main() {
 
   setInterval(() => { reconcile().catch(() => {}); }, RECONCILE_MS);
   setInterval(() => { cleanup.run().catch(() => {}); }, CLEANUP_MS);
+
+  /* A sandbox is torn down in its own finally, so this only ever finds
+     the ones a worker that DIED mid-check left behind. Nothing else
+     would: they carry souqi.role=agent-sandbox rather than
+     souqi.deployment, which is what keeps them out of the deployment
+     count and also out of the janitor's reach. */
+  setInterval(() => { agentRunner.reapOrphans().catch(() => {}); }, CLEANUP_MS);
   reconcile().catch(() => {});
 
   while (running) {

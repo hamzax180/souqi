@@ -138,8 +138,18 @@ async function canAdmit({ memoryMb, replacingDeploymentId }) {
   const replacingName = replacingDeploymentId ? engine.containerName(replacingDeploymentId) : null;
   const replacing = !!(replacingName && (snap.containers.names || []).indexOf(replacingName) !== -1);
 
-  if (!replacing && snap.containers.total >= cfg.admission.maxContainers) {
-    reasons.push("this server is at its container limit (" + cfg.admission.maxContainers + ")");
+  /* Deployments do not get the whole host. A few slots are held back so
+     the code agent always has somewhere to build and verify — otherwise
+     a full host silently downgrades every agent run to "we could not
+     check this", which is the failure people notice least and trust
+     most. See cfg.admission.agentSandboxes for why it is subtracted
+     rather than counted. */
+  const deployLimit = deploymentLimit();
+
+  if (!replacing && snap.containers.total >= deployLimit) {
+    reasons.push("this server is at its container limit (" + deployLimit +
+      " of " + cfg.admission.maxContainers + "; " + reservedSandboxes() +
+      " are reserved for build sandboxes)");
   }
   if (snap.memory.pct >= cfg.admission.maxMemoryPct) {
     reasons.push("memory is at " + snap.memory.pct + "% (limit " + cfg.admission.maxMemoryPct + "%)");
@@ -155,12 +165,31 @@ async function canAdmit({ memoryMb, replacingDeploymentId }) {
   const wouldCommit = (committed ? committed.mb : 0) + Number(memoryMb || cfg.defaults.memoryMb);
   // Allow deliberate oversubscription up to 1.5x physical — apps are idle
   // most of the time — but not unbounded.
-  const ceiling = Math.round(snap.memory.totalMb * 1.5);
+  //
+  // The reserved sandboxes come off the ceiling too. Holding a container
+  // slot for the agent and then letting deployments commit the memory it
+  // would need reserves nothing: the slot is free and the box is full.
+  const reservedMb = reservedSandboxes() * (Number(cfg.admission.agentSandboxMemoryMb) || 0);
+  const ceiling = Math.max(0, Math.round(snap.memory.totalMb * 1.5) - reservedMb);
   if (wouldCommit > ceiling) {
     reasons.push("committed memory would reach " + wouldCommit + "MB of a " + ceiling + "MB ceiling");
   }
 
   return { ok: reasons.length === 0, reasons, snapshot: snap, committedMb: wouldCommit };
+}
+
+/** How many slots are held back. Clamped so a misconfiguration cannot
+    reserve the entire host and refuse every deployment. */
+function reservedSandboxes() {
+  const want = Number(cfg.admission.agentSandboxes) || 0;
+  if (want <= 0) return 0;
+  return Math.min(want, Math.max(0, cfg.admission.maxContainers - 1));
+}
+
+/** What deployments may actually use. Always at least 1: a host that
+    admits nothing is worse than one that runs the agent a little thin. */
+function deploymentLimit() {
+  return Math.max(1, cfg.admission.maxContainers - reservedSandboxes());
 }
 
 /** Threshold breaches worth alerting on. */
@@ -170,7 +199,7 @@ async function alerts() {
   if (snap.memory.pct > 80) out.push({ level: "warn", metric: "memory", value: snap.memory.pct, message: "memory above 80%" });
   if (snap.cpuPct > 80) out.push({ level: "warn", metric: "cpu", value: snap.cpuPct, message: "sustained load above 80%" });
   if (snap.disk && snap.disk.pct > 80) out.push({ level: "warn", metric: "disk", value: snap.disk.pct, message: "disk above 80%" });
-  if (snap.containers.total > cfg.admission.maxContainers * 0.9) {
+  if (snap.containers.total > deploymentLimit() * 0.9) {
     out.push({ level: "warn", metric: "containers", value: snap.containers.total, message: "near the container limit" });
   }
   // Crash loops: a container Docker keeps restarting is failing, and the
@@ -188,4 +217,4 @@ async function alerts() {
   return { alerts: out, snapshot: snap };
 }
 
-module.exports = { snapshot, canAdmit, alerts, memory, disk, loadPct };
+module.exports = { snapshot, canAdmit, alerts, memory, disk, loadPct, reservedSandboxes, deploymentLimit };

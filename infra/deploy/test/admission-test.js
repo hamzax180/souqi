@@ -71,11 +71,17 @@ function fill(n) {
   for (let i = 0; i < n; i++) managed.push({ name: name("dep_full" + i), state: "running", image: "img" });
 }
 
+/* Exactly at the limit deployments actually have, which is maxContainers
+   minus the sandbox reserve. The cases below used to fill a hardcoded 10;
+   once slots were reserved that became an OVERSHOOT, and a host two over
+   its limit answers "is it full" without anyone testing the edge. */
+const fillToLimit = () => fill(capacity.deploymentLimit());
+
 (async () => {
   console.log("\nadmission counts a redeploy as the replacement it is");
 
   await okAsync("a full host still refuses a NEW app", async () => {
-    fill(10);
+    fillToLimit();
     const r = await capacity.canAdmit({ memoryMb: 256 });
     assert.strictEqual(r.ok, false);
     assert.ok(r.reasons.join(" ").indexOf("container limit") !== -1, r.reasons.join("; "));
@@ -85,8 +91,8 @@ function fill(n) {
     /* The bug: the app that was already running was itself the reason its
        own redeploy was refused, so the only way to update anything on a full
        host was to delete something else first. */
-    fill(10);
-    const existing = managed[3].name.replace(/^app-/, "");
+    fillToLimit();
+    const existing = managed[Math.min(3, managed.length - 1)].name.replace(/^app-/, "");
     const r = await capacity.canAdmit({ memoryMb: 256, replacingDeploymentId: existing });
     assert.strictEqual(r.ok, true, "refused a redeploy that nets zero containers: " + (r.reasons || []).join("; "));
   });
@@ -94,7 +100,7 @@ function fill(n) {
   await okAsync("a full host still refuses an id that has no container here", async () => {
     // Naming an id is not a password. If nothing of that name is running,
     // the deploy really is an addition and the limit really does apply.
-    fill(10);
+    fillToLimit();
     const r = await capacity.canAdmit({ memoryMb: 256, replacingDeploymentId: "dep_neverseen" });
     assert.strictEqual(r.ok, false);
   });
@@ -106,6 +112,82 @@ function fill(n) {
     const existing = managed[0].name.replace(/^app-/, "");
     const b = await capacity.canAdmit({ memoryMb: 256, replacingDeploymentId: existing });
     assert.strictEqual(b.ok, true, (b.reasons || []).join("; "));
+  });
+
+  console.log("\nslots held back for the agent are not available to deployments");
+
+  await okAsync("deployments admit against maxContainers minus the reserve", async () => {
+    assert.strictEqual(capacity.reservedSandboxes(), 2, "expected 2 reserved for this stub");
+    assert.strictEqual(capacity.deploymentLimit(), 8, "10 - 2 should leave 8");
+  });
+
+  await okAsync("one below the deployment limit still admits", async () => {
+    fill(capacity.deploymentLimit() - 1);
+    const r = await capacity.canAdmit({ memoryMb: 256 });
+    assert.strictEqual(r.ok, true, (r.reasons || []).join("; "));
+  });
+
+  /* The whole point: the host has two free container slots by the raw
+     count, and a deployment still cannot have them. */
+  await okAsync("at the deployment limit it refuses, with the host not actually full", async () => {
+    fill(capacity.deploymentLimit());
+    const r = await capacity.canAdmit({ memoryMb: 256 });
+    assert.strictEqual(r.ok, false);
+    const why = r.reasons.join("; ");
+    assert.ok(why.indexOf("container limit") !== -1, why);
+    assert.ok(why.indexOf("reserved for build sandboxes") !== -1,
+      "the refusal does not say the slots are reserved: " + why);
+    assert.ok(managed.length < realCfgMod.cfg.admission.maxContainers,
+      "this case is meant to refuse while raw slots remain");
+  });
+
+  /* A redeploy nets zero containers, so the reserve is irrelevant to it —
+     the same reasoning the original bug above was fixed for. */
+  await okAsync("a redeploy is still admitted at the reserved limit", async () => {
+    fill(capacity.deploymentLimit());
+    const existing = managed[0].name.replace(/^app-/, "");
+    const r = await capacity.canAdmit({ memoryMb: 256, replacingDeploymentId: existing });
+    assert.strictEqual(r.ok, true, (r.reasons || []).join("; "));
+  });
+
+  await okAsync("setting the reserve to zero restores the old arithmetic exactly", async () => {
+    const admission = require(cfgPath).cfg.admission;
+    const was = admission.agentSandboxes;
+    admission.agentSandboxes = 0;
+    try {
+      assert.strictEqual(capacity.reservedSandboxes(), 0);
+      assert.strictEqual(capacity.deploymentLimit(), realCfgMod.cfg.admission.maxContainers);
+      fill(realCfgMod.cfg.admission.maxContainers - 1);
+      const r = await capacity.canAdmit({ memoryMb: 256 });
+      assert.strictEqual(r.ok, true, (r.reasons || []).join("; "));
+    } finally { admission.agentSandboxes = was; }
+  });
+
+  /* Holding a slot and then letting deployments commit the memory that
+     slot would need reserves nothing: the slot is free and the box is full. */
+  await okAsync("the reserve comes off the memory ceiling, not off what a deploy commits", async () => {
+    const admission = require(cfgPath).cfg.admission;
+    const was = admission.agentSandboxMemoryMb;
+    try {
+      fill(1);
+      admission.agentSandboxMemoryMb = 1024;
+      const withReserve = await capacity.canAdmit({ memoryMb: 256 });
+      admission.agentSandboxMemoryMb = 0;
+      const without = await capacity.canAdmit({ memoryMb: 256 });
+      assert.strictEqual(withReserve.committedMb, without.committedMb,
+        "the reserve should move the ceiling, not what a deploy commits");
+    } finally { admission.agentSandboxMemoryMb = was; }
+  });
+
+  /* A misconfiguration must not be able to refuse every deployment. */
+  await okAsync("an absurd reserve cannot close the host", async () => {
+    const admission = require(cfgPath).cfg.admission;
+    const was = admission.agentSandboxes;
+    admission.agentSandboxes = 9999;
+    try {
+      assert.ok(capacity.deploymentLimit() >= 1, "the host stopped admitting anything at all");
+      assert.ok(capacity.reservedSandboxes() < realCfgMod.cfg.admission.maxContainers);
+    } finally { admission.agentSandboxes = was; }
   });
 
   console.log("\nfailing must not be more destructive than succeeding");

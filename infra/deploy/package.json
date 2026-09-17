@@ -13,7 +13,9 @@
     "verify": "node scripts/verify.js",
     "verify:auth": "node scripts/verify-auth.js",
     "preflight": "node scripts/preflight.js",
-    "test": "node scripts/verify.js && node scripts/verify-auth.js"
+    "test": "node scripts/verify.js && node scripts/verify-auth.js && node test/admission-test.js && node test/agent-sandbox-test.js",
+    "test:admission": "node test/admission-test.js",
+    "test:agent-sandbox": "node test/agent-sandbox-test.js"
   },
   "dependencies": {
     "dotenv": "^17.4.2",

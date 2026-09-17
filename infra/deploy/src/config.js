@@ -47,7 +47,23 @@ const cfg = {
   admission: {
     maxContainers: num("MAX_CONTAINERS", 40),
     maxMemoryPct: num("MAX_MEMORY_PCT", 80),
-    maxDiskPct: num("MAX_DISK_PCT", 80)
+    maxDiskPct: num("MAX_DISK_PCT", 80),
+
+    /* Slots held back for the code agent's build sandboxes, so a busy
+       host cannot leave it with nowhere to verify anything. Deployments
+       admit against maxContainers MINUS this.
+
+       Subtracted rather than counted, and that is not laziness.
+       engine.listManaged() filters on label=souqi.deployment AND a name
+       starting "app-", so a sandbox is invisible to it; counting them
+       would need the Docker socket, which the api does not have on
+       purpose — it always takes the database branch, and a sandbox is
+       not a deployments row. Static subtraction is the only version
+       that is correct from both callers.
+
+       Set to 0 to restore the arithmetic exactly as it was. */
+    agentSandboxes: num("AGENT_SANDBOX_CONTAINERS", 2),
+    agentSandboxMemoryMb: num("AGENT_SANDBOX_MEMORY_MB", 1024)
   },
 
   secretKey: process.env.SECRET_KEY || "",
