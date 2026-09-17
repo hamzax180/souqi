@@ -20,6 +20,18 @@
   "ignorePatterns": [
     "node_modules/",
     "vendor/",
-    "lib/codeagent/scaffold/"
+    "lib/codeagent/scaffold/",
+
+    // Generated from backend/agent-src/ by `npm run build:agent`.
+    //
+    // Linting compiler output is noise: these rules are about how a
+    // person writes JavaScript, and nobody wrote these. tsc's own
+    // __importStar helpers alone account for seven no-var errors that
+    // cannot be fixed without editing a file the next build overwrites.
+    // The SOURCES are checked instead, by `npm run typecheck`, which is
+    // strict and has no warning budget to drift.
+    "lib/codeagent/*.js",
+    "lib/codeagent/runtimes/*.js",
+    "worker/*.js"
   ]
 }

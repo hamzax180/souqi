@@ -22,9 +22,13 @@
        runs it, so `../ai/client` in a flat agent-src/ would look for
        backend/ai/client at compile time and find backend/lib/ai/client
        at runtime — right at runtime, unresolvable at compile time.
-       Same shape in both places, one answer. */
+       Same shape in both places, one answer.
+
+       Which is also why outDir is backend/ itself rather than backend/lib:
+       worker/codeagent-worker.ts is not under lib/ and imports
+       ../lib/codeagent/run-store. The mirror has to start above both. */
     "rootDir": ".",
-    "outDir": "../lib",
+    "outDir": "..",
 
     "strict": true,
     "noImplicitOverride": true,
@@ -60,5 +64,11 @@
 
     "types": ["node"]
   },
-  "include": ["**/*.ts"]
+  "include": ["**/*.ts"],
+  /* Explicit, and it must stay explicit. With no `exclude`, tsc adds
+     outDir to it automatically — and outDir is backend/, which contains
+     agent-src/, so every input was excluded and the compile reported
+     "No inputs were found". `include` is already relative to this file,
+     so it only ever picks up sources. */
+  "exclude": ["node_modules"]
 }

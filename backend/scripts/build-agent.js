@@ -21,7 +21,7 @@ const { spawnSync } = require("child_process");
 
 const BACKEND = path.join(__dirname, "..");
 const SRC = path.join(BACKEND, "agent-src");
-const OUT = path.join(BACKEND, "lib");
+const OUT = BACKEND;
 
 const BANNER = "/* GENERATED FROM backend/agent-src/";
 
@@ -51,7 +51,7 @@ const collisions = emitted.filter(isHandWritten);
 
 if (collisions.length) {
   console.error(
-    "\n✗ build:agent refused: these would overwrite unstamped files under lib/\n" +
+    "\n✗ build:agent refused: these would overwrite unstamped files under backend/\n" +
     collisions.map((c) => "    " + c).join("\n") +
     "\n\n  Either a person wrote them — rename the source in agent-src/, or port\n" +
     "  the file deliberately by deleting it in the same commit — or a build\n" +
@@ -96,4 +96,4 @@ for (const rel of emitted) {
   stamped++;
 }
 
-console.log("✓ build:agent — " + stamped + " file" + (stamped === 1 ? "" : "s") + " emitted into lib/");
+console.log("✓ build:agent — " + stamped + " file" + (stamped === 1 ? "" : "s") + " emitted into backend/");
