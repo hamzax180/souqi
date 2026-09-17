@@ -946,10 +946,65 @@
     backdrop-filter:none;
     border-top:0;
   }
-  /* The top feather went with the band. It existed to dissolve a hard
-     backdrop-filter boundary that no longer spans the column — the box has
-     its own rounded edge and its own falloff, and a gradient above a
-     floating card just dims the message behind it for no reason. */
+  /* ═══════ THE FEATHER ABOVE THE BAR ═══════
+     The top feather went with the band, on the argument that a gradient
+     above a floating card just dims the message behind it. That was true
+     while the log stopped dead above the bar — there was no message there
+     to dim. Now that the box runs to the bottom of the column and the
+     conversation scrolls under the glass, a line of text crosses the box's
+     edge and snaps from sharp to blurred in one pixel, which is the thing
+     the original feather existed to prevent.
+
+     So it is back, and it is the approach rather than the boundary: a
+     strip directly above the box where the blur ramps in and the paper
+     fades up, so a line is already softening before it reaches the glass.
+
+     A separate layer, not a property of the composer, for the reason
+     written on .ag-box's own blur: an element with backdrop-filter becomes
+     a backdrop root, so a child that also has one filters its parent's
+     output instead of the page. This is a SIBLING of the box, ending where
+     the box begins, and the two never overlap. */
+  .ag:not(.is-new) .ag-composer::before,
+  .ag.has-convo .ag-composer::before,
+  .ag:has(#agLog > *:not(.ag-empty)) .ag-composer::before{
+    content:"";
+    position:absolute;
+    /* Spans the column, not the box: the messages are wider than the
+       composer's inset and a feather that stopped at the box's edge would
+       leave two sharp columns either side of a soft middle. */
+    left:calc(var(--ag-inset) * -1);
+    right:calc(var(--ag-inset) * -1);
+    /* Ends at the composer's own padding edge, which is the top of the
+       box. Below that line the glass takes over. */
+    bottom:calc(100% - 8px);
+    height:var(--ag-feather, 64px);
+    pointer-events:none;
+    /* Below the box, above the log. The box is position:relative with
+       z-index:auto, and an auto-positioned element paints BEFORE a
+       positive one — so a z-index here would put the feather on top of
+       the thing it is feathering. 0 keeps it in the same painting step,
+       where tree order wins and ::before comes first. */
+    z-index:0;
+    -webkit-backdrop-filter:blur(5px);
+    backdrop-filter:blur(5px);
+    /* Two gradients doing two jobs. The mask ramps the BLUR in — a
+       backdrop-filter has a hard boundary of its own, and an unmasked one
+       here would just move the snap 64px up the screen. The background
+       ramps the PAPER in, so the text dims as it softens rather than
+       staying at full contrast until it disappears under the box. */
+    background:linear-gradient(to bottom,
+      color-mix(in srgb,var(--paper) 0%,transparent),
+      color-mix(in srgb,var(--paper) 62%,transparent));
+    -webkit-mask-image:linear-gradient(to bottom,transparent 0%,#000 78%,#000 100%);
+    mask-image:linear-gradient(to bottom,transparent 0%,#000 78%,#000 100%);
+  }
+  /* No backdrop-filter, no feather: the background gradient alone over
+     live text is a grey veil with nothing to justify it. */
+  @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
+    .ag:not(.is-new) .ag-composer::before,
+    .ag.has-convo .ag-composer::before,
+    .ag:has(#agLog > *:not(.ag-empty)) .ag-composer::before{display:none}
+  }
 
   /* The glass itself. Only when docked: the new-chat hero centres this same
      box over empty paper, where transparency has nothing to reveal and the
@@ -1119,11 +1174,21 @@
     .ag:not(.is-new) #agLog,
     .ag.has-convo #agLog,
     .ag:has(#agLog > *:not(.ag-empty)) #agLog{
-      /* margin, not padding. Padding kept the log's BOX running to the
-         bottom of the screen behind the fixed bar, so its scrollbar ran
-         down past the composer and ended beside it. A margin ends the box
-         above the bar, which is where the scroll should stop. */
-      margin-bottom:calc(var(--composer-h, 110px) + 12px);
+      /* Padding, not margin — and the scrollbar is dealt with separately,
+         below.
+
+         A margin ends the log's BOX above the bar, and a bar with nothing
+         behind it is not glass, it is a grey slab with a rounded edge. It
+         also leaves the strip under the bar as bare page: free space the
+         conversation is not allowed into. Padding keeps the box running to
+         the bottom of the column, so scrolling up carries the messages
+         down through the gap and on under the glass, which is the entire
+         reason the bar is made of glass.
+
+         The resting position does not change: content stops at the padding
+         edge, so the newest message still sits just above the bar rather
+         than under it. */
+      padding-bottom:calc(var(--composer-h, 110px) + 12px);
     }
   }
   /* ---------------------------------------------------------------
@@ -3037,10 +3102,10 @@
     .ag:not(.is-new) #agLog,
     .ag.has-convo #agLog,
     .ag:has(#agLog > *:not(.ag-empty)) #agLog {
-      /* margin, not padding — see the note on the other copy of this rule:
-         padding left the scroll box running behind the fixed bar and took
-         the scrollbar with it. */
-      margin-bottom: calc(var(--composer-h, 108px) + 12px + env(safe-area-inset-bottom, 0px));
+      /* Padding, not margin — see the note on the other copy of this rule.
+         The box has to run under the bar or there is nothing behind the
+         glass and nothing allowed into the strip below it. */
+      padding-bottom: calc(var(--composer-h, 108px) + 12px + env(safe-area-inset-bottom, 0px));
     }
 
     /* Messages sit ON the composer, the way a chat does, instead of stacking
