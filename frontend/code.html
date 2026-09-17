@@ -2830,6 +2830,12 @@
     let thinkPanel = null;
     let filesSeen = 0;
     let result = null;
+    /* Declared HERE, in runTurn's own scope, not inside the try below.
+       errorMsg and its neighbours are `let` inside the stream block, so
+       the finally cannot see them — reading one there is a
+       ReferenceError that would break every turn. Set where the
+       terminal outcomes are set; read in the finally. */
+    let runSettled = false;
     let lastReceivedFiles = null;
 
     // For follow-up edits, keep the existing preview visible — don't
@@ -3164,12 +3170,13 @@
           else if (em[1] === "question") showAgentQuestion(payload, runId);
           else if (em[1] === "confirm") confirmPlan = payload;
           else if (em[1] === "clarify") clarifyPlan = payload;
-          else if (em[1] === "chitchat") chitchat = payload.reply;
+          else if (em[1] === "chitchat") { chitchat = payload.reply; runSettled = true; }
           else if (em[1] === "publishRequest") publishRequested = true;
-          else if (em[1] === "authRequired") gate = { kind: "auth", message: payload.message, loginUrl: payload.loginUrl, signupUrl: payload.signupUrl };
-          else if (em[1] === "subscribeRequired") gate = { kind: "subscribe", message: payload.message, pricingUrl: payload.pricingUrl };
+          else if (em[1] === "authRequired") { gate = { kind: "auth", message: payload.message, loginUrl: payload.loginUrl, signupUrl: payload.signupUrl }; runSettled = true; }
+          else if (em[1] === "subscribeRequired") { gate = { kind: "subscribe", message: payload.message, pricingUrl: payload.pricingUrl }; runSettled = true; }
           else if (em[1] === "error") {
             errorMsg = payload.error || "That didn't work";
+            runSettled = true;
             if (/image/i.test(errorMsg) && /does not support/i.test(errorMsg)) {
               errorMsg = "The AI model couldn't process this request. Try rephrasing your prompt.";
             }
@@ -3340,8 +3347,19 @@
          and not in the way when it is not. */
       try { termClose(); }
       catch (e) { /* a terminal that cannot close must not fail the turn */ }
-      activeRunId = null;
-      try { sessionStorage.removeItem("sapo_active_run"); } catch (e) {}
+      /* The run id is kept unless the run is KNOWN terminal.
+
+         It used to be cleared here unconditionally — including when the
+         stream died because the server's function was terminated, which
+         is exactly the case where the run is still marked active in the
+         database. The id was the only way to cancel it, so clearing it
+         left the user with a 409 on every later build and nothing to
+         act on. Keeping it means Stop still works, and the reload path
+         at the bottom of this file can pick the run back up. */
+      if (runSettled || result) {
+        activeRunId = null;
+        try { sessionStorage.removeItem("sapo_active_run"); } catch (e) {}
+      }
       building = false;
       currentAbortController = null;
       document.body.classList.remove("is-building");

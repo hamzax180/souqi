@@ -346,6 +346,65 @@ export async function getWorkerHealth(maxAgeMs = 45000): Promise<{ healthy: bool
   ).toArray();
   return { healthy: workers.length > 0, workers, lastHeartbeatAt: workers.length ? workers[0].at : null };
 }
+/**
+ * Reap runs that were executing IN PROCESS and whose process is gone.
+ *
+ * recoverExpiredRuns() below cannot find these. It matches on
+ * `leaseExpiresAt: {$lte: now}`, and createRun takes no lease — only a
+ * worker claiming a run does. An in-process run therefore has no lease
+ * at all, and Mongo does not match a missing field against $lte. So the
+ * sweep that existed swept exactly the runs that could not strand, and
+ * none of the ones that could.
+ *
+ * Staleness is measured on `updatedAt`, which the loop now touches every
+ * turn. A run still working is never idle for long; one whose function
+ * was terminated stops touching it entirely.
+ *
+ * Keeps whatever was checkpointed. A partial result the user can
+ * continue from is a different thing from a run that vanished.
+ */
+export async function recoverStaleRuns(maxIdleMs = 600000): Promise<RunDoc[]> {
+  const db = await ensureIndexes();
+  const cutoff = new Date(Date.now() - Math.max(60000, Number(maxIdleMs) || 0)).toISOString();
+  const stale = await db.collection("agent_runs").find({
+    status: { $in: ["running", "waiting_for_check", "finalizing"] },
+    leaseExpiresAt: { $exists: false },
+    updatedAt: { $lte: cutoff }
+  }).toArray();
+
+  const recovered: RunDoc[] = [];
+  for (const run of stale) {
+    const checkpoint = await getLatestCheckpoint(run.id);
+    const status = checkpoint && checkpoint.fileCount ? "partial" : "failed";
+    const reason = "This run stopped before finishing — its server was shut down mid-build. " +
+      (status === "partial"
+        ? "What it had written is saved; start a new turn to continue."
+        : "Nothing had been written yet.");
+    const result = { ok: false, partial: status === "partial", interrupted: true, status, reason,
+      summary: reason, files: (checkpoint && checkpoint.files) || {}, costUsd: run.costUsd || 0 };
+
+    /* Conditioned on updatedAt as well, so a run that woke up between the
+       find and the update is not finalised out from under itself. */
+    const updated = await db.collection("agent_runs").updateOne(
+      { id: run.id, status: run.status, updatedAt: run.updatedAt, leaseExpiresAt: { $exists: false } },
+      { $set: { status, phase: "interrupted", latestError: reason, result, updatedAt: now() },
+        $unset: { activeProjectId: "", activeOwnerKey: "" } }
+    );
+    if (updated.matchedCount) {
+      await appendEvent(run.id, "result", result);
+      recovered.push(await getRun(run.id));
+    }
+  }
+  return recovered;
+}
+
+/** Heartbeat, so `recoverStaleRuns` can tell working from abandoned. */
+export async function touchRun(runId: string): Promise<void> {
+  await dbRequired().collection("agent_runs").updateOne(
+    { id: runId, status: { $in: ACTIVE } }, { $set: { updatedAt: now() } }
+  );
+}
+
 export async function recoverExpiredRuns(): Promise<RunDoc[]> {
   const db = await ensureIndexes();
   const expired = await db.collection("agent_runs").find(

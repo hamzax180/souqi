@@ -36,6 +36,10 @@ function textOf(content: unknown): string {
 }
 
 export interface ExecuteRunOpts {
+  /** Absolute epoch ms. Defaults to CODEAGENT_MAX_RUN_MS from now. */
+  deadlineAt?: number;
+  /** Aborts the provider call in flight, not just between turns. */
+  signal?: AbortSignal;
   history?: any[];
   imagesBlock?: string;
   attachedImages?: Array<{ url?: string }>;
@@ -216,6 +220,43 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
     Math.min(effort.maxTokens, Math.floor(windowTokens * MAX_REPLY_SHARE * (effort.maxTokens / LADDER_TOP)))
   );
 
+  /* THE WALL CLOCK.
+
+     The loop used to have none, and its own arithmetic overruns the
+     host at every effort level: sixteen turns at a 90-second provider
+     timeout is twenty-four minutes, and Vercel terminates the function
+     at 300 seconds. Even `fast` can reach 360.
+
+     What made that a lockout rather than a lost result: createRun sets
+     activeOwnerKey under a unique index, those keys are released only
+     on a TERMINAL transition, and a killed process never makes one. So
+     the row stayed `running` for ever and every later build was refused
+     with RUN_ALREADY_ACTIVE — pointing at a run the client could no
+     longer cancel, because it had already discarded the id.
+
+     So the run finishes ITSELF, early and on purpose, keeping its files
+     and saying why. A partial result the user can continue from is a
+     different thing from a run that vanished.
+
+     The reserve is what makes the finish possible: checkpointing,
+     finalising and emitting the result all have to happen inside it. */
+  const AGENT_WALL_MS = Number(process.env.CODEAGENT_MAX_RUN_MS) || 300000;
+  const FINISH_RESERVE_MS = Number(process.env.CODEAGENT_FINISH_RESERVE_MS) || 30000;
+  const startedAt = Date.now();
+  const deadlineAt = Number(opts.deadlineAt) || (startedAt + AGENT_WALL_MS);
+  const msLeft = () => deadlineAt - Date.now();
+
+  /* Cancellation used to be noticed only at the TOP of a turn, so a
+     stop during a 90-second provider call waited out the call and paid
+     for it. client.chat has always accepted a signal; nothing ever gave
+     it one. */
+  const abort = new AbortController();
+  const outer = opts.signal;
+  if (outer) {
+    if (outer.aborted) abort.abort(outer.reason);
+    else outer.addEventListener("abort", () => abort.abort(outer.reason), { once: true });
+  }
+
   /* Budgets asked BEFORE each call rather than recorded after. A run
      whose allowance is gone is exactly the run most likely to keep
      going — a loop that is failing makes more calls, not fewer. */
@@ -342,13 +383,42 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
     verification: null
   };
 
+  /* Finish cleanly rather than being killed mid-turn. Called at the top
+     of each turn and again before each provider call, because one call
+     can take ninety seconds and the reserve is thirty. */
+  async function finishOnDeadline(turn: number) {
+    const diff = statsFor(
+      Object.entries(currentFiles).map(([path, content]) => ({ path, content: String(content) })),
+      turnBaseFiles
+    );
+    const detail = "Stopped at the time limit after " +
+      Math.round((Date.now() - startedAt) / 1000) + "s. What was built is saved.";
+    await runStore.saveCheckpoint(runId, currentFiles, "Deadline reached on step " + turn);
+    await runStore.appendEvent(runId, "stage", { id: "turn-" + turn, state: "failed", detail });
+    await runStore.updateRun(runId, { status: "partial", phase: "deadline", latestError: detail });
+    return {
+      ok: false, stopReason: "budget_limit" as StopReason, reason: detail,
+      files: currentFiles, fileStats: diff, summary: finalSummary || detail, costUsd: totalCostUsd
+    };
+  }
+
   for (let turn = 1; turn <= maxTurns; turn++) {
     // Check for cancellation
     const currentRun = await runStore.getRun(runId);
     if (currentRun && currentRun.cancelled) {
+      abort.abort(new Error("cancelled by user"));
       await runStore.appendEvent(runId, "stage", { id: "turn-" + turn, state: "cancelled", detail: "Run was cancelled by user." });
       return { ok: false, cancelled: true, stopReason: "cancelled" as StopReason };
     }
+
+    /* No turn is started that cannot also be finished. Starting one with
+       twenty seconds left spends a provider call to be killed mid-way
+       through writing its result. */
+    if (msLeft() <= FINISH_RESERVE_MS) return await finishOnDeadline(turn);
+
+    /* So a sweep can tell a working run from an abandoned one. Cheap,
+       and the only signal available for a run that holds no lease. */
+    await runStore.touchRun(runId).catch(() => { /* not worth failing a turn */ });
 
     const hasEntry = !!currentFiles["src/App.tsx"] || !!currentFiles["index.html"];
 
@@ -373,7 +443,12 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
       model: isPower ? process.env.AI_JSON_POWER_MODEL : undefined,
       maxTokens: replyTokens,
       temperature: 0.3,
-      timeoutMs: 90000
+      /* Never longer than the time actually remaining. A 90-second
+         timeout with 40 seconds left is a call guaranteed to be cut off
+         by the host rather than by us, and the difference is whether
+         anything gets saved. */
+      timeoutMs: Math.max(5000, Math.min(90000, msLeft() - FINISH_RESERVE_MS)),
+      signal: abort.signal
     };
 
     /* Reassembled every call rather than accumulated: measure, then
@@ -399,6 +474,9 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
         usedTokens: prepared.after.usedTokens, usableTokens: prepared.after.usableTokens
       });
     }
+
+    // Re-checked here: preparing the context can itself take seconds.
+    if (msLeft() <= FINISH_RESERVE_MS) return await finishOnDeadline(turn);
 
     const verdict = contextManager.budget.canSpend({ costUsd: totalCostUsd, calls }, ceiling);
     if (!verdict.ok) {

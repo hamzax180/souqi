@@ -25,6 +25,29 @@ function dotUnset(doc, path) {
   delete cur[last];
 }
 
+/* ONE matcher, used by findOne, find and updateOne alike.
+
+   They each had their own before, understanding different operators —
+   updateOne knew $in/$gt/$lte/$exists and find knew only $gt. So a
+   sweep whose query used $exists matched nothing through find() and the
+   assertions passed by never running. A mock that silently agrees with
+   you is worse than no mock. */
+function queryMatches(doc, query) {
+  for (const [k, v] of Object.entries(query || {})) {
+    const actual = dotGet(doc, k);
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      if (Array.isArray(v.$in)) { if (!v.$in.includes(actual)) return false; continue; }
+      if (v.$gt !== undefined) { if (!(actual > v.$gt)) return false; continue; }
+      if (v.$gte !== undefined) { if (!(actual >= v.$gte)) return false; continue; }
+      if (v.$lte !== undefined) { if (actual === undefined || !(actual <= v.$lte)) return false; continue; }
+      if (v.$lt !== undefined) { if (actual === undefined || !(actual < v.$lt)) return false; continue; }
+      if (v.$exists !== undefined) { if ((actual !== undefined) !== !!v.$exists) return false; continue; }
+    }
+    if (actual !== v) return false;
+  }
+  return true;
+}
+
 // Mock in-memory DB for unit testing without live MongoDB
 function createMockDb() {
   const collections = {};
@@ -34,12 +57,7 @@ function createMockDb() {
       collections[name] = {
         async insertOne(doc) { docs.push(Object.assign({}, doc)); return { insertedId: doc.id }; },
         async findOne(query, opts) {
-          let matches = docs.filter((d) => {
-            for (const [k, v] of Object.entries(query)) {
-              if (d[k] !== v) return false;
-            }
-            return true;
-          });
+          let matches = docs.filter((d) => queryMatches(d, query));
           if (!matches.length) return null;
           if (opts && opts.sort) {
             const [sortKey, sortDir] = Object.entries(opts.sort)[0];
@@ -48,23 +66,7 @@ function createMockDb() {
           return Object.assign({}, matches[0]);
         },
         async updateOne(query, update) {
-          const match = docs.find((d) => {
-            for (const [k, v] of Object.entries(query)) {
-              const actual = dotGet(d, k);
-              if (v && typeof v === "object" && Array.isArray(v.$in)) {
-                if (!v.$in.includes(actual)) return false;
-              } else if (v && typeof v === "object" && v.$gt !== undefined) {
-                if (actual <= v.$gt) return false;
-              } else if (v && typeof v === "object" && v.$lte !== undefined) {
-                if (actual > v.$lte) return false;
-              } else if (v && typeof v === "object" && v.$exists !== undefined) {
-                if ((actual !== undefined) !== !!v.$exists) return false;
-              } else if (actual !== v) {
-                return false;
-              }
-            }
-            return true;
-          });
+          const match = docs.find((d) => queryMatches(d, query));
           if (!match) return { modifiedCount: 0, matchedCount: 0 };
           if (update.$set) { for (const [k, v] of Object.entries(update.$set)) dotSet(match, k, v); }
           if (update.$unset) { for (const k of Object.keys(update.$unset)) dotUnset(match, k); }
@@ -72,16 +74,7 @@ function createMockDb() {
           return { modifiedCount: 1, matchedCount: 1 };
         },
         find(query, opts) {
-          let res = docs.filter((d) => {
-            for (const [k, v] of Object.entries(query)) {
-              if (v && typeof v === "object" && v.$gt !== undefined) {
-                if (d[k] <= v.$gt) return false;
-              } else if (d[k] !== v) {
-                return false;
-              }
-            }
-            return true;
-          });
+          let res = docs.filter((d) => queryMatches(d, query));
           if (opts && opts.sort) {
             const [sortKey, sortDir] = Object.entries(opts.sort)[0];
             res.sort((a, b) => sortDir === -1 ? (b[sortKey] > a[sortKey] ? 1 : -1) : (a[sortKey] > b[sortKey] ? 1 : -1));
@@ -90,6 +83,10 @@ function createMockDb() {
             async toArray() { return res.map((d) => Object.assign({}, d)); }
           };
         },
+        /* Exposed so a test can age a row the way real time would.
+           Reaching past the API is the point: recoverStaleRuns keys on
+           updatedAt, and waiting ten real minutes is not a test. */
+        _docs: docs,
         async createIndex() { return true; },
         async deleteOne(query) {
           const idx = docs.findIndex((d) => {
@@ -267,6 +264,73 @@ async function check(name, fn) {
     });
     assert.strictEqual(await runStore.askQuestion(run.id, { id: "a", askedAt: "n", questions: [] }), true);
     assert.strictEqual(await runStore.askQuestion(run.id, { id: "b", askedAt: "n", questions: [] }), false);
+  });
+
+  console.log("\n── a run whose process is gone ─────────");
+
+  /* The lockout this exists to prevent: createRun takes activeOwnerKey
+     under a unique index, the keys are released only on a terminal
+     transition, and a killed process never makes one. Every later build
+     was then refused with RUN_ALREADY_ACTIVE, naming a run whose id the
+     client had already discarded. */
+  /** Age a run past the stale threshold, as real time would. */
+  const ageStale = (id, minutes) => {
+    const doc = mockDb.collection("agent_runs")._docs.find((d) => d.id === id);
+    assert.ok(doc, "no such run to age: " + id);
+    doc.updatedAt = new Date(Date.now() - (minutes || 11) * 60000).toISOString();
+  };
+
+  await check("a run that is still working is not swept", async () => {
+    const run = await runStore.createRun({
+      projectId: "pr_s1", owner: { userId: "u1" }, prompt: "p", mode: "auto", effort: "balanced"
+    });
+    await runStore.updateRun(run.id, { status: "running" });
+    const swept = await runStore.recoverStaleRuns();
+    assert.strictEqual(swept.length, 0, "swept a run that had just been touched");
+    assert.strictEqual((await runStore.getRun(run.id)).status, "running");
+  });
+
+  await check("an abandoned run is finalised and its owner is unlocked", async () => {
+    const owner = { userId: "u2" };
+    const run = await runStore.createRun({
+      projectId: "pr_s2", owner, prompt: "p", mode: "auto", effort: "balanced"
+    });
+    await runStore.updateRun(run.id, { status: "running" });
+    // As if the process died eleven minutes ago.
+    ageStale(run.id);
+
+    const swept = await runStore.recoverStaleRuns();
+    assert.strictEqual(swept.length, 1, "did not sweep an abandoned run");
+    const after = await runStore.getRun(run.id);
+    assert.ok(["partial", "failed"].includes(after.status), "status is " + after.status);
+    assert.strictEqual(after.activeOwnerKey, undefined, "the owner is still locked out");
+    assert.match(String(after.latestError), /stopped before finishing/);
+  });
+
+  /* recoverExpiredRuns cannot find these, and that is the whole reason
+     recoverStaleRuns exists: it matches leaseExpiresAt $lte now, and an
+     in-process run never takes a lease, so Mongo never matches it. */
+  await check("the lease sweep does not find a leaseless run", async () => {
+    const run = await runStore.createRun({
+      projectId: "pr_s3", owner: { userId: "u3" }, prompt: "p", mode: "auto", effort: "balanced"
+    });
+    await runStore.updateRun(run.id, { status: "running" });
+    ageStale(run.id);
+    assert.strictEqual((await runStore.recoverExpiredRuns()).length, 0,
+      "the lease sweep claimed a run that holds no lease");
+    assert.strictEqual((await runStore.recoverStaleRuns()).length, 1,
+      "the stale sweep missed it");
+  });
+
+  await check("touchRun keeps a working run out of the sweep", async () => {
+    const run = await runStore.createRun({
+      projectId: "pr_s4", owner: { userId: "u4" }, prompt: "p", mode: "auto", effort: "balanced"
+    });
+    await runStore.updateRun(run.id, { status: "running" });
+    ageStale(run.id);
+    await runStore.touchRun(run.id);
+    assert.strictEqual((await runStore.recoverStaleRuns()).length, 0,
+      "swept a run that had just heartbeated");
   });
 
   console.log("\n" + (failed === 0 ? "✓ ALL RUN-STORE TESTS PASSED (" + passed + ")" : "✗ " + failed + " FAILED, " + passed + " passed"));

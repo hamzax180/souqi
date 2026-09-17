@@ -4963,6 +4963,27 @@ function getConversationalFallback(prompt, history) {
   );
   const imagesBlock = buildImagesBlock(attachedImages);
 
+  /* Reap stale runs BEFORE createRun can be refused by the single-active
+     constraint.
+
+     recoverExpiredRuns() has existed since run-store was written and was
+     called by exactly one thing: the worker that is not deployed. So a
+     run killed by the host kept activeOwnerKey for ever — those keys are
+     released only on a terminal transition, and a killed process never
+     makes one — and every later build was refused with
+     RUN_ALREADY_ACTIVE, naming a run the client had already forgotten
+     the id of.
+
+     Opportunistic and non-fatal: a sweep that fails must not fail the
+     build, and the next request will try again. */
+  try {
+    // Two sweeps, because they find different things: expired LEASES are
+    // worker runs, and stale updatedAt with no lease is an in-process run
+    // whose function was terminated.
+    await runStore.recoverExpiredRuns();
+    await runStore.recoverStaleRuns();
+  } catch (e) { console.error("[codeagent] stale-run sweep failed:", e && e.message); }
+
   /* An idempotency key, so a double-submit is one run rather than two.
      run-store has had the unique index and getRunByIdempotency since it
      was written, and this call has never passed a key — so the index
