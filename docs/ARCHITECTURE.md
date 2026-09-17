@@ -61,7 +61,7 @@ it connects the database and exports the app, and otherwise it listens on
 
 | Store | Holds | Where |
 |---|---|---|
-| MongoDB Atlas | projects, revisions, users, sessions, usage — **and uploaded image bytes when S3 is unset** | the platform |
+| MongoDB Atlas | projects, revisions, users, sessions, usage — **and every binary asset when S3 is unset**: uploaded photos and a published site's images and fonts, all in one content-addressed blob store | the platform |
 | Postgres `postgres` | deployments, domains, hosts, per-project env — **and source archives when S3 is unset** | the plane |
 | Postgres `userdb` | the customer's own application data | the plane, a **separate cluster** on an internal dead-end network the worker reaches by `docker exec`, never over a network |
 | S3 / R2 | uploads and source archives, when configured | external |

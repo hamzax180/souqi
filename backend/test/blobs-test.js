@@ -212,6 +212,55 @@ const reset = () => { db._reset(); store.objects.clear(); store.deleted.length =
       "the URL promises these are immutable for a year; a rewrite would serve stale bytes for ever");
   });
 
+  console.log("\nwhole objects the server already holds");
+
+  /* A published site's assets used to be base64 on the project document —
+     which is why publish carries a 12MB cap under a 16MB BSON ceiling and
+     a comment saying nothing bounds what the model could reference. One
+     site with a few photographs in it reaches that, and the failure is a
+     publish that refuses rather than a page that loads slowly. */
+  await ok("put() is content-addressed, so republishing an unchanged asset stores nothing twice", async () => {
+    reset();
+    const bytes = Buffer.from("PNGDATA-abcdef", "utf8");
+    const a = await blobs.put(bytes, { ext: "png", contentType: "image/png", persist: true });
+    const b = await blobs.put(bytes, { ext: "png", contentType: "image/png", persist: true });
+    assert.strictEqual(a.ok && b.ok, true);
+    assert.strictEqual(a.key, b.key, "the key is the hash — identical bytes must land on it");
+    assert.strictEqual(db.collection("blobs")._rows().length, 1, "the same asset was stored twice");
+    assert.match(a.key, /^u\/[0-9a-f]{32}\.png$/, "a published asset must be shaped like every other key");
+  });
+
+  await ok("different bytes get a different key", async () => {
+    reset();
+    const a = await blobs.put(Buffer.from("one"), { ext: "png" });
+    const b = await blobs.put(Buffer.from("two"), { ext: "png" });
+    assert.notStrictEqual(a.key, b.key);
+  });
+
+  await ok("a published asset does not expire", async () => {
+    reset();
+    const p = await blobs.put(Buffer.from("hero-image"), { ext: "jpg", persist: true });
+    const row = db.collection("blobs")._rows().find((r) => r.key === p.key);
+    assert.strictEqual(row.expiresAt, null,
+      "a published site cannot have its images swept out from under it 24h later");
+  });
+
+  await ok("publishing an asset that was a draft upload makes it permanent", async () => {
+    reset();
+    const bytes = Buffer.from("logo-bytes");
+    await blobs.put(bytes, { ext: "png" });                    // draft: expires
+    const first = db.collection("blobs")._rows()[0];
+    assert.ok(first.expiresAt, "an unused upload must still expire");
+    await blobs.put(bytes, { ext: "png", persist: true });     // now published
+    assert.strictEqual(db.collection("blobs")._rows()[0].expiresAt, null);
+  });
+
+  await ok("put() refuses an empty object rather than storing a hole", async () => {
+    reset();
+    const r = await blobs.put(Buffer.alloc(0), { ext: "png" });
+    assert.strictEqual(r.ok, false);
+  });
+
   console.log("\nreading across both stores — the switch");
 
   await ok("a miss in the database falls through to the bucket", async () => {

@@ -265,6 +265,54 @@ async function finalize(key, opts) {
 }
 
 /**
+ * Store a whole object in one go, for bytes the server already holds.
+ *
+ * The upload path arrives in slices because a browser is on the other end
+ * of a 4.5MB request cap; a published build is already here, so faking
+ * parts for it would be ceremony. Content-addressed: the key IS the hash,
+ * so re-publishing an unchanged asset writes nothing and two projects
+ * using the same logo share one copy.
+ *
+ * `persist` because a published site's assets outlive the 24h sweep by
+ * definition — nobody publishes a site that is meant to stop working
+ * tomorrow.
+ */
+async function put(buf, opts) {
+  const o = opts || {};
+  const bytes = Buffer.isBuffer(buf) ? buf : Buffer.from(buf || []);
+  if (!bytes.length) return { ok: false, error: "empty object" };
+
+  const sha = crypto.createHash("sha256").update(bytes).digest("hex");
+  const ext = String(o.ext || "bin").toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 5) || "bin";
+  const key = "u/" + sha.slice(0, 32) + "." + ext;
+
+  if (backend() === "s3") {
+    try {
+      const res = await s3.signedFetch("PUT", key, bytes, { contentType: o.contentType });
+      if (!res.ok) return { ok: false, error: "storage rejected the object (" + res.status + ")" };
+      return { ok: true, key, bytes: bytes.length, sha256: sha };
+    } catch (e) { return { ok: false, error: e.message }; }
+  }
+
+  const blobs = blobsCol();
+  if (!blobs) return { ok: false, error: "no blob store" };
+  const now = Date.now();
+  await blobs.updateOne(
+    { key: key },
+    { $setOnInsert: {
+        key: key, contentType: String(o.contentType || "application/octet-stream"),
+        bytes: bytes.length, sha256: sha, data: bytes, createdAt: new Date(now),
+        expiresAt: o.persist ? null : new Date(now + BLOB_TTL_MS)
+      } },
+    { upsert: true }
+  );
+  // A key that already existed keeps whatever expiry it had, so an asset
+  // first seen as a draft upload is made permanent when it is published.
+  if (o.persist) await blobs.updateOne({ key: key }, { $set: { expiresAt: null } });
+  return { ok: true, key, bytes: bytes.length, sha256: sha };
+}
+
+/**
  * Size and type without the bytes.
  *
  * The projection excluding `data` is the point: answering a HEAD, or a
@@ -368,6 +416,6 @@ module.exports = {
   init, ensureIndexes,
   backend, available, maxBytes, partBytes,
   newKey, publicUrl, plan,
-  putPart, finalize, head, readRange, read, remove, persist,
+  put, putPart, finalize, head, readRange, read, remove, persist,
   MAX_BYTES_DB, PART_BYTES, PART_TTL_MS, BLOB_TTL_MS
 };
