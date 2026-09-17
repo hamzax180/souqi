@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=4.3">
+<link rel="stylesheet" href="/styles/pages/code.css?v=4.4">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -2464,7 +2464,34 @@
         qb.className = "ag-queue-banner";
         agForm.insertBefore(qb, agForm.firstChild);
       }
-      qb.innerHTML = '<span>' + buildQueue.length + (buildQueue.length === 1 ? ' prompt queued' : ' prompts queued') + ' — will run next</span><button type="button" id="agClearQueue">Cancel queue</button>';
+      /* The queue shows what is waiting, not just how much. A count
+         alone ("1 prompt queued") makes you remember what you typed. */
+      const esc2 = (s) => String(s).replace(/[&<>"']/g, (c) =>
+        ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+      qb.innerHTML =
+        '<div class="qb-head">' +
+          '<span class="qb-label">Queued</span>' +
+          (buildQueue.length > 1 ? '<span class="qb-count">' + buildQueue.length + '</span>' : '') +
+        '</div>' +
+        '<div class="qb-list">' +
+          buildQueue.map((p) => '<div class="qb-item">' + esc2(p) + '</div>').join('') +
+        '</div>' +
+        '<div class="qb-actions">' +
+          '<button type="button" id="agQueueNow" class="qb-now">Send now</button>' +
+          '<button type="button" id="agClearQueue" class="qb-cancel">Cancel</button>' +
+        '</div>';
+
+      const now = $("agQueueNow");
+      if (now) {
+        now.onclick = function () {
+          /* Stop the current turn and let it go. cancelTurn aborts the
+             run, which unwinds runTurn into its finally — and the finally
+             already drains the queue, so the waiting prompt starts on its
+             own rather than through a second path that could disagree
+             with that one about what runs next. */
+          if (building) cancelTurn();
+        };
+      }
       const cq = $("agClearQueue");
       if (cq) {
         cq.onclick = function() {
@@ -5118,8 +5145,14 @@
     if (projectId && !signedIn) { lockForEdit(); return; }
 
     if (building) {
+      /* Queued, not said. It used to go straight into the transcript as
+         a bubble marked "(Queued)", which reads as a message that has
+         been sent — sitting above the agent's reply to the message
+         before it, in the wrong place in the conversation, for as long
+         as the current turn lasts. It belongs in the queue container
+         until it actually runs; runTurn puts it in the transcript then,
+         which is where it happened. */
       buildQueue.push(v);
-      sayUser(v, true);
       agInput.value = ""; agInput.style.height = "auto";
       updateComposerSendButton();
       updateQueueBanner();

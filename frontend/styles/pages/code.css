@@ -466,8 +466,45 @@
   .ag-interrupt-btn{display:inline-flex;align-items:center;gap:6px;background:rgba(239,68,68,0.1);color:#ef4444;border:1px solid rgba(239,68,68,0.3);border-radius:999px;padding:4px 12px;font-size:.78rem;font-weight:600;cursor:pointer;transition:all .16s ease;flex:none}
   .ag-interrupt-btn:hover{background:#ef4444;color:#fff;border-color:#ef4444;box-shadow:0 4px 12px rgba(239,68,68,0.35)}
   .ag-interrupt-btn svg{width:12px;height:12px;fill:currentColor}
-  .ag-queue-banner{display:flex;align-items:center;justify-content:space-between;background:rgba(59,130,246,0.12);border:1px solid rgba(59,130,246,0.3);color:var(--ink);border-radius:10px;padding:6px 14px;margin-bottom:8px;font-size:.82rem;font-weight:600}
-  .ag-queue-banner button{border:0;background:none;color:#ef4444;font-size:.78rem;font-weight:700;cursor:pointer;text-decoration:underline;padding:0;margin-left:10px}
+  /* The queue container.
+
+     It was a one-line count with a cancel link, and the prompt itself
+     went into the transcript as a bubble marked "(Queued)" — a message
+     shown as sent, in the wrong place in the conversation, for as long
+     as the running turn lasted. The text lives here now, and the
+     container carries the two things you can do about it. */
+  .ag-queue-banner{
+    background:var(--paper-2);border:1px solid var(--line);color:var(--ink);
+    border-radius:12px;padding:10px 12px 9px;margin-bottom:8px;
+    display:flex;flex-direction:column;gap:7px;
+    animation:sqFadeUp .2s var(--ease) both;
+  }
+  .qb-head{display:flex;align-items:center;gap:7px}
+  .qb-label{
+    font-size:.68rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+    color:var(--mut);
+  }
+  .qb-count{
+    font-size:.66rem;font-weight:700;line-height:1;
+    background:var(--accent);color:#fff;border-radius:999px;padding:3px 6px;
+  }
+  .qb-list{display:flex;flex-direction:column;gap:4px}
+  /* Wraps to three lines then clips: enough to recognise what you typed,
+     not so much that the queue outgrows the composer under it. */
+  .qb-item{
+    font-size:.85rem;line-height:1.45;color:var(--ink-2);
+    display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;
+  }
+  .qb-actions{display:flex;align-items:center;gap:8px;margin-top:1px}
+  .ag-queue-banner button{
+    border:1px solid var(--line);background:none;border-radius:8px;
+    font-size:.78rem;font-weight:600;cursor:pointer;padding:4px 10px;
+    color:var(--ink-2);transition:background .15s,border-color .15s,color .15s;
+  }
+  .ag-queue-banner button:hover{border-color:var(--line-hover);background:rgba(var(--wash-rgb),.05)}
+  .qb-now{color:var(--accent) !important;border-color:var(--accent) !important}
+  .qb-now:hover{background:rgba(26,166,223,.1) !important}
+  .qb-cancel:hover{color:#ef4444 !important;border-color:rgba(239,68,68,.5) !important}
   /* Google Gemini 3-Dots Thinking Indicator (Warm Blue Edition) */
   /* Google Gemini 3-Dots Thinking Indicator (Clean Blue 3s Alternating Cycle) */
   .ag-th-gemini {
