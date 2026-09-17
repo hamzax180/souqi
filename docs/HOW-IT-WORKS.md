@@ -128,6 +128,47 @@ reach even if `validateReadPath` were bypassed. It is still refused outside
 environment and the check should not depend on today's storage happening to
 be a plain object.
 
+### Where a run actually executes
+
+Two places, and the route decides per request. With
+`CODEAGENT_DURABLE_RUNS=1` **and** a fresh heartbeat in `agent_workers`, the
+run is left `queued` and the worker on the VPS (`infra/agent/`) claims it with
+a lease — there it can take the thirty minutes its effort level promises
+instead of being terminated at 300 seconds. Both conditions, because a worker
+that is configured but dead would otherwise leave every run queued for ever.
+Without both, the same `agent-runner.js` runs it in process on Vercel.
+
+The two paths differ in exactly one thing, and it is the thing that bit:
+**who writes the terminal transition.**
+
+- **In process** there is no finalizer. `executeRun` writes the status itself
+  and the route's own `.then()` writes the revision and the turn afterwards.
+- **On the worker** `worker-service.js` supplies a finalizer, and it moves the
+  run, the project head, the revision, the turn and the usage record in one
+  transaction — under a fencing check that the run is still leased to this
+  worker at this generation. It also releases `activeOwnerKey`, which carries
+  a unique partial index: a finished run that keeps it refuses that owner's
+  next build for ever.
+
+For a year the runner never called the finalizer that was being passed to it,
+so a worker run marked itself `succeeded` and left the project empty. Both
+halves are covered now — `agent-runner-test.js` for the seam, and
+`worker-service-test.js` for what the finalizer must do once it is reached.
+
+Only one of them may write the ending. If you add a terminal exit to
+`executeRun`, route it through `settle()`.
+
+### Watching a run
+
+`GET /api/codeagent/runs/:id/events` is SSE, and it is **bounded at 45
+seconds** — an unbounded stream on a serverless function is killed mid-frame,
+which a client cannot tell from a truncated event. It ends itself instead, and
+the browser reopens from the cursor it last parsed (`?after=` or the
+`Last-Event-ID` header; frames carry `id:` lines so the browser's own
+reconnect works too). It stops on any of the five terminal statuses —
+`succeeded`, `failed`, `cancelled`, `partial`, `blocked`. Watching only the
+first three left it polling for ever on the other two.
+
 ### What the model may write
 
 ```
