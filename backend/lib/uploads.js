@@ -41,7 +41,16 @@ const MAX_DESCRIPTION = 900;
 const mem = { uploads: new Map() };
 
 let getMasterDb = () => null;
-function init(deps) { getMasterDb = deps.getMasterDb; }
+/* Fired by attachToProject, so whatever stores the BYTES can make them
+   permanent at the same instant this row does. A hook rather than a call
+   beside each call site: there are two today and the third one to be
+   written would silently produce images that work for 24 hours and then
+   disappear from a published site. */
+let onPersist = null;
+function init(deps) {
+  getMasterDb = deps.getMasterDb;
+  onPersist = typeof deps.onPersist === "function" ? deps.onPersist : null;
+}
 
 const id = (prefix) => prefix + "_" + crypto.randomBytes(8).toString("base64url");
 
@@ -129,6 +138,32 @@ async function patch(uploadId, fields) {
   return get(uploadId);
 }
 
+/**
+ * Take the row from "pending" to "verifying", once, atomically.
+ *
+ * /complete used to guard with a plain `if (row.status === "ready")`,
+ * which is a read followed by a write and therefore a race. Against a
+ * bucket a lost race was harmless — both callers re-read the same object
+ * and reached the same answer. Against the database it destroys the
+ * upload: the winner stitches the parts and deletes them, and the loser
+ * then finds no parts and marks a perfectly good image failed. A
+ * double-clicked button was enough.
+ *
+ * "verifying" is inert to every consumer, because listForOwner already
+ * filters on status === "ready".
+ */
+async function claimForVerify(uploadId) {
+  const c = col();
+  if (c) {
+    const r = await c.updateOne({ id: uploadId, status: "pending" }, { $set: { status: "verifying" } });
+    return (r.modifiedCount || 0) === 1;
+  }
+  const row = mem.uploads.get(uploadId);
+  if (!row || row.status !== "pending") return false;
+  row.status = "verifying";
+  return true;
+}
+
 /** The object was fetched back, sniffed and measured — it is what it said. */
 async function markReady(uploadId, measured) {
   return patch(uploadId, {
@@ -192,25 +227,37 @@ async function listForOwner(uploadIds, owner) {
  */
 async function attachToProject(uploadIds, projectId) {
   const ids = (Array.isArray(uploadIds) ? uploadIds : []).filter(Boolean);
-  if (!ids.length || !projectId) return { attached: 0 };
+  if (!ids.length || !projectId) return { attached: 0, keys: [] };
   const set = { projectId: projectId, expiresAt: null, lastUsedAt: new Date().toISOString() };
   const c = col();
+  let attached = 0;
+  let keys = [];
   if (c) {
     // projectId is set only if unset: the first project to use an image owns
     // the association, so re-using one in a second project cannot silently
     // re-point the first project's record.
     const r = await c.updateMany({ id: { $in: ids }, projectId: null }, { $set: set });
     await c.updateMany({ id: { $in: ids } }, { $set: { expiresAt: null, lastUsedAt: set.lastUsedAt } });
-    return { attached: r.modifiedCount || 0 };
+    attached = r.modifiedCount || 0;
+    const rows = await c.find({ id: { $in: ids } }, { projection: { _id: 0, key: 1 } }).toArray();
+    keys = rows.map((x) => x.key).filter(Boolean);
+  } else {
+    for (const i of ids) {
+      const row = mem.uploads.get(i);
+      if (!row) continue;
+      if (!row.projectId) { row.projectId = projectId; attached++; }
+      row.expiresAt = null; row.lastUsedAt = set.lastUsedAt;
+      if (row.key) keys.push(row.key);
+    }
   }
-  let n = 0;
-  for (const i of ids) {
-    const row = mem.uploads.get(i);
-    if (!row) continue;
-    if (!row.projectId) { row.projectId = projectId; n++; }
-    row.expiresAt = null; row.lastUsedAt = set.lastUsedAt;
+  /* The bytes have to outlive the sweep too, and this is the one moment
+     both facts are known. Soft: an image whose blob expiry could not be
+     cleared is a problem for tomorrow, not a reason to fail the build the
+     person is waiting on. */
+  if (onPersist && keys.length) {
+    try { await onPersist(keys); } catch (e) { /* see above */ }
   }
-  return { attached: n };
+  return { attached: attached, keys: keys };
 }
 
 /**
@@ -265,7 +312,7 @@ async function remove(uploadId) {
 
 module.exports = {
   init, ensureIndexes, owns,
-  create, get, patch, markReady, markFailed, setDescription,
+  create, get, patch, claimForVerify, markReady, markFailed, setDescription,
   listForOwner, listForProject, attachToProject, claimAnon, countSince, remove,
   TTL_PENDING_MS, MAX_DESCRIPTION
 };

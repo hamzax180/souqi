@@ -1491,6 +1491,18 @@
      Falls back to the original file if anything here fails. A photo that
      uploads at full size is worse than one that does not upload at all only
      in theory. */
+  /* SIZE triggers this as well as dimensions, and that addition is what
+     makes storing the bytes in the database affordable at all.
+
+     Dimensions alone missed the common case: a 1500px photo is under the
+     2000px gate and can still be six megabytes, so it went up untouched.
+     With no S3 bucket configured the bytes go into MongoDB and are served
+     back through a function, where the cap is 2MB — so that photo was
+     refused outright at a limit it had no way to see. Re-encoding it lands
+     it around 300KB and it simply works. */
+  const RESIZE_ABOVE_BYTES = 1.5 * 1024 * 1024;
+  const LONG_EDGE = 1600;
+
   function downscale(file) {
     return new Promise((resolve) => {
       if (!/^image\/(png|jpeg|webp)$/.test(file.type) || file.size < 900 * 1024) return resolve(file);
@@ -1498,8 +1510,12 @@
       const im = new Image();
       im.onload = () => {
         const long = Math.max(im.width, im.height);
-        if (long <= 2000) { URL.revokeObjectURL(url); return resolve(file); }
-        const s = 2000 / long;
+        const tooBig = file.size > RESIZE_ABOVE_BYTES;
+        if (long <= LONG_EDGE && !tooBig) { URL.revokeObjectURL(url); return resolve(file); }
+        // A file that is merely heavy keeps its pixels; one that is also
+        // huge loses them. Either way it gets re-encoded, which is where
+        // most of the saving comes from.
+        const s = Math.min(1, LONG_EDGE / long);
         const c = document.createElement("canvas");
         c.width = Math.round(im.width * s); c.height = Math.round(im.height * s);
         c.getContext("2d").drawImage(im, 0, 0, c.width, c.height);
@@ -1594,11 +1610,34 @@
       const sig = await signed.json().catch(() => ({}));
       if (!signed.ok) throw new Error(sig.error || "could not start the upload");
 
-      /* Straight to the bucket. The Content-Type must be exactly what was
-         signed, or the store rejects it — that pinning is what stops a
-         leaked URL being used to host something else. */
-      const put = await fetch(sig.putUrl, { method: "PUT", headers: sig.headers, body: file });
-      if (!put.ok) throw new Error("the upload did not complete");
+      /* Two ways to send the bytes, and the server picks.
+
+         With a bucket configured it is one PUT straight there, exactly as
+         before — the Content-Type must be what was signed, and that pinning
+         is what stops a leaked URL hosting something else.
+
+         With no bucket the bytes go into the database instead, which means
+         they have to pass through the function, and Vercel refuses a request
+         body over about 4.5MB. So the file is sliced and each slice PUT to
+         its own index. Serially: the parts are order-independent so they
+         could race, but a failure that names one part is worth more than a
+         slightly faster upload, and it holds one invocation per person. */
+      const up = sig.upload || { mode: "put" };
+      if (up.mode === "parts") {
+        for (let i = 0; i < up.parts; i++) {
+          const slice = file.slice(i * up.partSize, Math.min(file.size, (i + 1) * up.partSize));
+          const r = await fetch(up.partUrl + i, {
+            method: "PUT", headers: { "Content-Type": "application/octet-stream" }, body: slice
+          });
+          if (!r.ok) {
+            const why = await r.json().catch(() => ({}));
+            throw new Error(why.error || "the upload did not complete");
+          }
+        }
+      } else {
+        const put = await fetch(sig.putUrl, { method: "PUT", headers: sig.headers, body: file });
+        if (!put.ok) throw new Error("the upload did not complete");
+      }
 
       const done = await fetch("/api/uploads/" + encodeURIComponent(sig.id) + "/complete", { method: "POST" });
       const fin = await done.json().catch(() => ({}));

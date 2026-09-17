@@ -78,6 +78,24 @@ function getMasterDb() {
   return db || null;
 }
 
+/**
+ * A sibling database on the SAME client — currently only the blob store.
+ *
+ * Image bytes are megabytes each and are read once and never queried. Left
+ * in the master database they share WiredTiger's cache with projects,
+ * sessions and agent runs, so a handful of photo views evicts the working
+ * set that every request depends on. A separate database keeps them out of
+ * it while costing no extra connection: the pool, the credentials and the
+ * handshake are all the one this module already made.
+ *
+ * Null before connect(), exactly like getMasterDb, because callers must
+ * keep tolerating "no database yet" rather than throwing at import time.
+ */
+function getSiblingDb(suffix) {
+  if (!client || !db) return null;
+  return client.db(db.databaseName + "_" + String(suffix || "").replace(/[^a-z0-9_]/gi, ""));
+}
+
 async function close() {
   if (client) await client.close();
   client = null;
@@ -92,4 +110,4 @@ async function withTransaction(fn) {
   finally { await session.endSession(); }
 }
 
-module.exports = { connect, getDb, getMasterDb, close, withTransaction };
+module.exports = { connect, getDb, getMasterDb, getSiblingDb, close, withTransaction };

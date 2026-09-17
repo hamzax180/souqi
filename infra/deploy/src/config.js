@@ -92,6 +92,10 @@ const cfg = {
     accessKey: process.env.S3_ACCESS_KEY || "",
     secretKey: process.env.S3_SECRET_KEY || ""
   },
+  // auto | s3 | pg. "pg" is the reversible switch: it stops writing to the
+  // bucket while reads still fall through to it. Unsetting the credentials
+  // is the destructive operation, not this.
+  sourceStore: process.env.SOURCE_STORE || "auto",
 
   hetzner: {
     token: process.env.HETZNER_TOKEN || "",
@@ -146,7 +150,12 @@ function assertProductionReady() {
     problems.push("CONTROL_DOMAIN starts with app- and could collide with a generated deployment hostname");
   }
   if (!cfg.s3.bucket) {
-    problems.push("S3_BUCKET is unset — source archives would live only on the VM");
+    /* No longer "only on the VM" — with no bucket the archive goes into
+       Postgres, which the nightly backup already covers. Still worth
+       saying, because it moves a cost rather than removing one: the dump
+       now carries every customer's source, so its size and its
+       sensitivity both change category. */
+    problems.push("S3_BUCKET is unset — source archives fall back to Postgres, so they share the database's backup, its size and its access");
   }
   return problems;
 }

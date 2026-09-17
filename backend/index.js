@@ -24,7 +24,7 @@ const express = require("express");
 const cors = require("cors");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const { connect, getMasterDb } = require("./db"); // default master MongoDB connection
+const { connect, getMasterDb, getSiblingDb } = require("./db"); // default master MongoDB connection
 const { testConnection, seedWorkspaceDatabase, dbAdapter } = require("./db-adapters");
 const { idForCollection } = require("./lib/ids");
 const { httpError, errorHandler } = require("./lib/errors");
@@ -109,6 +109,15 @@ app.use((req, res, next) => {
      isolation, which is why this survived: the damage is done four hundred
      lines earlier, by a middleware that runs on everything. */
   if (req.path === "/api/stripe/webhook") return next();
+
+  /* An upload part is raw image bytes and must reach its own express.raw()
+     with the stream unread. express.json() matches on content-type and
+     would pass an octet-stream through untouched anyway — but relying on
+     that is precisely the assumption that handed verifyWebhook an
+     [object Object] above, and a client that sends no Content-Type at all
+     would land here as a parse error nobody could act on. Stated, not
+     inferred. */
+  if (/^\/api\/uploads\/[^/]+\/part\/\d+$/.test(req.path)) return next();
 
   // /api/codeagent/build: a base64-encoded logo upload (see attachLogoIfPresent)
   // can legitimately run to ~4MB even after the client's own 2MB cap on the
@@ -1704,8 +1713,18 @@ const INDUSTRY_LABELS = {
 const projects = require("./lib/projects");
 const anon = require("./lib/anon");
 const uploads = require("./lib/uploads");
+const blobs = require("./lib/storage/blobs");
 projects.init({ getMasterDb });
-uploads.init({ getMasterDb });
+/* The bytes live in a sibling database, not beside projects and sessions:
+   they are megabytes each, read once and never queried, and sharing the
+   cache with the working set means a few photo views evict everything a
+   request actually needs. */
+blobs.init({ getMasterDb, getBlobDb: () => getSiblingDb("blobs") });
+/* onPersist rather than a call beside each attachToProject: the bytes
+   have to stop expiring at the same instant the row does, and there are
+   two call sites today. The third one written would produce images that
+   work for a day and then vanish from a published site. */
+uploads.init({ getMasterDb, onPersist: (keys) => blobs.persist(keys) });
 anon.init({ JWT_SECRET });
 
 const projectLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, key: (req) => req.ip || "" });
@@ -6514,6 +6533,7 @@ app.post("/api/codeagent/build", codeAgentLimiter, async (req, res) => {
     try { await projects.ensureIndexes(); } catch(e) {}
     try { await codeAgentUsage.ensureIndexes(); } catch(e) {}
     try { await uploads.ensureIndexes(); } catch(e) {}
+    try { await blobs.ensureIndexes(); } catch(e) {}
 
     // Tell the client to start preview (client-side WebContainer handles this, or standalone mobile fallback)
     sseFrame(res, "result", {

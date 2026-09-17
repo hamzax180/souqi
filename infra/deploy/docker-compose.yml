@@ -176,6 +176,11 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-}
       S3_REGION: ${S3_REGION:-auto}
+      # Must reach BOTH services. If the api and the worker disagree about
+      # where an archive went, a restore looks in the wrong store and a
+      # deployment that was archived perfectly well cannot be rebuilt.
+      SOURCE_STORE: ${SOURCE_STORE:-auto}
+      SOURCE_ARCHIVE_MAX_BYTES: ${SOURCE_ARCHIVE_MAX_BYTES:-}
     volumes:
       # Shared with the worker so an upload lands where the build reads it.
       - builds:/opt/platform/builds
@@ -216,6 +221,11 @@ services:
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-}
       S3_REGION: ${S3_REGION:-auto}
+      # Must reach BOTH services. If the api and the worker disagree about
+      # where an archive went, a restore looks in the wrong store and a
+      # deployment that was archived perfectly well cannot be rebuilt.
+      SOURCE_STORE: ${SOURCE_STORE:-auto}
+      SOURCE_ARCHIVE_MAX_BYTES: ${SOURCE_ARCHIVE_MAX_BYTES:-}
     volumes:
       - builds:/opt/platform/builds
       # THE trust boundary of this whole system.

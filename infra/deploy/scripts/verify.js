@@ -262,13 +262,47 @@ async function main() {
     // Asserting isConfigured() === false here would only be testing whose
     // machine this ran on. What matters is that both callers ASK before
     // they use storage, so a host without a bucket still deploys.
+    //
+    // The question they ask MOVED: isConfigured() still means exactly "S3
+    // is configured", and the archive no longer needs S3 — without it the
+    // source goes to Postgres. So the api must gate on available(), and
+    // gating it on isConfigured() again would silently put the source back
+    // on one disk while this test carried on passing.
     assert.strictEqual(typeof objects.isConfigured, "function");
+    assert.strictEqual(typeof objects.available, "function");
     const api = fs.readFileSync(path.join(__dirname, "..", "src", "api", "server.js"), "utf8");
-    assert.ok(/objects\.isConfigured\(\)/.test(api),
-      "the upload uses object storage unconditionally, so a host without a bucket would fail");
+    assert.ok(/objects\.available\(\)/.test(api),
+      "the archive step is gated on isConfigured(), so a host without a bucket never archives at all");
     const pipe = fs.readFileSync(path.join(__dirname, "..", "src", "worker", "pipeline.js"), "utf8");
-    assert.ok(/isConfigured\(\)/.test(pipe) || /skipped/.test(pipe) || /source_key/.test(pipe),
+    assert.ok(/skipped/.test(pipe) || /source_key/.test(pipe),
       "the worker assumes an archive exists");
+  });
+  check("an archive can be read back from either store", () => {
+    // getSource falling through to the bucket is the entire migration
+    // story: once S3 is turned on, everything written to Postgres before
+    // it must still restore, or old deployments become unrebuildable.
+    const src = fs.readFileSync(path.join(__dirname, "..", "src", "storage", "objects.js"), "utf8");
+    const from = src.indexOf("async function getSource");
+    const body = src.slice(from, src.indexOf("async function deleteSource"));
+    assert.ok(/source_archives/.test(body), "getSource cannot read the Postgres archive");
+    assert.ok(/signedFetch\("GET"/.test(body), "getSource no longer falls through to the bucket");
+  });
+  check("both containers agree on where archives go", () => {
+    // The api writes the archive and the worker reads it back. If only one
+    // of them is told SOURCE_STORE they can disagree, and the restore looks
+    // in a store that was never written to — same failure the S3 credentials
+    // check below exists for.
+    const y = fs.readFileSync(path.join(__dirname, "..", "docker-compose.yml"), "utf8");
+    const hits = (y.match(/SOURCE_STORE:/g) || []).length;
+    assert.ok(hits >= 2, "SOURCE_STORE reaches " + hits + " service(s); the api and the worker both need it");
+  });
+  check("the source archive table is in the schema, and cascades", () => {
+    const sql = fs.readFileSync(path.join(__dirname, "..", "db", "schema.sql"), "utf8");
+    assert.ok(/CREATE TABLE IF NOT EXISTS source_archives/.test(sql), "source_archives is missing");
+    assert.ok(/data\s+BYTEA NOT NULL/.test(sql), "the archive column is not BYTEA");
+    const block = sql.slice(sql.indexOf("CREATE TABLE IF NOT EXISTS source_archives"));
+    assert.ok(/ON DELETE CASCADE/.test(block.slice(0, block.indexOf(");"))),
+      "without the cascade, deleting a project leaves that customer's source in the database");
   });
   check("archive keys cannot escape their prefix", () => {
     assert.strictEqual(objects.keyFor("dep_x; rm -rf /"), "sources/dep_xrm-rf.json.gz");

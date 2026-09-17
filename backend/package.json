@@ -38,7 +38,7 @@
     "test:context": "node test/context-test.js",
     "build:agent": "node scripts/build-agent.js",
     "typecheck": "tsc -p agent-src/tsconfig.json --noEmit",
-    "ci": "npm run check:nlu && npm run lint && npm test && npm run test:nlu && npm run test:agent && npm run test:project && npm run test:sse && npm run test:refine && npm run test:microclaim && npm run test:isolation && npm run test:secrets && npm run test:stripe && npm run test:ai-client && npm run test:model-loop && npm run test:preflight && npm run test:memory && npm run test:run-store && npm run test:agent-runner && npm run test:worker-service && npm run test:tool-registry && npm run test:agent-state && npm run test:context && npm run test:wiring && npm run test:turn-history && npm run test:csp && npm run test:voice && npm run smoke-test",
+    "ci": "npm run check:nlu && npm run lint && npm test && npm run test:nlu && npm run test:agent && npm run test:project && npm run test:sse && npm run test:refine && npm run test:microclaim && npm run test:isolation && npm run test:secrets && npm run test:stripe && npm run test:ai-client && npm run test:model-loop && npm run test:preflight && npm run test:memory && npm run test:run-store && npm run test:agent-runner && npm run test:worker-service && npm run test:tool-registry && npm run test:agent-state && npm run test:context && npm run test:wiring && npm run test:turn-history && npm run test:blobs && npm run test:uploads && npm run test:uploads-routes && npm run test:storage && npm run test:csp && npm run test:voice && npm run smoke-test",
     "test:stripe": "node test/stripe-test.js",
     "test:secrets": "node test/secretscan-test.js",
     "test:csp": "node test/csp-test.js",
@@ -61,7 +61,8 @@
     "test:claim": "node test/claim-test.js",
     "test:worker-service": "node test/worker-service-test.js",
     "test:wiring": "node test/wiring-test.js",
-    "test:turn-history": "node test/turn-history-test.js"
+    "test:turn-history": "node test/turn-history-test.js",
+    "test:blobs": "node test/blobs-test.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.122.0",

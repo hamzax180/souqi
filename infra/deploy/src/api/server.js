@@ -373,7 +373,12 @@ app.post("/deployments/:id/source", requireUser, express.json({ limit: "24mb" })
        instead, so "this is only on the VM" is visible rather than
        assumed. */
     let archived = null;
-    if (objects.isConfigured()) {
+    /* available(), not isConfigured(). The archive no longer needs a bucket
+       — with none configured it goes into Postgres, where the backup that
+       already runs covers it. Gating on isConfigured() here would leave the
+       Postgres path unreachable and the source on one disk, which is the
+       exact thing this step exists to prevent. */
+    if (objects.available()) {
       const put = await objects.putSource(dep.id, files);
       if (put.ok) {
         await query("UPDATE deployments SET source_key=$2 WHERE id=$1", [dep.id, put.key]);

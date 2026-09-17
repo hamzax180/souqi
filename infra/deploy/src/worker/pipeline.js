@@ -126,11 +126,14 @@ async function ensureSource(dep, sourceDir) {
   if (present) return { ok: true, fromArchive: false };
 
   if (!dep.source_key) {
+    /* One message now, because the old second branch became false: with no
+       bucket the archive goes to Postgres, so "object storage is not
+       configured, so it cannot be restored" would send someone to check S3
+       credentials over a deployment that either predates archiving or had
+       its archive step fail — neither of which S3 has anything to do with. */
     return {
       ok: false,
-      error: objects.isConfigured()
-        ? "the source for this deployment is gone — it was never archived, so there is nothing to restore"
-        : "the source for this deployment is gone from this host, and object storage is not configured, so it cannot be restored"
+      error: "the source for this deployment is gone — no archive was recorded for it, so there is nothing to restore"
     };
   }
 

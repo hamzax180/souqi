@@ -65,6 +65,24 @@
           "value": "Cookie, Origin"
         }
       ]
+    },
+    {
+      "_comment": "MUST STAY AFTER THE /(api|auth) BLOCK ABOVE. Vercel applies every matching headers block and the later one wins, so moving this up restores no-store on images and nothing visibly breaks - the bill does. An uploaded image is immutable (128 random bits in the key, never rewritten under it) and is fetched on every view of every published site; when the bytes live in MongoDB rather than a bucket, no-store makes each of those a function invocation and a full read. Vary: Cookie is dropped deliberately: an image that varies by cookie is one the CDN is not allowed to cache. Pinned by test/csp-test.js.",
+      "source": "/api/img/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        },
+        {
+          "key": "Vary",
+          "value": "Origin"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        }
+      ]
     }
   ],
   "functions": {

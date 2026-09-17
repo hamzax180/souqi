@@ -252,5 +252,24 @@ check("the WebContainer preview is left alone", () => {
   assert.ok(before.indexOf('removeAttribute("sandbox")') >= 0, "the sandbox is not cleared before the WebContainer URL loads — the same element may have just held a sandboxed srcdoc, and an opaque origin costs that dev server the storage it runs on");
 });
 
+/* Vercel applies EVERY matching headers block and the last one wins, so
+   the order of these two is load-bearing and invisible. Put the image
+   block above the /(api|auth) one and images silently go back to
+   no-store: nothing breaks, nothing logs, and every view of every image
+   on every published site becomes a function invocation plus a full read
+   of the bytes out of the database. That is exactly the kind of config
+   drift this file exists to catch. */
+check("the image cache header survives the /api no-store rule", () => {
+  const v = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "vercel.json"), "utf8"));
+  const list = v.headers || [];
+  const api = list.findIndex((h) => h.source === "/(api|auth)/(.*)");
+  const img = list.findIndex((h) => h.source === "/api/img/(.*)");
+  assert.ok(api >= 0, "the /api no-store block is gone");
+  assert.ok(img >= 0, "there is no /api/img headers block — uploaded images are served no-store");
+  assert.ok(img > api, "the /api/img block must come AFTER /(api|auth) or no-store wins and the image is never cached");
+  const cc = (list[img].headers || []).find((h) => h.key === "Cache-Control");
+  assert.ok(cc && /immutable/.test(cc.value), "the image block does not declare the object immutable");
+});
+
 if (failures) { console.log("\n✗ " + failures + " CSP CHECK(S) FAILED\n"); process.exit(1); }
-console.log("\n✓ ALL CSP TESTS PASSED (13)\n");
+console.log("\n✓ ALL CSP TESTS PASSED (14)\n");

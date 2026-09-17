@@ -23,8 +23,16 @@
 #    NOT covered       the images themselves. They rebuild from source.
 #
 #  Restoring the platform dump and re-running deploys rebuilds every app,
-#  and restoring the customer dump puts their data back under it. Source
-#  archives live in object storage (see src/storage/objects.js), not here.
+#  and restoring the customer dump puts their data back under it.
+#
+#  SOURCE ARCHIVES ARE IN HERE NOW, and that is a deliberate change of
+#  category, not an accident. They used to live only in object storage —
+#  and with no bucket configured, only on the VM, which is the thing the
+#  spec forbids. With S3 unset they go into the platform Postgres instead
+#  (source_archives, see src/storage/objects.js), so this dump covers
+#  them. The cost: it is bigger, and it now contains every customer's
+#  application source. Treat where this file is written and who can read
+#  it as a decision in its own right, not as a property of a backup.
 #  This is still not a full disaster plan: see --install-cron.
 # =================================================================
 set -euo pipefail

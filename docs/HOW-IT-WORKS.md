@@ -467,11 +467,24 @@ Upload → R2 (S3-compatible) → the vision route describes it → the descript
 the build prompt.
 
 ```
-POST /api/uploads/sign          presigned PUT, SigV4 query-string signed
-PUT  <r2>                       browser uploads directly, never through us
-POST /api/uploads/:id/complete  magic-byte sniff, SVG refused
-GET  /api/img/*                 signed read-through
+POST /api/uploads/sign            -> {mode:"put"} presigned PUT, or {mode:"parts"}
+PUT  <r2>                          browser uploads directly, never through us
+ or  /api/uploads/:id/part/:n      ~1MB slices through us, stitched server-side
+POST /api/uploads/:id/complete     magic-byte sniff, SVG refused — the boundary either way
+GET  /api/img/*                    always registered, reads the database then the bucket
 ```
+
+Two transports, one boundary. With a bucket configured the bytes never
+touch the function, because Vercel caps a request body at ~4.5MB. With no
+bucket they go into MongoDB instead, which means they must pass through —
+hence the slices. `/complete` is the security boundary on both paths: the
+row stays `pending` and unusable until the committed bytes have been
+looked at, because a signed URL is a capability and not a promise.
+
+`/api/img/*` is registered unconditionally and reads both stores. It has
+to be: `publicUrl()` bakes these strings permanently into published
+customer source, so a URL minted before a CDN existed must keep resolving
+after one does.
 
 The **description** is the point. The build model cannot see; it is reading a
 paragraph written by something that could, and that paragraph turns "a file

@@ -61,13 +61,22 @@ it connects the database and exports the app, and otherwise it listens on
 
 | Store | Holds | Where |
 |---|---|---|
-| MongoDB Atlas | projects, revisions, users, sessions, usage | the platform |
-| Postgres `postgres` | deployments, domains, hosts, per-project env | the plane |
+| MongoDB Atlas | projects, revisions, users, sessions, usage — **and uploaded image bytes when S3 is unset** | the platform |
+| Postgres `postgres` | deployments, domains, hosts, per-project env — **and source archives when S3 is unset** | the plane |
 | Postgres `userdb` | the customer's own application data | the plane, a **separate cluster** on an internal dead-end network the worker reaches by `docker exec`, never over a network |
-| S3 / R2 | uploads and source archives | external |
+| S3 / R2 | uploads and source archives, when configured | external |
 
 The two Postgres clusters are separate on purpose. `infra/deploy/README.md`
 has the enforcement table: which rule is enforced, and in which file.
+
+S3 is the preferred backend for both and the only one that scales, but
+neither system requires it: each falls back to the database it already
+runs on. The fallback's keys and URLs are byte-identical to the S3 ones
+and reads check the database first and the bucket second, so **turning S3
+on is configuration and needs no backfill** — while turning it back off,
+after anything has been written to the bucket, is not reversible. Set
+`BLOB_BACKEND=db` / `SOURCE_STORE=pg` to stop writing to a bucket whose
+contents must stay readable.
 
 ## The code agent
 

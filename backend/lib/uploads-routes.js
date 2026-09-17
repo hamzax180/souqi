@@ -23,13 +23,21 @@
    ================================================================= */
 "use strict";
 
+const express = require("express");
 const uploads = require("./uploads");
-const s3 = require("./storage/s3");
+/* No direct s3 require any more, and that is the point of the seam: this
+   file decides policy — what types are allowed, what the quota is, what
+   the bytes have to prove — and blobs.js decides where the bytes go. */
+const blobs = require("./storage/blobs");
 const vision = require("./codeagent/vision");
 
 /* Raised from the old 2MB because direct-to-bucket removed the reason for
    it — that cap existed to keep a base64 data URL inside a JSON request
-   body. A modern phone photo is 3-6MB and should not be refused. */
+   body. A modern phone photo is 3-6MB and should not be refused.
+
+   This is now the ceiling for the BUCKET path only. With the bytes in the
+   database the limit is lower and set by a different constraint entirely
+   — see blobs.maxBytes(), which is the one to ask. */
 const MAX_BYTES = Number(process.env.UPLOADS_MAX_BYTES) || 10 * 1024 * 1024;
 const MAX_PER_MESSAGE = Number(process.env.UPLOADS_MAX_PER_MESSAGE) || 8;
 const MONTHLY_PER_OWNER = Number(process.env.UPLOADS_MONTHLY_PER_OWNER) || 60;
@@ -90,7 +98,11 @@ function register(app, deps) {
        cookie, which is the identity every later step checks against. */
     const owner = ownerOf(req, res);
 
-    if (!s3.isConfigured()) {
+    /* Asks the seam, not S3 directly. Unconfigured object storage is no
+       longer the end of the story — the database takes the bytes instead —
+       so this 503 now means what it says: there is nowhere at all to put
+       them. */
+    if (!blobs.available()) {
       return res.status(503).json({ error: "Image uploads aren't set up on this server yet." });
     }
 
@@ -103,12 +115,20 @@ function register(app, deps) {
       });
     }
 
+    const limit = blobs.maxBytes();
     const bytes = Number(body.bytes) || 0;
-    if (bytes > MAX_BYTES) {
+    if (bytes > limit) {
       return res.status(413).json({
         error: "That image is " + Math.round(bytes / 1048576) + "MB — the limit is " +
-          Math.round(MAX_BYTES / 1048576) + "MB."
+          Math.round(limit / 1048576) + "MB."
       });
+    }
+    /* Required on the database path and only there: the number of parts
+       cannot be computed without it. On the bucket path it stays advisory,
+       because the browser PUTs directly and the HEAD in /complete is what
+       measures the truth. */
+    if (blobs.backend() === "db" && !bytes) {
+      return res.status(400).json({ error: "The upload needs to declare its size." });
     }
 
     // Quota is a month of uploads per owner. Admins are exempt, same as builds.
@@ -121,11 +141,11 @@ function register(app, deps) {
       }
     }
 
-    const key = s3.newKey(ext);
+    const key = blobs.newKey(ext);
     const row = await uploads.create({
       owner: owner,
       key: key,
-      url: s3.publicUrl(key),
+      url: blobs.publicUrl(key),
       name: String(body.name || "image." + ext),
       mime: type,
       ext: ext,
@@ -135,14 +155,70 @@ function register(app, deps) {
       seedHex: String(body.seedHex || "")
     });
 
+    const up = blobs.plan(key, { contentType: type, bytes: bytes });
     res.json({
       id: row.id,
-      putUrl: s3.presignPut(key, { contentType: type, expiresSec: 300 }),
-      // The browser must send exactly this: content-type is signed, so a
-      // mismatch is rejected by the bucket rather than by us.
-      headers: { "Content-Type": type },
-      expiresIn: 300
+      /* The bucket's two fields stay at the top level, exactly where they
+         were, so a client cached from before this change keeps working
+         untouched. `upload` is additive and carries the branch. */
+      putUrl: up.putUrl,
+      headers: up.headers,
+      expiresIn: up.expiresIn,
+      upload: up.mode === "parts"
+        ? { mode: "parts", partSize: up.partSize, parts: up.parts,
+            partUrl: "/api/uploads/" + row.id + "/part/" }
+        : { mode: "put" }
     });
+  });
+
+  /* ---- 1b. one slice of a file, when the database is the store ----- */
+  /* PUT, because it is idempotent by construction: a part is stored under
+     its index and a retry replaces itself. The raw body reaches here only
+     because index.js exempts this path from the global JSON parser — see
+     the note there, which is the same lesson the Stripe webhook taught.
+
+     This route does not exist on the bucket path, where the browser PUTs
+     straight to the bucket and these bytes never touch the function. */
+  app.put("/api/uploads/:id/part/:index", limiter, express.raw({
+    type: "*/*", limit: blobs.partBytes() + 4096
+  }), async (req, res) => {
+    const owner = ownerOf(req, res);
+    const row = await uploads.get(String(req.params.id || ""));
+    if (!row || !uploads.owns(row, owner)) return res.status(404).json({ error: "not found" });
+    // A finished upload cannot have its bytes rewritten underneath it.
+    if (row.status !== "pending") return res.status(409).json({ error: "that upload is already finished" });
+
+    const index = Number(req.params.index);
+    if (!Number.isInteger(index)) return res.status(400).json({ error: "bad part index" });
+
+    const partSize = blobs.partBytes();
+    const parts = Math.max(1, Math.ceil((Number(row.bytes) || 1) / partSize));
+    const buf = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+
+    /* Sniffing part 0 the moment it lands is an OPTIMISATION — it fails a
+       lie after one megabyte instead of after the whole file. It is NOT
+       the security boundary; /complete re-reads the committed bytes and
+       that check is the one that matters. Do not delete it as redundant. */
+    if (index === 0 && buf.length >= 12) {
+      const early = sniff(buf);
+      if (!early || early !== row.mime) {
+        await blobs.remove(row.key);
+        await uploads.markFailed(row.id, "content is " + (early || "unrecognised") + ", not " + row.mime);
+        return res.status(415).json({ error: "That file isn't the image type it claimed to be." });
+      }
+    }
+
+    const put = await blobs.putPart(row.key, index, buf, {
+      parts: parts, partSize: partSize, declaredBytes: Number(row.bytes) || 0
+    });
+    if (!put.ok) {
+      if (put.status === 413) {
+        await blobs.remove(row.key);
+        await uploads.markFailed(row.id, put.error);
+      }
+      return res.status(put.status || 500).json({ error: put.error || "the part was not stored" });
+    }
+    res.json({ ok: true, index: index, parts: parts, received: put.received });
   });
 
   /* ---- 2. verify what landed -------------------------------------- */
@@ -156,18 +232,31 @@ function register(app, deps) {
       return res.json({ id: row.id, url: row.url, description: row.description });
     }
 
-    /* 256 bytes, not the whole object. Enough for every signature we check,
-       and it keeps a 10MB photo from crossing the function to answer a
-       question about its first twelve bytes. */
-    let head, sniffed = "", realBytes = 0;
-    try {
-      head = await s3.signedFetch("GET", row.key, null, { range: "bytes=0-255" });
-      if (!head.ok && head.status !== 206) throw new Error("range GET " + head.status);
-      const buf = Buffer.from(await head.arrayBuffer());
-      sniffed = sniff(buf);
+    /* One caller gets to verify, and the transition decides which.
+       Read-then-write here was a race that a bucket forgave and the
+       database does not: the winner stitches the parts and deletes them,
+       and the loser then finds none and fails a good upload. */
+    if (!await uploads.claimForVerify(row.id)) {
+      return res.status(409).json({ error: "That upload is already being checked." });
+    }
 
-      const meta = await s3.signedFetch("HEAD", row.key);
-      realBytes = Number(meta.headers.get("content-length")) || 0;
+    let sniffed = "", realBytes = 0;
+    try {
+      // Stitches the parts on the database path; a no-op against a bucket,
+      // which already holds the whole object.
+      const partCount = Math.max(1, Math.ceil((Number(row.bytes) || 1) / blobs.partBytes()));
+      const fin = await blobs.finalize(row.key, { contentType: row.mime, parts: partCount });
+      if (!fin.ok) throw new Error(fin.error || "could not assemble the upload");
+
+      /* 256 bytes, not the whole object. Enough for every signature we
+         check, and it keeps a photo from crossing the function to answer a
+         question about its first twelve bytes. */
+      const ranged = await blobs.readRange(row.key, 0, 255);
+      if (!ranged.ok) throw new Error("could not read the bytes back");
+      sniffed = sniff(ranged.buf);
+
+      const meta = await blobs.head(row.key);
+      realBytes = (meta && meta.bytes) || 0;
     } catch (e) {
       await uploads.markFailed(row.id, "could not read back: " + e.message);
       return res.status(502).json({ error: "The upload didn't finish. Try again." });
@@ -178,12 +267,12 @@ function register(app, deps) {
        for. Both end the same way — the object is removed, because leaving
        unverified content in a public bucket is the actual risk. */
     if (!sniffed || sniffed !== row.mime) {
-      await s3.deleteObject(row.key);
+      await blobs.remove(row.key);
       await uploads.markFailed(row.id, "content is " + (sniffed || "unrecognised") + ", not " + row.mime);
       return res.status(415).json({ error: "That file isn't the image type it claimed to be." });
     }
-    if (realBytes > MAX_BYTES) {
-      await s3.deleteObject(row.key);
+    if (realBytes > blobs.maxBytes()) {
+      await blobs.remove(row.key);
       await uploads.markFailed(row.id, "oversize: " + realBytes);
       return res.status(413).json({ error: "That image is over the size limit." });
     }
@@ -198,9 +287,9 @@ function register(app, deps) {
     let description = "";
     if (vision.available()) {
       try {
-        const whole = await s3.signedFetch("GET", row.key);
+        const whole = await blobs.read(row.key);
         if (whole.ok) {
-          const seen = await vision.describe(Buffer.from(await whole.arrayBuffer()), sniffed);
+          const seen = await vision.describe(whole.buf, sniffed);
           if (seen) {
             description = seen.description;
             await uploads.setDescription(row.id, seen.description, seen.costUsd);
@@ -215,28 +304,49 @@ function register(app, deps) {
     res.json({ id: row.id, url: row.url, description: description });
   });
 
-  /* ---- 3. serve, when there is no CDN in front of the bucket ------- */
-  if (!process.env.S3_PUBLIC_BASE_URL) {
-    /* Registered ONLY as a fallback, and it is the local-development path.
-       In production every view here is a function invocation, which is why
-       publicUrl() prefers a real domain — and why that domain must be ours
-       and not the provider's, since these URLs are baked permanently into
-       published customer source. */
-    app.get("/api/img/*", async (req, res) => {
-      const key = String(req.params[0] || "");
-      if (!/^u\/[0-9a-f]{32}\.[a-z0-9]{1,5}$/.test(key)) return res.status(404).end();
-      try {
-        const got = await s3.signedFetch("GET", key);
-        if (!got.ok) return res.status(404).end();
-        res.set("Content-Type", got.headers.get("content-type") || "application/octet-stream");
-        // Immutable: the key contains 128 bits of randomness and an object
-        // is never rewritten under the same one.
-        res.set("Cache-Control", "public, max-age=31536000, immutable");
-        res.set("X-Content-Type-Options", "nosniff");
-        res.send(Buffer.from(await got.arrayBuffer()));
-      } catch (e) { res.status(502).end(); }
-    });
-  }
+  /* ---- 3. serve the bytes ----------------------------------------- */
+  /* Registered ALWAYS, and this is a fix, not a fallback concern.
+     It used to be skipped whenever S3_PUBLIC_BASE_URL was set — which
+     means the day a CDN domain is configured, every URL minted before it
+     stops resolving. publicUrl() bakes these strings permanently into
+     published customer source and exported ZIPs, so those are not URLs
+     anyone can go back and rewrite. It was latent only because nothing
+     had ever been uploaded in production; storing bytes in the database
+     makes every URL minted from now until the switch a relative one, and
+     would have made it certain.
+
+     It reads BOTH stores, database first, which is the entire migration
+     story: while S3 is being turned on, new uploads land in the bucket
+     and everything older still answers out of Mongo. */
+  app.get("/api/img/*", async (req, res) => {
+    const key = String(req.params[0] || "");
+    if (!/^u\/[0-9a-f]{32}\.[a-z0-9]{1,5}$/.test(key)) return res.status(404).end();
+    try {
+      const meta = await blobs.head(key);
+      if (!meta.ok) return res.status(404).end();
+
+      // The sniffed type, stored at finalize — strictly stronger than
+      // echoing back the type the uploader declared.
+      res.set("Content-Type", meta.contentType || "application/octet-stream");
+      // Immutable: the key contains 128 bits of randomness and an object
+      // is never rewritten under the same one.
+      res.set("Cache-Control", "public, max-age=31536000, immutable");
+      res.set("X-Content-Type-Options", "nosniff");
+      if (meta.etag) res.set("ETag", meta.etag);
+      if (meta.bytes) res.set("Content-Length", String(meta.bytes));
+
+      /* Both of these answer from metadata alone. head() projects `data`
+         away, so neither a HEAD nor a 304 pulls megabytes out of the
+         database to say nothing changed — which on this path is the whole
+         cost of the request for none of its value. */
+      if (req.method === "HEAD") return res.status(200).end();
+      if (meta.etag && req.headers["if-none-match"] === meta.etag) return res.status(304).end();
+
+      const got = await blobs.read(key);
+      if (!got.ok) return res.status(404).end();
+      res.send(got.buf);
+    } catch (e) { res.status(502).end(); }
+  });
 }
 
 module.exports = { register, sniff, ALLOWED, MAX_BYTES, MAX_PER_MESSAGE, MONTHLY_PER_OWNER };

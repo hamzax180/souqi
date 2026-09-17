@@ -224,3 +224,33 @@ CREATE TABLE IF NOT EXISTS deployment_checks (
   at            TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (deployment_id, check_id)
 );
+
+-- ── source archives, when object storage is not configured ──────────
+--
+-- The spec's rule is blunt: "do not permanently store application source
+-- code only on the VM". An unconfigured bucket satisfied it on paper by
+-- returning {skipped:true} — so the source sat in BUILD_ROOT on exactly
+-- one disk, and scripts/backup.sh, which only ever covered Postgres,
+-- covered none of it. Putting the archive IN Postgres is what makes the
+-- backup that already runs cover the source too.
+--
+-- Byte-for-byte what the bucket would hold: gzip(JSON.stringify(files)),
+-- under the same keyFor() value, so getSource() can read either store and
+-- turning S3 on later moves new writes without stranding old ones.
+CREATE TABLE IF NOT EXISTS source_archives (
+  key           TEXT PRIMARY KEY,
+  -- CASCADE is load-bearing and it is why this column exists at all:
+  -- deployments cascade from projects, so a project deletion that took the
+  -- deployment rows and left the archives would leave a deleted customer's
+  -- source sitting in the database. pipeline.destroy() deletes explicitly;
+  -- this is what covers the paths that do not go through it.
+  deployment_id TEXT NOT NULL REFERENCES deployments(id) ON DELETE CASCADE,
+  bytes         INTEGER NOT NULL,
+  -- BYTEA, not base64 TEXT: node-pg takes a Buffer and hands one back, so
+  -- this round-trips straight into gunzipSync. base64 would cost a third
+  -- of the disk and a full pass in each direction to work around a driver
+  -- limitation this driver does not have.
+  data          BYTEA NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS source_archives_dep_idx ON source_archives(deployment_id);

@@ -25,14 +25,45 @@
 const crypto = require("crypto");
 const zlib = require("zlib");
 const { cfg } = require("../config");
+const { query } = require("../db");
 
 const REGION = process.env.S3_REGION || "auto";
 const SERVICE = "s3";
 
+/* Refuse rather than hand Postgres an unbounded blob. A source tree that
+   gzips past this is a tree with something in it that does not belong in
+   source control, and finding that out at the archive step beats finding
+   it out in the backup. */
+const MAX_ARCHIVE_BYTES = Number(process.env.SOURCE_ARCHIVE_MAX_BYTES) || 16 * 1024 * 1024;
+
+/* Still means EXACTLY "S3 is configured", and it has to keep meaning that:
+   scripts/verify.js asserts on it, and quietly widening a predicate is how
+   a test that still passes stops testing anything. The question callers
+   actually want now is available(). */
 function isConfigured() {
   const s = cfg.s3;
   return !!(s.endpoint && s.bucket && s.accessKey && s.secretKey);
 }
+
+/**
+ * Which store takes a write.
+ *
+ * SOURCE_STORE forces it, and `pg` is the reversible switch: it stops
+ * writing to the bucket while isConfigured() stays true, so getSource can
+ * still read everything already there. Unsetting the credentials is the
+ * destructive operation, not this.
+ */
+function backend() {
+  const forced = String(process.env.SOURCE_STORE || cfg.sourceStore || "auto").toLowerCase();
+  if (forced === "s3") return "s3";
+  if (forced === "pg") return "pg";
+  return isConfigured() ? "s3" : "pg";
+}
+
+/* Postgres is not optional on this plane, so there is always somewhere to
+   put the archive — which is the whole point of the change, and the reason
+   the {skipped:true} branch effectively disappears. */
+function available() { return true; }
 
 const sha256 = (v) => crypto.createHash("sha256").update(v).digest("hex");
 const hmac = (key, v) => crypto.createHmac("sha256", key).update(v).digest();
@@ -102,9 +133,28 @@ async function signedFetch(method, key, body) {
 const keyFor = (deploymentId) => "sources/" + String(deploymentId).replace(/[^a-zA-Z0-9_.-]/g, "") + ".json.gz";
 
 async function putSource(deploymentId, files) {
-  if (!isConfigured()) return { ok: false, skipped: true };
   const body = zlib.gzipSync(Buffer.from(JSON.stringify(files), "utf8"));
   const key = keyFor(deploymentId);
+  if (body.length > MAX_ARCHIVE_BYTES) {
+    return { ok: false, error: "the source archive is " + Math.round(body.length / 1048576) + "MB, over the limit" };
+  }
+
+  if (backend() === "pg") {
+    try {
+      /* ON CONFLICT, because a redeploy of the same deployment id writes
+         the same key a second time and a bare INSERT would 23505 — which
+         would surface as "the deploy failed" for a build that was fine. */
+      await query(
+        "INSERT INTO source_archives (key, deployment_id, bytes, data) VALUES ($1,$2,$3,$4) " +
+        "ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, bytes = EXCLUDED.bytes, created_at = now()",
+        [key, String(deploymentId), body.length, body]
+      );
+      return { ok: true, key, bytes: body.length };
+    } catch (e) {
+      return { ok: false, error: "could not store the archive: " + e.message };
+    }
+  }
+
   try {
     const res = await signedFetch("PUT", key, body);
     if (!res.ok) {
@@ -116,27 +166,62 @@ async function putSource(deploymentId, files) {
   }
 }
 
+/**
+ * Read an archive from wherever it is — Postgres first, the bucket second.
+ *
+ * The fall-through IS the migration. Once S3 is configured, new archives go
+ * to the bucket and every one written before it still restores out of
+ * Postgres, so turning object storage on never strands a deployment that
+ * cannot be rebuilt.
+ */
 async function getSource(key) {
-  if (!isConfigured()) return { ok: false, skipped: true };
+  if (!key) return { ok: false, error: "no archive key" };
+
+  try {
+    const { rows } = await query("SELECT data FROM source_archives WHERE key = $1", [key]);
+    if (rows.length && rows[0].data) {
+      return { ok: true, from: "pg", files: JSON.parse(zlib.gunzipSync(rows[0].data).toString("utf8")) };
+    }
+  } catch (e) {
+    // A missing table on a plane that has not migrated yet is not a reason
+    // to skip the bucket, which may well have the archive.
+    if (!/relation .* does not exist/i.test(e.message || "")) {
+      return { ok: false, error: "could not read the archive: " + e.message };
+    }
+  }
+
+  if (!isConfigured()) return { ok: false, error: "no archive was stored for this deployment" };
   try {
     const res = await signedFetch("GET", key);
     if (!res.ok) return { ok: false, error: "storage returned " + res.status };
     const buf = Buffer.from(await res.arrayBuffer());
-    return { ok: true, files: JSON.parse(zlib.gunzipSync(buf).toString("utf8")) };
+    return { ok: true, from: "s3", files: JSON.parse(zlib.gunzipSync(buf).toString("utf8")) };
   } catch (e) {
     return { ok: false, error: "could not read the archive: " + e.message };
   }
 }
 
+/** Removed from both stores: which one holds it is not the caller's problem. */
 async function deleteSource(key) {
-  if (!isConfigured() || !key) return { ok: false, skipped: true };
+  if (!key) return { ok: false, skipped: true };
+  let ok = false;
   try {
-    const res = await signedFetch("DELETE", key);
-    // 404 is success for a delete: the object is gone either way.
-    return { ok: res.ok || res.status === 404, status: res.status };
-  } catch (e) {
-    return { ok: false, error: e.message };
+    await query("DELETE FROM source_archives WHERE key = $1", [key]);
+    ok = true;
+  } catch (e) { /* see getSource: a plane that has not migrated yet */ }
+
+  if (isConfigured()) {
+    try {
+      const res = await signedFetch("DELETE", key);
+      // 404 is success for a delete: the object is gone either way.
+      ok = ok || res.ok || res.status === 404;
+    } catch (e) {
+      return { ok: ok, error: e.message };
+    }
   }
+  return { ok: ok };
 }
 
-module.exports = { isConfigured, keyFor, putSource, getSource, deleteSource, signedFetch };
+module.exports = {
+  isConfigured, available, backend, keyFor, putSource, getSource, deleteSource, signedFetch
+};
