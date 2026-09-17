@@ -5014,7 +5014,23 @@ function getConversationalFallback(prompt, history) {
         Math.floor(Date.now() / 60000)
       ].join("\u0000")).digest("hex").slice(0, 40);
 
-  const run = await runStore.createRun({
+  /* createRun REFUSES, and a refusal is an answer.
+
+     It throws a typed error with a statusCode — RUN_ALREADY_ACTIVE is
+     409, "you already have a run going" — and nothing caught it. Express
+     4 does not catch a throw from an async handler, so it became an
+     unhandled rejection and Node exits on those: one user starting a
+     second build took the whole server down, and every other request in
+     flight died with it. The client saw "Failed to fetch", which names
+     neither the reason nor the fact that it was a refusal it could have
+     acted on.
+
+     Same shape as the reportCheckResult crash, from the other direction:
+     that one called something that was not there, this one let something
+     that was there say no. */
+  let run;
+  try {
+    run = await runStore.createRun({
     projectId: project ? project.id : null,
     owner,
     prompt,
@@ -5046,7 +5062,15 @@ function getConversationalFallback(prompt, history) {
         at: new Date().toISOString()
       }
     }
-  });
+    });
+  } catch (e) {
+    const status = Number(e && e.statusCode) || 500;
+    if (status >= 500) console.error("[codeagent] createRun failed:", e && e.message);
+    return res.status(status).json({
+      error: (e && e.message) || "could not start the run",
+      code: (e && e.code) || "RUN_START_FAILED"
+    });
+  }
 
   /* Hand the run to the durable worker, or run it here.
 

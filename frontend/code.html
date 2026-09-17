@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=4.1">
+<link rel="stylesheet" href="/styles/pages/code.css?v=4.3">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -663,24 +663,41 @@
   padding: 5px 0 2px;
   font-size: .88rem; color: var(--mut, #8a8f91);
 }
-.th2-spark { flex: none; width: 15px; height: 15px; display: block; color: #e08a42; }
-.th2-spark svg { width: 100%; height: 100%; display: block; transform-origin: 50% 50%;
-  animation: th2Spin 2.6s cubic-bezier(.5,0,.5,1) infinite, th2Pulse 1.5s ease-in-out infinite; }
-@keyframes th2Spin { to { transform: rotate(180deg); } }
-@keyframes th2Pulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
+/* The Souqi bag, lit.
+
+   Masked rather than drawn: assets/logo-mark.png IS the logo, alpha and
+   all, so the silhouette is exactly the real mark and cannot drift from
+   it the way a hand-traced path would. The mask takes only its alpha,
+   which is what drops the background — and it means the colour is ours
+   to animate, so the brand gradient sweeps through it while the turn
+   runs and settles when it stops. */
+.th2-spark {
+  flex: none; width: 16px; height: 16px; display: block;
+  -webkit-mask: url(/assets/logo-mark.png) center / contain no-repeat;
+  mask: url(/assets/logo-mark.png) center / contain no-repeat;
+  background: linear-gradient(115deg,
+    #1aa6df 0%, #18c8a8 28%, #5cb12f 50%, #18c8a8 72%, #1aa6df 100%) 0 0 / 280% 100%;
+  animation: th2Shine 2.4s linear infinite;
+}
+@keyframes th2Shine { to { background-position: -280% 0; } }
+/* Stopped, and holding the brand's own three stops rather than a frame
+   of the sweep — a finished run should look settled, not paused. */
+.th2.done .th2-spark {
+  animation: none;
+  background: linear-gradient(135deg, #1aa6df 0%, #18c8a8 55%, #5cb12f 100%);
+  opacity: .8;
+}
 .th2-sep { opacity: .45; }
 .th2-phase { transition: opacity .2s ease; }
 .th2-num { font-variant-numeric: tabular-nums; }
 
-/* Finished: the spark stops, the line becomes the summary. */
-.th2.done .th2-spark svg { animation: none; opacity: .45; }
 .th2.done .th2-step.busy .th2-step-text {
   animation: none; -webkit-text-fill-color: currentColor; color: var(--ink-2, #6b7076);
 }
 @media (prefers-reduced-motion: reduce) {
   .th2-step { animation: none; opacity: 1; transform: none; }
   .th2-step.busy .th2-step-text { animation: none; -webkit-text-fill-color: currentColor; color: var(--ink-2); }
-  .th2-spark svg { animation: none; }
+  .th2-spark { animation: none; }
   .ag-thinking:not(.done) .th2-title {
     animation: none; -webkit-text-fill-color: currentColor; color: var(--ink);
   }
@@ -2149,11 +2166,6 @@
      as they happen, over one live line carrying the three things worth
      knowing while you wait — how long, what it has spent, and what it
      is doing right now. */
-  const TH2_SPARK =
-    '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
-    '<path d="M12 1.6l1.65 6.02 4.42-4.42-2.77 5.53 6.02-1.65-5.53 2.77 5.53 2.77-6.02-1.65 2.77 5.53-4.42-4.42L12 22.4l-1.65-6.02-4.42 4.42 2.77-5.53-6.02 1.65 5.53-2.77-5.53-2.77 6.02 1.65-2.77-5.53 4.42 4.42z"/>' +
-    '</svg>';
-
   function thinkingBlock(promptText) {
     clearEmpty();
     const wrap = el("ag-thinking th2");
@@ -2170,7 +2182,7 @@
       '</div>' +
       '<div class="th2-steps"></div>' +
       '<div class="th2-status">' +
-        '<span class="th2-spark">' + TH2_SPARK + '</span>' +
+        '<span class="th2-spark" aria-hidden="true"></span>' +
         '<span class="th2-num th2-time">0s</span>' +
         '<span class="th2-sep th2-tok-sep" hidden>·</span>' +
         '<span class="th2-num th2-tok" hidden></span>' +
@@ -2407,6 +2419,9 @@
   let buildQueue = [];
   let currentAbortController = null;
   let activeRunId = null;
+  /* Runs whose event stream is already being read. See the guard in
+     runTurn: two openers on one run replayed everything twice. */
+  const agOpenStreams = new Set();
 
   function cancelTurn() {
     if (currentThinkPanel) {
@@ -3098,6 +3113,7 @@
     showInterruptUnderUserMessage();
     const startedAt = Date.now();
     const handles = {};
+    let openedStream = null;
     let thinkPanel = null;
     let filesSeen = 0;
 
@@ -3431,6 +3447,22 @@
       }
 
       if (runId) {
+        /* ONE STREAM PER RUN.
+
+           Two ways in reach this — the resume-on-load path and an
+           ordinary turn — and when both landed on the same run every
+           event was handled twice: two "Building components…", two of
+           every file, two of everything. Both streams opened without a
+           cursor, so each replayed the run from the beginning into the
+           same panel.
+
+           Guarding here rather than at each caller because the callers
+           are the part that keeps growing, and none of them can know
+           what another one is already watching. */
+        if (agOpenStreams.has(runId)) return;
+        agOpenStreams.add(runId);
+        openedStream = runId;
+
         isDynamicRun = true;
         activeRunId = runId;
         try {
@@ -3802,6 +3834,8 @@
       if (thinkPanel) thinkPanel.done();
       say(esc(err.message), "err");
     } finally {
+      // Released however the turn ended, or the run can never be watched again.
+      if (openedStream) { agOpenStreams.delete(openedStream); openedStream = null; }
       if (thinkPanel) {
         try { thinkPanel.done(); } catch (e) {}
       }
