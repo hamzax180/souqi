@@ -55,6 +55,8 @@ exports.askQuestion = askQuestion;
 exports.answerQuestion = answerQuestion;
 exports.getLatestCheckpoint = getLatestCheckpoint;
 exports.recordStep = recordStep;
+exports.getSteps = getSteps;
+exports.recoverToolResult = recoverToolResult;
 exports.workerHeartbeat = workerHeartbeat;
 exports.getWorkerHealth = getWorkerHealth;
 exports.recoverStaleRuns = recoverStaleRuns;
@@ -110,7 +112,12 @@ async function ensureIndexes() {
             await db.collection("agent_events").createIndex({ runId: 1, seq: 1 }, { unique: true });
             await db.collection("agent_checkpoints").createIndex({ id: 1 }, { unique: true });
             await db.collection("agent_checkpoints").createIndex({ runId: 1, at: -1 });
-            await db.collection("agent_steps").createIndex({ runId: 1, stepIndex: 1 });
+            /* `turn`, not `stepIndex` — recordStep has never written a field by
+               that name, so this index has been sorting on something no
+               document has. The second one is what recoverToolResult looks up
+               by, and without it that is a collection scan per recovery. */
+            await db.collection("agent_steps").createIndex({ runId: 1, turn: 1 });
+            await db.collection("agent_steps").createIndex({ runId: 1, "toolResults.tool_call_id": 1 });
             await db.collection("agent_workers").createIndex({ workerId: 1 }, { unique: true });
             await db.collection("agent_workers").createIndex({ at: -1 });
         })().catch((cause) => {
@@ -354,6 +361,52 @@ async function recordStep(runId, stepData) {
     const doc = Object.assign({}, copy(stepData), { runId, at: now() });
     await dbRequired().collection("agent_steps").insertOne(copy(doc));
     return doc;
+}
+/* The other half of micro-compaction.
+   -----------------------------------------------------------------
+   Clearing an old tool result out of the request leaves a line saying
+   "recoverable from agent_steps: run X, call Y". That was written
+   before anything could read agent_steps: recordStep inserted rows, an
+   index was declared over them, four comments called them recoverable,
+   and there was no reader anywhere in the codebase. The line the model
+   was shown was a promise nothing could keep.
+
+   Ownership is checked the way getRun checks it, because a step holds
+   whole file contents — it is the most sensitive thing this collection
+   stores, and "recover by id" is exactly the shape of call that leaks
+   across tenants when nobody scopes it. */
+async function getSteps(runId, owner) {
+    if (!(await getRun(runId, owner)))
+        return [];
+    return dbRequired().collection("agent_steps").find({ runId }, { sort: { turn: 1 }, projection: { _id: 0 } }).toArray();
+}
+/**
+ * The exact tool result a compacted pointer refers to, or null.
+ *
+ * Returns the untrimmed text as it was before the turn budget touched
+ * it — that is the whole point of keeping the row.
+ */
+async function recoverToolResult(runId, toolCallId, owner) {
+    if (!runId || !toolCallId)
+        return null;
+    if (!(await getRun(runId, owner)))
+        return null;
+    const step = await dbRequired().collection("agent_steps").findOne({ runId, "toolResults.tool_call_id": toolCallId }, { projection: { _id: 0 } });
+    if (!step)
+        return null;
+    const result = (step.toolResults || []).find((r) => r && r.tool_call_id === toolCallId);
+    if (!result)
+        return null;
+    /* The call is returned beside the result because a recovered result on
+       its own does not say what was asked — "the first ten matches" is not
+       useful without the query that produced them. */
+    const call = (step.toolCalls || []).find((c) => c && c.id === toolCallId) || null;
+    return {
+        runId, toolCallId, turn: step.turn, at: step.at,
+        tool: (call && call.function && call.function.name) || null,
+        args: (call && call.function && call.function.arguments) || null,
+        content: typeof result.content === "string" ? result.content : ""
+    };
 }
 async function workerHeartbeat(workerId, details = {}) {
     const db = await ensureIndexes();

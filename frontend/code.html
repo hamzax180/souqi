@@ -2486,6 +2486,17 @@
       const a = p.args || {};
       const detail = a.path || a.query || a.dir || a.command || a.reason || "";
       t.write("›", p.tool + (detail ? "  " + detail : ""), "term-cmd");
+    } else if (kind === "tool_result") {
+      /* Only for the tools that close with nothing else. A write already
+         prints its file_written line and a command prints its exit code,
+         so printing this too would report each of those twice; a refusal
+         prints tool_denied. What was left silent was the reads. */
+      const QUIET = ["write_file", "edit_file", "run_command", "ask_user_question", "complete_task"];
+      if (p.ok && QUIET.indexOf(p.tool) < 0) {
+        const size = p.bytes ? "  " + (p.bytes > 1024 ? Math.round(p.bytes / 1024) + "kb" : p.bytes + "b") : "";
+        const took = p.ms > 250 ? "  (" + (p.ms / 1000).toFixed(1) + "s)" : "";
+        t.write("✓", (p.detail || p.tool) + size + took, "term-ok");
+      }
     } else if (kind === "tool_denied") {
       /* The half that was invisible. A refused write is the single most
          useful line in here when an agent is behaving oddly. */

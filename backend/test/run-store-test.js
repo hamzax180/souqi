@@ -7,8 +7,29 @@ const runStore = require("../lib/codeagent/run-store");
    meta.pendingQuestion and both the query and the update address it that
    way. Without these the mock silently matched nothing and every
    pause/resume assertion passed by not happening. */
+/* Every value a dotted path reaches, because Mongo matches a path that
+   crosses an ARRAY if ANY element matches — "toolResults.tool_call_id"
+   is exactly that shape. Reducing straight through returned undefined
+   for those, so a query that works against the real database found
+   nothing here and the test would have passed by never matching. */
+function dotValues(doc, path) {
+  let cur = [doc];
+  for (const k of String(path).split(".")) {
+    const next = [];
+    for (const c of cur) {
+      if (c === undefined || c === null) continue;
+      if (Array.isArray(c)) {
+        for (const el of c) if (el !== null && el !== undefined && el[k] !== undefined) next.push(el[k]);
+      } else if (c[k] !== undefined) next.push(c[k]);
+    }
+    cur = next;
+  }
+  return cur;
+}
+
 function dotGet(doc, path) {
-  return String(path).split(".").reduce((o, k) => (o === undefined || o === null ? undefined : o[k]), doc);
+  const values = dotValues(doc, path);
+  return values.length ? values[0] : undefined;
 }
 function dotSet(doc, path, value) {
   const keys = String(path).split(".");
@@ -34,16 +55,17 @@ function dotUnset(doc, path) {
    you is worse than no mock. */
 function queryMatches(doc, query) {
   for (const [k, v] of Object.entries(query || {})) {
-    const actual = dotGet(doc, k);
+    const values = dotValues(doc, k);
+    const some = (fn) => values.some(fn);
     if (v && typeof v === "object" && !Array.isArray(v)) {
-      if (Array.isArray(v.$in)) { if (!v.$in.includes(actual)) return false; continue; }
-      if (v.$gt !== undefined) { if (!(actual > v.$gt)) return false; continue; }
-      if (v.$gte !== undefined) { if (!(actual >= v.$gte)) return false; continue; }
-      if (v.$lte !== undefined) { if (actual === undefined || !(actual <= v.$lte)) return false; continue; }
-      if (v.$lt !== undefined) { if (actual === undefined || !(actual < v.$lt)) return false; continue; }
-      if (v.$exists !== undefined) { if ((actual !== undefined) !== !!v.$exists) return false; continue; }
+      if (Array.isArray(v.$in)) { if (!some((a) => v.$in.includes(a))) return false; continue; }
+      if (v.$gt !== undefined) { if (!some((a) => a > v.$gt)) return false; continue; }
+      if (v.$gte !== undefined) { if (!some((a) => a >= v.$gte)) return false; continue; }
+      if (v.$lte !== undefined) { if (!some((a) => a <= v.$lte)) return false; continue; }
+      if (v.$lt !== undefined) { if (!some((a) => a < v.$lt)) return false; continue; }
+      if (v.$exists !== undefined) { if ((values.length > 0) !== !!v.$exists) return false; continue; }
     }
-    if (actual !== v) return false;
+    if (!some((a) => a === v)) return false;
   }
   return true;
 }
@@ -331,6 +353,89 @@ async function check(name, fn) {
     await runStore.touchRun(run.id);
     assert.strictEqual((await runStore.recoverStaleRuns()).length, 0,
       "swept a run that had just heartbeated");
+  });
+
+  /* agent_steps had a writer, an index and four comments calling it
+     recoverable, and no reader at all — so the line micro-compaction
+     puts in front of the model ("recoverable from agent_steps: run X,
+     call Y") was a promise nothing could keep. These are the other half.
+
+     The long one is the brief's own acceptance test: exact file content
+     can be retrieved again after compaction. */
+
+  const BIG = "export default function App() {\n" +
+    Array.from({ length: 200 }, (_, i) => "  // original line " + i).join("\n") + "\n}\n";
+
+  async function runWithOneStep(owner, callId, content) {
+    const run = await runStore.createRun({
+      projectId: null, owner, prompt: "read it", mode: "auto", effort: "balanced"
+    });
+    await runStore.recordStep(run.id, {
+      turn: 1,
+      toolCalls: [{ id: callId, function: { name: "read_file", arguments: '{"path":"src/App.tsx"}' } }],
+      toolResults: [{ role: "tool", tool_call_id: callId, content: content }],
+      costUsd: 0
+    });
+    return run;
+  }
+
+  await check("exact tool output is retrievable after compaction cleared it", async () => {
+    const owner = { userId: "usr_recover", anonId: null };
+    const callId = "call_read_1";
+    const run = await runWithOneStep(owner, callId, BIG);
+
+    // Compaction clears it out of the request, leaving only the pointer.
+    const micro = require("../lib/codeagent/context/micro-compact");
+    const { messages } = micro.microCompact([
+      { role: "user", content: "read it" },
+      { role: "tool", tool_call_id: callId, content: BIG }
+    ], { runId: run.id, keepRecent: 0 });
+
+    const cleared = messages.find((m) => m.role === "tool").content;
+    assert.ok(cleared.startsWith(micro.CLEARED_PREFIX), "the result should have been cleared");
+    assert.ok(cleared.length < BIG.length / 4, "clearing should actually free the bulk");
+    assert.ok(cleared.includes(run.id) && cleared.includes(callId),
+      "the pointer must name what it points at");
+
+    // The pointer is now worth something.
+    const back = await runStore.recoverToolResult(run.id, callId, owner);
+    assert.ok(back, "the pointer named a row that could not be read");
+    assert.strictEqual(back.content, BIG, "recovery must return the original bytes, not a summary");
+    assert.strictEqual(back.tool, "read_file");
+    assert.strictEqual(back.turn, 1);
+    assert.ok(back.args.includes("src/App.tsx"),
+      "a recovered result without the call that produced it does not say what was asked");
+  });
+
+  await check("another owner cannot recover your tool output", async () => {
+    const owner = { userId: "usr_owner", anonId: null };
+    const run = await runWithOneStep(owner, "call_private", BIG);
+    // A step holds whole file contents — this is the most sensitive row
+    // in the collection, and recover-by-id is the shape that leaks.
+    assert.strictEqual(await runStore.recoverToolResult(run.id, "call_private", { userId: "usr_other" }), null);
+    assert.deepStrictEqual(await runStore.getSteps(run.id, { userId: "usr_other" }), []);
+    assert.strictEqual((await runStore.getSteps(run.id, owner)).length, 1);
+  });
+
+  await check("an unknown run or call id recovers nothing rather than throwing", async () => {
+    const owner = { userId: "usr_missing", anonId: null };
+    const run = await runWithOneStep(owner, "call_known", BIG);
+    assert.strictEqual(await runStore.recoverToolResult(run.id, "call_never_made", owner), null);
+    assert.strictEqual(await runStore.recoverToolResult("run_does_not_exist", "call_known", owner), null);
+    assert.strictEqual(await runStore.recoverToolResult(run.id, "", owner), null);
+  });
+
+  await check("steps come back in turn order", async () => {
+    const owner = { userId: "usr_order", anonId: null };
+    const run = await runStore.createRun({
+      projectId: null, owner, prompt: "p", mode: "auto", effort: "balanced"
+    });
+    for (const turn of [3, 1, 2]) {
+      await runStore.recordStep(run.id, {
+        turn, toolCalls: [], toolResults: [{ role: "tool", tool_call_id: "c" + turn, content: "x" }], costUsd: 0
+      });
+    }
+    assert.deepStrictEqual((await runStore.getSteps(run.id, owner)).map((s) => s.turn), [1, 2, 3]);
   });
 
   console.log("\n" + (failed === 0 ? "✓ ALL RUN-STORE TESTS PASSED (" + passed + ")" : "✗ " + failed + " FAILED, " + passed + " passed"));

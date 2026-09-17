@@ -16,6 +16,7 @@ import * as registry from "./tool-registry";
 import * as agentState from "./agent-state";
 import * as contextManager from "./context/context-manager";
 import * as retrieval from "./context/file-retrieval";
+import { redact } from "./context/redact";
 import type { AgentMode, StopReason, ToolContext } from "./types";
 import {
   systemPromptFor,
@@ -58,6 +59,15 @@ function textOf(content: unknown): string {
    are spent. A recoverable error that surfaces immediately is a run
    that looks broken while it is in fact recovering. */
 const RETRY_BACKOFF_MS = [500, 1500, 4000];
+
+/* One readable line for a tool's outcome, safe to put in an event.
+   Redacted, because tool output is the likeliest place in the whole run
+   for a key to appear — a .env read back, a config file, a search hit —
+   and an event is durable and goes to the browser. */
+function firstLineOf(text: unknown): string {
+  const first = String(text || "").split("\n")[0] || "";
+  return redact(first.slice(0, 160)).text;
+}
 
 function retryableReason(res: any): string | null {
   if (!res || res.ok) return null;
@@ -716,8 +726,28 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
 
       await runStore.appendEvent(runId, "tool_start", { tool: fnName, args });
 
+      const toolStartedAt = Date.now();
       const outcome = await registry.dispatch(fnName, args, ctx);
       toolResults.push({ role: "tool", tool_call_id: tc.id, content: outcome.content });
+
+      /* Every tool_start now has a tool_result. It did not: writes closed
+         with file_written, commands with a command/done, refusals with
+         tool_denied — and a successful read_file, list_files, search_code
+         or check_project closed with nothing at all. The terminal printed
+         those starting and never finishing.
+
+         The id is here so a line in the transcript can be traced to the
+         row that still holds its full output; `bytes` is measured before
+         the turn budget trims anything, so it reports what the tool
+         actually produced. */
+      await runStore.appendEvent(runId, "tool_result", {
+        tool: fnName,
+        toolCallId: tc.id,
+        ok: outcome.ok !== false,
+        ms: Date.now() - toolStartedAt,
+        bytes: String(outcome.content || "").length,
+        detail: firstLineOf(outcome.content)
+      });
 
       /* A refusal is worth recording separately from the tool result the
          model sees. Frontend code.html:2701 is an else-if chain, so an
@@ -821,6 +851,13 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
        on its own, but several under the cap still add up past it — and
        the request has to fit before any of this is worth having.
        Spent in call order, so the first answers stay whole. */
+    /* Copied BEFORE the budget trims anything, because this is the copy
+       micro-compaction points at when it clears a result out of the
+       request. Recorded after trimming, the "raw record" was the trimmed
+       text, and recovering it returned the same truncated thing the
+       pointer was offering to replace. */
+    const rawToolResults = (toolResults as any[]).map((r) => Object.assign({}, r));
+
     const budgeted = registry.applyTurnBudget(toolResults as any);
     if (budgeted.trimmed) {
       await runStore.appendEvent(runId, "context", {
@@ -833,7 +870,9 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
     toolResults.push(...(budgeted.results as any[]));
 
     await runStore.saveCheckpoint(runId, currentFiles, "Step " + turn + " tool updates");
-    await runStore.recordStep(runId, { turn, toolCalls, toolResults, costUsd: aiRes.costUsd || 0 });
+    await runStore.recordStep(runId, {
+      turn, toolCalls, toolResults: rawToolResults, costUsd: aiRes.costUsd || 0
+    });
 
     messages = messages.concat(toolResults);
 

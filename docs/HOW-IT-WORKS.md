@@ -158,6 +158,28 @@ halves are covered now — `agent-runner-test.js` for the seam, and
 Only one of them may write the ending. If you add a terminal exit to
 `executeRun`, route it through `settle()`.
 
+### What a run emits
+
+`stage`, `context`, `question`, `error`, `result`, and per tool:
+
+| | when |
+|---|---|
+| `tool_start` | before dispatch, with the arguments |
+| `tool_result` | after dispatch, always — `ok`, `ms`, `bytes`, a redacted first line |
+| `tool_denied` | additionally, when the dispatcher refused it |
+| `file_written` / `command` / `check_needed` | additionally, for the tools that have more to say |
+
+Every `tool_start` has a `tool_result`. It did not: writes closed with
+`file_written`, commands with a `command`/done and refusals with
+`tool_denied`, so a successful `read_file`, `list_files` or `search_code`
+closed with nothing and the terminal showed it starting and never finishing.
+The terminal renders `tool_result` only for the tools that have no richer
+line, or the ones that do would be reported twice.
+
+`detail` is redacted before it is stored. Tool output is the likeliest place
+in a whole run for a key to appear — a config read back, a search hit — and an
+event is durable and goes to the browser.
+
 ### Watching a run
 
 `GET /api/codeagent/runs/:id/events` is SSE, and it is **bounded at 45
@@ -244,6 +266,17 @@ cheapest first, each only when the one before it was not enough:
 | micro-compact | clears old bulky **tool results**, leaving a pointer | nothing — `agent_steps` still has the raw row |
 | auto-compact | replaces the middle with a structured summary | one provider call, and detail |
 | `fitConversation` | drops whole groups | whole turns |
+
+"Still has the raw row" is now something you can act on. `recoverToolResult
+(runId, toolCallId, owner)` returns the exact text a cleared pointer refers
+to, and `getSteps(runId, owner)` returns every turn; both are ownership-scoped
+the way `getRun` is, because a step holds whole file contents and recover-by-id
+is the shape of call that leaks across tenants. That was worth writing down
+because for a while it was not true: rows were inserted, an index was declared
+over them, four comments called them recoverable, and nothing anywhere could
+read one. The step is also captured *before* the turn budget trims anything —
+recorded after, the "raw record" was the trimmed text, and recovering it
+returned the same truncated thing the pointer was offering to replace.
 
 Thresholds are fractions of the window (0.60 and 0.85), not message counts:
 forty short turns fit comfortably and three turns carrying a 24,000-character

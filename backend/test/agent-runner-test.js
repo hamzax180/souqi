@@ -518,6 +518,125 @@ async function check(name, fn) {
     assert.strictEqual(row.stopReason, "provider_error");
   });
 
+  await check("the step recorded for recovery is the untrimmed output", async () => {
+    /* The turn budget trims tool results to fit the request, and the step
+       was recorded AFTER that — so the "raw record" micro-compaction
+       points at was the trimmed text, and recovering it returned the same
+       truncated thing the pointer was offering to replace.
+
+       Three big reads exceed MAX_TURN_RESULT_CHARS, which is what makes
+       the budget trim at all. */
+    const registry = require("../lib/codeagent/tool-registry");
+    const big = (tag) => tag + "\n" + "x".repeat(registry.MAX_RESULT_CHARS);
+    const baseFiles = { "src/a.tsx": big("A"), "src/b.tsx": big("B"), "src/c.tsx": big("C") };
+
+    let step = 0;
+    useStub(async () => {
+      step++;
+      const calls = step === 1
+        ? ["src/a.tsx", "src/b.tsx", "src/c.tsx"].map((p, i) => ({
+            id: "r" + i, function: { name: "read_file", arguments: JSON.stringify({ path: p }) }
+          }))
+        : [{ id: "done", function: { name: "complete_task", arguments: JSON.stringify({ summary: "read them" }) } }];
+      return { ok: true, json: async () => ({ choices: [{ message: { role: "assistant", tool_calls: calls }, finish_reason: "tool_calls" }] }) };
+    });
+
+    const captured = [];
+    const realRecordStep = runStore.recordStep;
+    runStore.recordStep = async (runId, data) => { captured.push(data); return realRecordStep(runId, data); };
+    try {
+      const run = await runStore.createRun({
+        projectId: null, owner, prompt: "read the files", mode: "auto", effort: "smart", baseFiles
+      });
+      await agentRunner.executeRun(run.id);
+    } finally {
+      runStore.recordStep = realRecordStep;
+    }
+
+    const readTurn = captured.find((s) => (s.toolResults || []).length === 3);
+    assert.ok(readTurn, "the turn with three reads was never recorded");
+
+    /* The budget spends in call order, so it is the LAST result that gets
+       cut — the total stays just over the ceiling either way, which is
+       why asserting on the total proved nothing. The property that
+       actually distinguishes them is that no single recorded result was
+       shortened. */
+    const lengths = readTurn.toolResults.map((r) => String(r.content || "").length);
+    assert.ok(Math.min(...lengths) >= registry.MAX_RESULT_CHARS,
+      "a recorded result was trimmed (lengths " + lengths.join(", ") +
+      ") — the raw record is not raw, so recovering it returns the same truncated text");
+  });
+
+  await check("every tool_start is closed by a tool_result", async () => {
+    /* It was not. Writes closed with file_written, commands with a
+       command/done and refusals with tool_denied — a successful
+       read_file, list_files or search_code closed with nothing, so the
+       terminal showed them starting and never finishing. */
+    let step = 0;
+    useStub(async () => {
+      step++;
+      const calls = step === 1
+        ? [
+            { id: "t1", function: { name: "list_files", arguments: "{}" } },
+            { id: "t2", function: { name: "write_file", arguments: JSON.stringify({ path: "src/App.tsx", content: "export default function App(){return <h1>Hi</h1>;}" }) } },
+            { id: "t3", function: { name: "read_file", arguments: JSON.stringify({ path: "src/App.tsx" }) } },
+            // A genuine refusal. A traversal path is not one — the tree is
+            // in memory, so it comes back "File not found" with ok:true.
+            { id: "t4", function: { name: "definitely_not_a_tool", arguments: "{}" } }
+          ]
+        : [{ id: "done", function: { name: "complete_task", arguments: JSON.stringify({ summary: "ok" }) } }];
+      return { ok: true, json: async () => ({ choices: [{ message: { role: "assistant", tool_calls: calls }, finish_reason: "tool_calls" }] }) };
+    });
+
+    const run = await runStore.createRun({
+      projectId: null, owner, prompt: "look around", mode: "auto", effort: "smart"
+    });
+    await agentRunner.executeRun(run.id);
+
+    const events = await runStore.getEvents(run.id, 0);
+    const starts = events.filter((e) => e.type === "tool_start");
+    const results = events.filter((e) => e.type === "tool_result");
+    assert.strictEqual(starts.length, results.length,
+      starts.length + " tool_start events but " + results.length + " tool_result");
+
+    // The refused read is still a result — a refusal that reports nothing
+    // is exactly the case the terminal could not show.
+    const refused = results.find((e) => e.payload.toolCallId === "t4");
+    assert.ok(refused, "the refused tool never reported a result");
+    assert.strictEqual(refused.payload.ok, false);
+    assert.ok(events.some((e) => e.type === "tool_denied"), "a refusal still reports tool_denied too");
+
+    const read = results.find((e) => e.payload.toolCallId === "t3");
+    assert.strictEqual(read.payload.ok, true);
+    assert.ok(read.payload.bytes > 0, "a successful read reports how much it returned");
+    assert.ok(typeof read.payload.ms === "number");
+  });
+
+  await check("a tool_result detail carries no secret", async () => {
+    // Tool output is the likeliest place in a run for a key to appear,
+    // and an event is durable and goes to the browser.
+    const KEY = "sk-ant-api03-" + "A".repeat(40);
+    let step = 0;
+    useStub(async () => {
+      step++;
+      const calls = step === 1
+        ? [{ id: "w", function: { name: "write_file", arguments: JSON.stringify({ path: "src/App.tsx", content: "// " + KEY + "\nexport default function App(){return <h1>Hi</h1>;}" }) } }]
+        : [{ id: "done", function: { name: "complete_task", arguments: JSON.stringify({ summary: "ok" }) } }];
+      return { ok: true, json: async () => ({ choices: [{ message: { role: "assistant", tool_calls: calls }, finish_reason: "tool_calls" }] }) };
+    });
+
+    const run = await runStore.createRun({
+      projectId: null, owner, prompt: "write it", mode: "auto", effort: "smart"
+    });
+    await agentRunner.executeRun(run.id);
+
+    for (const e of await runStore.getEvents(run.id, 0)) {
+      if (e.type !== "tool_result") continue;
+      assert.ok(!String(e.payload.detail || "").includes(KEY),
+        "a tool_result detail leaked a key");
+    }
+  });
+
   console.log("\n" + (failed === 0 ? "✓ ALL AGENT-RUNNER TESTS PASSED (" + passed + ")" : "✗ " + failed + " FAILED, " + passed + " passed"));
   process.exit(failed === 0 ? 0 : 1);
 })();
