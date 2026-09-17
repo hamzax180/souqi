@@ -1885,6 +1885,39 @@
      the mode is picked, not just the composer. */
   body.power-mode .ag-empty h2 .hi{color:#e11d48}
 
+  /* THE WORD THAT CHANGES.
+
+     The headline asks what we are building; the word it lands on is the
+     one thing on this screen that moves, so the sentence reads as an
+     invitation rather than a caption. It is the accent word already —
+     this only gives it somewhere to go.
+
+     inline-grid so the outgoing and incoming words occupy the same cell:
+     the line never reflows and the words either side never shuffle,
+     which is the whole risk of animating a word inside a sentence. */
+  .ag-empty h2 .hi{display:inline-grid;grid-template-areas:"w";vertical-align:bottom;overflow:hidden}
+  .ag-empty h2 .hi > span{grid-area:w;display:block}
+  .hi-out{animation:heroOut .34s var(--ease) forwards}
+  .hi-in{animation:heroIn .38s var(--ease) backwards}
+  @keyframes heroOut{to{opacity:0;transform:translateY(-.5em)}}
+  @keyframes heroIn{from{opacity:0;transform:translateY(.55em)}}
+
+  /* The line under it, changing with it. Cross-faded rather than slid:
+     two motions at two sizes in the same breath reads as a page that
+     cannot keep still. */
+  .ag-sub{
+    font-size:clamp(.92rem,1.3vw,1.02rem);color:var(--ink-2);
+    line-height:1.5;margin:-4px 0 14px;max-width:46ch;
+    opacity:0;animation:agIn .5s var(--ease) .1s forwards;
+    transition:opacity .3s var(--ease);
+  }
+  .ag-sub.fading{opacity:0}
+
+  @media (prefers-reduced-motion:reduce){
+    .hi-out,.hi-in{animation:none}
+    .ag-sub{transition:none}
+  }
+
   /* New-chat-only extras: type tiles + example prompts, both hidden the
      moment a first turn lands (see isFirstBuild in runTurn()) — the same
      [hidden]-vs-class-display trap as everywhere else in this file, so the
