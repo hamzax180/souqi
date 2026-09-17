@@ -4979,6 +4979,27 @@ function getConversationalFallback(prompt, history) {
         reply = getConversationalFallback(prompt);
       }
 
+      /* A conversation needs somewhere to live, or refreshing ends it.
+
+         This branch answers without building, and it only wrote the two
+         turns down when a project already existed — so talking to the
+         agent before you had one was saved nowhere and the tab stayed on
+         /agent with no slug to come back to. Both halves of that: no row
+         to restore, and no address to restore it at. The first real
+         exchange creates the project, the same way the build path does
+         before it knows whether the build will even succeed. */
+      if (!project) {
+        try {
+          project = await projects.create({
+            title: projects.titleFromPrompt(prompt),
+            prompt,
+            meta: { kind: "code", buildType: (req.body && req.body.buildType) || "website" },
+            owner
+          });
+        } catch (e) {
+          console.warn("[codeagent] could not open a project for the conversation:", e && e.message);
+        }
+      }
       if (project) {
         try {
           const chatId = String((req.body && req.body.chatId) || "");
@@ -4986,7 +5007,13 @@ function getConversationalFallback(prompt, history) {
           await projects.addTurn(project.id, { role: "agent", kind: "text", body: reply, chatId });
         } catch (e) {}
       }
-      return res.status(200).json({ chitchat: reply });
+      // The slug is what lets the client move off /agent, so a refresh has
+      // an address to reload. The 202 path has always returned one.
+      return res.status(200).json({
+        chitchat: reply,
+        projectId: project ? project.id : null,
+        projectSlug: project ? (project.slug || project.id) : null
+      });
     }
 
     // For fresh builds (no project yet): run assessPrompt if needed to detect questions/clarifications before building
@@ -5278,7 +5305,15 @@ app.get("/api/codeagent/runs/:id/events", async (req, res) => {
       const fresh = await runStore.getEvents(run.id, lastSeq);
       for (const ev of fresh) {
         if (closed) break;
-        sseFrame(res, ev.type, Object.assign({}, ev.payload, { seq: ev.seq }), ev.seq);
+        /* `at` travels with the payload, not just `seq`.
+
+           A replayed turn had no way to say how long it took: the frames
+           carried what happened and not when, so every restored panel was
+           headed "Steps" where the live one says "Thought for 8 seconds".
+           The turn row's `ms` only covers runs recorded since it started
+           being written; the event timestamps have been there all along
+           and cover every run in the database. */
+        sseFrame(res, ev.type, Object.assign({}, ev.payload, { seq: ev.seq, at: ev.at }), ev.seq);
         if (ev.seq > lastSeq) lastSeq = ev.seq;
       }
       if (closed) break;

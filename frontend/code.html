@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=6.5">
+<link rel="stylesheet" href="/styles/pages/code.css?v=6.6">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -2485,15 +2485,15 @@
     return out;
   }
 
-  /** "47s" / "2m 8s". One formatter, because the title and the status row
-      under it have to agree and there were two copies of this ternary. */
+  /** "47s" / "2m 8s" — the compact form, for the status row's numbers. */
   function secsText(s) { return s < 60 ? s + "s" : Math.floor(s / 60) + "m " + (s % 60) + "s"; }
-
-  /* A restored panel with no duration says "Done", not "Steps".
-     Only turns written since ms started being recorded have a time to
-     show, and every older one fell back to a word that reads like a
-     heading on something still in progress — the live panel settles to
-     "Thought for 47s", so the replay has to settle to something too. */
+  /** "8 seconds" / "2m 8s" — the spoken form, for the heading. Word for
+      word what the live panel's done() writes, because a restored turn and
+      a finished live one are the same thing and must not read differently. */
+  function spentText(s) {
+    return s < 60 ? s + (s === 1 ? " second" : " seconds")
+                  : Math.floor(s / 60) + "m " + (s % 60) + "s";
+  }
 
   /** The same panel the live turn drew, already finished. */
   function renderPastSteps(prompt, steps, seconds, tokens) {
@@ -2511,12 +2511,16 @@
         '<span class="th2-spark" aria-hidden="true"></span>' +
         '<span class="th2-num th2-time"></span>' +
       '</div>';
-    wrap.querySelector(".th2-title").textContent = seconds ? "Thought for " + secsText(seconds) : "Done";
-    const st = wrap.querySelector(".th2-status");
+    /* The heading is the summary and the status line is the receipt — the
+       same division done() makes on a live turn, so returning to a chat
+       reads the way watching it did. The heading says how long it thought;
+       "Done" belongs at the end of the numbers, not in place of them. */
+    wrap.querySelector(".th2-title").textContent = seconds ? "Thought for " + spentText(seconds) : "Thought it through";
     const bits = [];
     if (seconds) bits.push(secsText(seconds));
     if (tokens) bits.push((tokens >= 1000 ? (tokens / 1000).toFixed(1).replace(/\.0$/, "") + "k" : tokens) + " tokens");
-    if (!bits.length) st.remove(); else wrap.querySelector(".th2-time").textContent = bits.join("  ·  ");
+    bits.push("Done");
+    wrap.querySelector(".th2-time").textContent = bits.join("  ·  ");
 
     wrap.querySelector(".th2-top").addEventListener("click", function () {
       wrap.classList.toggle("folded");
@@ -2560,11 +2564,20 @@
       try { events.push({ type: em[1].trim(), payload: JSON.parse(dm[1]) }); } catch (e) { /* skip */ }
     }
     if (!events.length) return null;
-    /* Tokens are real — the run reported them. The elapsed time is not in
-       here: the frames carry the payloads and not the `at` each row was
-       written with, so the caller passes it in off the turn row instead. */
+    /* Tokens are real — the run reported them. So is the duration now: the
+       frames carry the `at` each row was written with, so the run can be
+       measured from its first event to its last. The turn row's `ms` is
+       the better number where it exists — it is the run's own clock — but
+       only runs recorded since it started being written have one, and
+       every run in the database has timestamps. */
     const usage = events.filter((e) => e.type === "usage").pop();
-    return { steps: stepsFromEvents(events), tokens: usage && usage.payload ? usage.payload.tokens : 0 };
+    const times = events.map((e) => Date.parse(e.payload && e.payload.at)).filter((t) => t);
+    const spanMs = times.length > 1 ? Math.max.apply(null, times) - Math.min.apply(null, times) : 0;
+    return {
+      steps: stepsFromEvents(events),
+      tokens: usage && usage.payload ? usage.payload.tokens : 0,
+      seconds: spanMs > 0 ? Math.max(1, Math.round(spanMs / 1000)) : 0
+    };
   }
 
   /** Steps for one past turn, fetched and inserted where it happened. */
@@ -2572,7 +2585,7 @@
     try {
       const got = await fetchRunSteps(runId);
       if (!got) return;
-      const panel = renderPastSteps("", got.steps, seconds || 0, got.tokens);
+      const panel = renderPastSteps("", got.steps, seconds || got.seconds, got.tokens);
       if (panel && anchorNode && anchorNode.parentNode) anchorNode.parentNode.insertBefore(panel, anchorNode);
     } catch (e) { /* history without its steps is the old behaviour, not a failure */ }
   }
@@ -2601,9 +2614,12 @@
         '<span class="th2-spark" aria-hidden="true"></span>' +
         '<span class="th2-num th2-time"></span>' +
       '</div>';
-    wrap.querySelector(".th2-title").textContent = seconds ? "Thought for " + secsText(seconds) : "Done";
-    if (seconds) wrap.querySelector(".th2-time").textContent = secsText(seconds);
-    else wrap.querySelector(".th2-status").remove();
+    /* Same heading and same receipt as the settled panel it will become,
+       so opening one does not rewrite the line above it. The turn's own
+       duration if the row carries it; otherwise the fetch brings one back
+       off the event timestamps and the replacement fills it in. */
+    wrap.querySelector(".th2-title").textContent = seconds ? "Thought for " + spentText(seconds) : "Thought it through";
+    wrap.querySelector(".th2-time").textContent = (seconds ? secsText(seconds) + "  ·  " : "") + "Done";
 
     let loading = false;
     /* Bound to the node, not delegated off agLog: restore builds this
@@ -2624,7 +2640,7 @@
       let got = null;
       try { got = await fetchRunSteps(runId); } catch (e) { /* swallowed, as fillPastSteps does */ }
       loading = false;
-      const panel = got && renderPastSteps("", got.steps, seconds || 0, got.tokens);
+      const panel = got && renderPastSteps("", got.steps, seconds || got.seconds, got.tokens);
       /* Nothing to show is not an error state. A run whose events yield no
          steps, or a fetch that failed, leaves the transcript reading the
          way it did before any of this existed — the header goes away
@@ -4101,6 +4117,17 @@
             finalizeThinking();
             resetBootScreen();
             if (data.chitchat) {
+              /* Same adoption the 202 branch does. A conversation that
+                 built nothing still has a project behind it now, and
+                 without taking its slug the tab stays on /agent — so the
+                 exchange was saved and then refreshed away anyway. */
+              if (data.projectSlug && !projectSlug) {
+                projectId = data.projectId || projectId;
+                projectSlug = data.projectSlug;
+                try { history.replaceState(null, "", "/agent/" + projectSlug); } catch (e) {}
+                if ($("agNewExtras")) $("agNewExtras").hidden = true;
+                if ($("agRecent")) $("agRecent").hidden = true;
+              }
               // The agent talking, so it reads at full contrast. .muted is
               // for the operational notices around it — publishing, gates,
               // a cancelled turn — not for what it said.
