@@ -198,6 +198,32 @@ export async function claimNext(workerId: string, leaseMs = 60000): Promise<RunD
     { sort: { createdAt: 1, id: 1 }, returnDocument: "after", includeResultMetadata: false, projection: { _id: 0 } }
   ));
 }
+/**
+ * Take a run out of the queue to execute it HERE, in this process.
+ *
+ * The same atomic move claimNext makes, without a lease, because the
+ * in-process path has no second machine to fence against — it either
+ * gets the run or it does not.
+ *
+ * Needed because the two executors were not mutually exclusive. The API
+ * decides between handing a run to the worker and running it itself, and
+ * a run it decided to run itself stayed `queued` until executeRun got
+ * around to setting `running` — a window any worker polling claimNext
+ * could take it in. Both then executed the same run: two "Analyzing
+ * requirements…", two of every step, one transcript.
+ *
+ * Returns false when something else already has it, which is the caller's
+ * signal to leave it alone.
+ */
+export async function claimInProcess(runId: string): Promise<boolean> {
+  const at = now();
+  const result = await dbRequired().collection("agent_runs").updateOne(
+    { id: runId, status: "queued", cancelled: false },
+    { $set: { status: "running", phase: "planning", claimedAt: at, updatedAt: at } }
+  );
+  return result.modifiedCount > 0;
+}
+
 export async function renewLease(runId: string, workerId: string, generation: number, leaseMs = 60000): Promise<boolean> {
   const result = await dbRequired().collection("agent_runs").updateOne(
     Object.assign({ id: runId, status: { $in: ACTIVE } }, fenceQuery({ workerId, generation })),

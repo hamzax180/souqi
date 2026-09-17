@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=5.2">
+<link rel="stylesheet" href="/styles/pages/code.css?v=5.3">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -2295,6 +2295,9 @@
   function stepsFromEvents(events) {
     const out = [];
     let group = null;
+    /* Whether the paragraph being appended to belongs to the turn now
+       running. A new turn starts a new paragraph. */
+    let openedProse = false;
     const flush = () => {
       if (!group) return;
       const tokens = summariseGroup(group, true);
@@ -2320,8 +2323,9 @@
            timer while the run streamed, so the split between rows is an
            artefact of the timer and not of anything the agent meant. */
         const last = out[out.length - 1];
-        if (last && last.prose !== undefined) last.prose += p.text;
-        else { flush(); out.push({ prose: p.text }); }
+        // Only into the block this turn started; see openedProse.
+        if (last && last.prose !== undefined && openedProse) last.prose += p.text;
+        else { flush(); out.push({ prose: p.text }); openedProse = true; }
         continue;
       }
       if (e.type === "tool_result" && p.ok && ["read_file", "list_files", "search_code"].indexOf(p.tool) >= 0) {
@@ -2339,11 +2343,10 @@
       if (e.type !== "stage") continue;
       const id = String(p.id || "");
       if (/^turn-\d+$/.test(id)) {
+        flush();
+        openedProse = false;
         if (p.state === "start") {
-          flush();
           group = { created: [], edited: [], commands: [], reads: 0, added: 0, removed: 0, items: [] };
-        } else {
-          flush();
         }
         continue;
       }
@@ -2622,6 +2625,11 @@
          still the last thing in the panel; a step landing in between
          ends the paragraph, which is what a paragraph break means here —
          it said something, it did something, it said something else. */
+      /* A turn boundary ends the paragraph. Without this two turns'
+         narration ran into one block — "...the right entry point.Empty
+         scaffold — good" — because the row that used to separate them is
+         now created lazily and may not exist yet. */
+      breakSay() { saidEl = null; },
       say(text) {
         if (stopped || !text) return;
         if (!saidEl || saidEl !== stepsEl.lastChild) {
@@ -3648,6 +3656,7 @@
            itself above prose that has not arrived yet. Claimed at the
            top, the summary sat over the sentence explaining it. */
         stepGroup = { id: id, created: [], edited: [], commands: [], reads: 0, added: 0, removed: 0, items: [], handle: null };
+        thinkPanel.breakSay();
         return;
       }
       if (isTurn && state !== "start") {
@@ -6272,6 +6281,28 @@
     const m = /^\/agent\/([\p{L}\p{N}-]{1,60})$/u.exec(decodeURIComponent(location.pathname));
     if (!m) return;
     const slug = m[1];
+
+    /* The shape of a conversation, while the conversation loads.
+
+       This column was empty until the fetch came back and then filled in
+       one frame, which reads as broken-then-fixed rather than as loading.
+       Cleared below by the same `agLog.innerHTML = ""` that was already
+       there, so nothing has to remember to take it down. */
+    agLog.innerHTML =
+      '<div class="ag-skel">' +
+        ['76%', '92%', '61%'].map((w, i) =>
+          '<div class="ag-skel-turn me"><div class="ag-skel-bar" style="width:' + (i ? '38%' : '52%') + '"></div></div>' +
+          '<div class="ag-skel-turn">' +
+            '<div class="ag-skel-bar" style="width:' + w + '"></div>' +
+            '<div class="ag-skel-bar" style="width:' + (i === 1 ? '84%' : '70%') + '"></div>' +
+            '<div class="ag-skel-bar" style="width:45%"></div>' +
+          '</div>'
+        ).join('') +
+      '</div>';
+    $("agNewExtras").hidden = true;
+    $("agRecent").hidden = true;
+    agSection.classList.remove("is-new");
+
     try {
       const res = await fetch("/api/codeagent/" + encodeURIComponent(slug)
         + (chatId ? "?chat=" + encodeURIComponent(chatId) : ""), { credentials: "same-origin" });

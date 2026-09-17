@@ -46,6 +46,7 @@ exports.getRun = getRun;
 exports.updateRun = updateRun;
 exports.claimRun = claimRun;
 exports.claimNext = claimNext;
+exports.claimInProcess = claimInProcess;
 exports.renewLease = renewLease;
 exports.cancelRun = cancelRun;
 exports.appendEvent = appendEvent;
@@ -244,6 +245,28 @@ async function claimNext(workerId, leaseMs = 60000) {
     return asDocument(await db.collection("agent_runs").findOneAndUpdate({ status: "queued", cancelled: false }, { $set: { status: "running", phase: "planning", leaseOwner: workerId,
             leaseExpiresAt: new Date(Date.now() + leaseDuration(leaseMs)).toISOString(), claimedAt: at, updatedAt: at },
         $inc: { leaseGeneration: 1 } }, { sort: { createdAt: 1, id: 1 }, returnDocument: "after", includeResultMetadata: false, projection: { _id: 0 } }));
+}
+/**
+ * Take a run out of the queue to execute it HERE, in this process.
+ *
+ * The same atomic move claimNext makes, without a lease, because the
+ * in-process path has no second machine to fence against — it either
+ * gets the run or it does not.
+ *
+ * Needed because the two executors were not mutually exclusive. The API
+ * decides between handing a run to the worker and running it itself, and
+ * a run it decided to run itself stayed `queued` until executeRun got
+ * around to setting `running` — a window any worker polling claimNext
+ * could take it in. Both then executed the same run: two "Analyzing
+ * requirements…", two of every step, one transcript.
+ *
+ * Returns false when something else already has it, which is the caller's
+ * signal to leave it alone.
+ */
+async function claimInProcess(runId) {
+    const at = now();
+    const result = await dbRequired().collection("agent_runs").updateOne({ id: runId, status: "queued", cancelled: false }, { $set: { status: "running", phase: "planning", claimedAt: at, updatedAt: at } });
+    return result.modifiedCount > 0;
 }
 async function renewLease(runId, workerId, generation, leaseMs = 60000) {
     const result = await dbRequired().collection("agent_runs").updateOne(Object.assign({ id: runId, status: { $in: ACTIVE } }, fenceQuery({ workerId, generation })), { $set: { leaseExpiresAt: new Date(Date.now() + leaseDuration(leaseMs)).toISOString(), updatedAt: now() } });

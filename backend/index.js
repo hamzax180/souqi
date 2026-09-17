@@ -5104,6 +5104,20 @@ function getConversationalFallback(prompt, history) {
     }
   }
 
+  /* Take it out of the queue before running it, or a worker can take it
+     too. Both executors were writing into one transcript — the duplicate
+     "Analyzing requirements..." was two runs of the same run. Awaited,
+     unlike the execution itself, because whether we may start is the one
+     thing that has to be settled before we do. */
+  if (!handedOff) {
+    try {
+      if (!await runStore.claimInProcess(run.id)) handedOff = true;
+    } catch (e) {
+      console.warn("[codeagent] in-process claim failed, leaving it queued:", e && e.message);
+      handedOff = true;
+    }
+  }
+
   // Launch the autonomous agent runner in background
   if (!handedOff) agentRunner.executeRun(run.id, {
     history: req.body && req.body.conversation,

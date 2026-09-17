@@ -281,6 +281,25 @@
      unreachable by scrolling because the scroller did not believe it
      existed. A plan could not be confirmed on mobile at all. */
   .ag-log > *{flex:0 0 auto}
+
+  /* ---- the transcript's own skeleton ------------------------------------
+     Opening a saved chat showed an empty column and then, all at once, the
+     whole conversation — which reads as a page that was broken and then
+     suddenly was not. /projects and /deployments already answer this with
+     a shape that shimmers while the real thing loads, so this is that
+     shape at the transcript's scale: a short bubble on the right, a few
+     lines of reply on the left. Same sweep, same timing, so the three
+     pages load like one product. */
+  .ag-skel{display:flex;flex-direction:column;gap:18px;padding:6px 0 10px;animation:agIn .18s var(--ease) both}
+  .ag-skel-turn{display:flex;flex-direction:column;gap:9px}
+  .ag-skel-turn.me{align-items:flex-end}
+  .ag-skel-bar{height:11px;border-radius:7px;background:var(--paper-2);position:relative;overflow:hidden}
+  .ag-skel-bar::after{content:"";position:absolute;inset:0;transform:translateX(-100%);
+    background:linear-gradient(90deg,transparent,rgba(var(--wash-rgb),.09),transparent);
+    animation:agSweep 1.4s var(--ease) infinite}
+  .ag-skel-turn.me .ag-skel-bar{height:34px;border-radius:14px}
+  @keyframes agSweep{to{transform:translateX(100%)}}
+  @media (prefers-reduced-motion:reduce){ .ag-skel-bar::after{animation:none} }
   /* The new-chat "hero": greeting + composer + tiles/examples centered as
      ONE group. Three earlier attempts tried to do this with
      justify-content on .ag-log alone and all of them clipped the
