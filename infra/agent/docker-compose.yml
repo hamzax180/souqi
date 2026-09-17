@@ -55,10 +55,21 @@ services:
       DEPLOY_PLATFORM_TOKEN: ${DEPLOY_PLATFORM_TOKEN:?this is the deploy plane's DEPLOY_PLATFORM_TOKEN}
 
       # --- the model ------------------------------------------------
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      # One route per purpose, each with its own base URL, key and model
+      # — the same three the API reads. AI_ENABLED is the master switch:
+      # unset, the client refuses every call and the worker claims runs
+      # only to fail them.
+      AI_ENABLED: ${AI_ENABLED:-1}
+      AI_JSON_BASE_URL: ${AI_JSON_BASE_URL:-}
+      AI_JSON_KEY: ${AI_JSON_KEY:?the worker cannot call the model without AI_JSON_KEY}
       AI_JSON_MODEL: ${AI_JSON_MODEL:-}
       AI_JSON_POWER_MODEL: ${AI_JSON_POWER_MODEL:-}
+      AI_PROSE_BASE_URL: ${AI_PROSE_BASE_URL:-}
+      AI_PROSE_KEY: ${AI_PROSE_KEY:-}
       AI_PROSE_MODEL: ${AI_PROSE_MODEL:-}
+      AI_VISION_BASE_URL: ${AI_VISION_BASE_URL:-}
+      AI_VISION_KEY: ${AI_VISION_KEY:-}
+      AI_VISION_MODEL: ${AI_VISION_MODEL:-}
       AI_MONTHLY_BUDGET_USD: ${AI_MONTHLY_BUDGET_USD:-}
 
       # --- the run's own limits -------------------------------------

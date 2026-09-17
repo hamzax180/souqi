@@ -20,6 +20,11 @@ backend/mcp.json
 
 # Deployment plane: real secrets and staged user source
 infra/deploy/.env
+# The agent worker's. Holds MONGODB_URI — the platform database — which
+# is the whole reason that worker is a separate stack from the deploy
+# plane. Covered by the bare `.env` rule above; named here because the
+# other two are, and a rule you can see beats one you have to infer.
+infra/agent/.env
 infra/deploy/node_modules/
 infra/deploy/builds/
 

@@ -89,14 +89,22 @@ say "Building and starting"
 $SSH "cd ${REMOTE_DIR}/infra/agent && docker compose up -d --build" 2>&1 | sed 's/^/  /'
 
 # A worker that cannot reach Mongo exits and compose restarts it, so
-# "the container is up" proves nothing. What proves it is the heartbeat
-# it writes to agent_workers — the same row getWorkerHealth reads, and
-# the same one run-routes refuses a build without.
-say "Waiting for the worker to report itself healthy"
+# "the container is up" proves nothing.
+#
+# This asked the LOG first, and the worker did not print anything after
+# connecting — it claimed silently for ever, so a healthy deploy looked
+# exactly like a hung one and ship.sh called a working worker dead. The
+# worker announces itself now, but the heartbeat is the better question
+# anyway: it is the same row getWorkerHealth() reads and the same one
+# the API requires before handing over a run, and `ready` additionally
+# means the verifier answered.
+say "Waiting for the worker to heartbeat"
 OK=""
+HEARTBEAT_PROBE='const db=require("/app/backend/db"),store=require("/app/backend/lib/codeagent/run-store");(async()=>{await db.connect();store.init({getMasterDb:db.getMasterDb});const h=await store.getWorkerHealth();await db.close();process.exit(h&&h.healthy&&h.workers.some(w=>w.ready)?0:1)})().catch(()=>process.exit(1))'
 for i in $(seq 1 20); do
-  if $SSH "cd ${REMOTE_DIR}/infra/agent && docker compose logs --tail 40 agent-worker 2>&1" \
-       | grep -qiE "agent-worker.*(ready|claim|heartbeat)|\[agent-worker\]"; then OK="yes"; break; fi
+  if $SSH "cd ${REMOTE_DIR}/infra/agent && docker compose exec -T agent-worker node -e '${HEARTBEAT_PROBE}'" >/dev/null 2>&1; then
+    OK="yes"; break
+  fi
   sleep 3
 done
 

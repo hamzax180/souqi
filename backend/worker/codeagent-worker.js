@@ -71,6 +71,15 @@ async function main() {
         }
     }
     await heartbeat();
+    /* Say so. The worker used to start completely silently — it connected
+       to Mongo, began claiming, and printed nothing ever again unless a
+       run failed. That is indistinguishable from a process that hung, and
+       it is what made ship.sh unable to tell a healthy deploy from a dead
+       one on the first attempt. */
+    const health = await store.getWorkerHealth().catch(() => null);
+    console.log("[agent-worker] ready — id " + workerId +
+        ", verifier " + ((health && health.healthy) ? "reachable" : "UNREACHABLE") +
+        ", claiming from agent_runs");
     const healthTimer = setInterval(() => heartbeat().catch((e) => console.error("[agent-worker] heartbeat:", e.message)), 10000);
     try {
         while (!shutdown.signal.aborted) {
