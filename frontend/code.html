@@ -2464,6 +2464,12 @@
       under it have to agree and there were two copies of this ternary. */
   function secsText(s) { return s < 60 ? s + "s" : Math.floor(s / 60) + "m " + (s % 60) + "s"; }
 
+  /* A restored panel with no duration says "Done", not "Steps".
+     Only turns written since ms started being recorded have a time to
+     show, and every older one fell back to a word that reads like a
+     heading on something still in progress — the live panel settles to
+     "Thought for 47s", so the replay has to settle to something too. */
+
   /** The same panel the live turn drew, already finished. */
   function renderPastSteps(prompt, steps, seconds, tokens) {
     if (!steps || !steps.length) return null;
@@ -2480,7 +2486,7 @@
         '<span class="th2-spark" aria-hidden="true"></span>' +
         '<span class="th2-num th2-time"></span>' +
       '</div>';
-    wrap.querySelector(".th2-title").textContent = seconds ? "Thought for " + secsText(seconds) : "Steps";
+    wrap.querySelector(".th2-title").textContent = seconds ? "Thought for " + secsText(seconds) : "Done";
     const st = wrap.querySelector(".th2-status");
     const bits = [];
     if (seconds) bits.push(secsText(seconds));
@@ -2570,7 +2576,7 @@
         '<span class="th2-spark" aria-hidden="true"></span>' +
         '<span class="th2-num th2-time"></span>' +
       '</div>';
-    wrap.querySelector(".th2-title").textContent = seconds ? "Thought for " + secsText(seconds) : "Steps";
+    wrap.querySelector(".th2-title").textContent = seconds ? "Thought for " + secsText(seconds) : "Done";
     if (seconds) wrap.querySelector(".th2-time").textContent = secsText(seconds);
     else wrap.querySelector(".th2-status").remove();
 
