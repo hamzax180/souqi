@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=4.6">
+<link rel="stylesheet" href="/styles/pages/code.css?v=4.7">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -624,7 +624,7 @@
    still beside them. */
 .ag-thinking:not(.done) .th2-title {
   background: linear-gradient(90deg,
-    var(--ink, #1b252b) 0%, var(--mut, #8a8f91) 22%, var(--ink, #1b252b) 44%) 0 0 / 240% 100%;
+    var(--ink, #1b252b) 0%, var(--ink, #1b252b) 12%, var(--mut, #8a8f91) 25%, var(--ink, #1b252b) 38%, var(--ink, #1b252b) 100%) 0 0 / 200% 100%;
   -webkit-background-clip: text; background-clip: text;
   -webkit-text-fill-color: transparent; color: transparent;
   animation: th2Sweep 2.6s linear infinite;
@@ -649,12 +649,19 @@
      so a second spinning thing beside it is two answers to one
      question. */
   background: linear-gradient(90deg,
-    var(--ink-2, #6b7076) 0%, var(--ink, #1b252b) 18%, var(--ink-2, #6b7076) 36%) 0 0 / 220% 100%;
+    var(--ink-2, #6b7076) 0%, var(--ink-2, #6b7076) 12%, var(--ink, #1b252b) 25%, var(--ink-2, #6b7076) 38%, var(--ink-2, #6b7076) 100%) 0 0 / 200% 100%;
   -webkit-background-clip: text; background-clip: text;
   -webkit-text-fill-color: transparent; color: transparent;
   animation: th2Sweep 1.9s linear infinite;
 }
-@keyframes th2Sweep { to { background-position: -220% 0; } }
+/* 200% size with a 200-point travel, and it has to be that pair.
+   background-position percentages resolve against (container - image),
+   not the image, so a size of S% moving by ΔP points travels
+   W·ΔP/100 while the pattern repeats every W·S/100 — equal only when
+   S = ΔP = 200. It was 220/220 here and 240/220 on the title, landing
+   a fifth of a tile out of phase every loop, which is the highlight
+   jumping back rather than arriving. */
+@keyframes th2Sweep { from { background-position: 0 0; } to { background-position: -200% 0; } }
 .th2-step.failed { color: #e0616d; }
 
 /* The status line. */
@@ -676,10 +683,10 @@
   -webkit-mask: url(/assets/logo-mark.png) center / contain no-repeat;
   mask: url(/assets/logo-mark.png) center / contain no-repeat;
   background: linear-gradient(115deg,
-    #1aa6df 0%, #18c8a8 28%, #5cb12f 50%, #18c8a8 72%, #1aa6df 100%) 0 0 / 280% 100%;
+    #1aa6df 0%, #18c8a8 25%, #5cb12f 50%, #18c8a8 75%, #1aa6df 100%) 0 0 / 200% 100%;
   animation: th2Shine 2.4s linear infinite;
 }
-@keyframes th2Shine { to { background-position: -280% 0; } }
+@keyframes th2Shine { from { background-position: 0 0; } to { background-position: -200% 0; } }
 /* Stopped, and holding the brand's own three stops rather than a frame
    of the sweep — a finished run should look settled, not paused. */
 .th2.done .th2-spark {
