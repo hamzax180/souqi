@@ -828,7 +828,12 @@
      the grid or the cards stop matching, and a title that is allowed a
      second line decides that per card. The full string is on the card's
      title attribute, which is where a truncated name is recoverable. */
+  /* The title sets its own colour. .foot is var(--mut) — the grey the
+     metadata line under it wants — and b inherited it, so the one piece of
+     text on the card you actually read rendered in the colour meant for
+     the timestamp beside it. */
   .card .nm b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    color:var(--ink);
     font-size:.9rem;font-weight:600;line-height:1.35;letter-spacing:-.006em}
 
   /* The footer is the caption under the thumbnail: name on the first line,
