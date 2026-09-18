@@ -192,21 +192,20 @@
      The condition is "the panel is wide", not "the panel is open", because
      pointing at a shut rail peeks it to the full 238px without ever setting
      .on — and a peeked panel is the same picture as an open one. */
-  .ag-hist-head{ padding-left:8px; }
-  .ag-history.on .ag-hist-mark,
-  .ag-history:hover .ag-hist-mark,
-  .ag-history.hover-open .ag-hist-mark{ order:0; margin:0; }
   .ag-history.on .ag-hist-search,
   .ag-history:hover .ag-hist-search,
   .ag-history.hover-open .ag-hist-search{ order:2; margin-left:auto; margin-right:38px; }
 
-  /* Shut, the rail IS the logo's square: no padding, and the auto margins
-     centre it at the same 8. It stays visible — hiding it left the corner
-     empty on a rail whose whole job is to be recognisable at 44px. */
-  .ag-history:not(.on):not(:hover):not(.hover-open) .ag-hist-head{ padding-left:0 !important; }
-  .ag-history:not(.on):not(:hover):not(.hover-open) .ag-hist-mark{
-    display:grid !important; margin:0 auto !important;
-  }
+  /* It stays visible when shut — hiding it left the corner empty on a rail
+     whose whole job is to be recognisable at 44px. */
+  .ag-history:not(.on):not(:hover):not(.hover-open) .ag-hist-mark{ display:grid !important; }
+
+  /* The last 2px. The header is as tall as its tallest child, and that is
+     the 30px search button, which leaves the flow when the rail shuts — so
+     the header fell to the 28px logo and took every row under it up with it.
+     Reserving the button's height keeps the rows where they were. Desktop
+     only: the phone header already measures the same in both states. */
+  .ag-history:not(.on):not(:hover):not(.hover-open) .ag-hist-head{ min-height:52px !important; }
 
   /* The button belongs to the wide panel and only to it. There is nowhere in
      a 44px rail to put it that is not on top of the logo, which is what it
@@ -259,8 +258,65 @@
    sits when it is centred in a 44px rail, so holding that number is what
    makes the two states the same picture. */
 @media (max-width:900px){
-  .ag-history.on .ag-hist-head{ padding-left:8px !important; }
-  .ag-history.on .ag-hist-mark{ order:0 !important; margin:0 !important; }
   .ag-history.on .ag-hist-search{ order:2 !important; margin-left:auto !important; margin-right:44px !important; }
   #agDeskSidebarToggle.on{ left:calc(min(240px, 80vw) - 40px) !important; }
 }
+
+/* AND EVERY OTHER ROW HOLDS ITS COLUMN TOO.
+
+   The header was the loud one, but the rows under it moved as well: shut,
+   the workspace pill and the nav tabs switch to justify-content:center with
+   their own margins, so the avatar sat at x=9 open and x=17 shut — an 8px
+   step on every toggle — and each nav icon stepped a pixel the other way.
+
+   It was doing it downward as well, which is the harder one to point at:
+   the shut rail had its own vertical rhythm — header 44px against 42, pill
+   38 against 40 with different margins, nav rows 32 against 28 — so every
+   row below the header landed at a different y. The first one sat at 86
+   shut and 90 open, and the ones under it drifted further with each row.
+
+   Centring in a 44px rail and left-aligning in a 238px panel are two rules
+   that cannot agree, so the shut rail takes the open panel's boxes whole:
+   the same paddings and margins give the same x AND the same y whatever the
+   width behind them. The numbers are read off the open state, not chosen —
+   it is the one with room to be laid out properly, so it is the one the
+   rail follows. What the rail keeps is its own width, and clipping.
+
+   Outside the width queries on purpose. A shut rail is 44px on a phone and
+   on a desktop, and this is what a shut rail looks like. */
+/* Desktop only. The phone's drawer has its own metrics — its rows sit 28px
+   apart where the desktop panel puts them 34 — and it already measured the
+   same shut as open. Handing it the desktop panel's boxes broke a rail that
+   was not broken: every row moved by up to 50px. Each breakpoint follows its
+   own open panel. */
+@media (min-width:901px){
+  .ag-history:not(.on):not(:hover):not(.hover-open) .ag-hist-head{
+    height: auto !important; flex: 0 0 auto !important;
+    padding: 10px 10px 12px 8px !important;
+  }
+  .ag-history:not(.on):not(:hover):not(.hover-open) .ag-ws-wrap{ display: block !important; }
+  .ag-history:not(.on):not(:hover):not(.hover-open) .ag-ws{
+    justify-content: flex-start !important;
+    margin: 8px 10px !important;
+    padding: 6px 10px 6px 6px !important;
+  }
+  .ag-history:not(.on):not(:hover):not(.hover-open) .ag-hist-tabs{
+    padding: 2px 6px 4px !important;
+  }
+  .ag-history:not(.on):not(:hover):not(.hover-open) .ag-hist-tab{
+    justify-content: flex-start !important;
+    padding: 7px 6px !important;
+  }
+}
+
+/* THE LOGO'S INSET IS NOT A STATE. It is 8px from the panel's left edge,
+   shut, peeked, open, phone, desktop — one declaration, no conditions.
+
+   Every version of this before it keyed the inset on something: on .on, and
+   the peek broke it; on :hover as well, and code.css broke it, because
+   pointing at that page's rail does NOT widen it, so a shut-and-hovered rail
+   got the wide rules with the rail's own zero padding and put the logo at
+   x=0, flat against the edge. A number that is the same in every state does
+   not need to know which state it is in. */
+.ag-history .ag-hist-head{ padding-left: 8px !important; }
+.ag-history .ag-hist-mark{ order: 0 !important; margin: 0 !important; }
