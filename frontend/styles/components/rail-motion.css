@@ -166,25 +166,70 @@
    them, so the same geometry now wins on all four. Same specificity, later
    source — the per-page copies below are dead weight, not overrides. */
 @media (min-width:901px){
+  /* The condition is "the panel is wide", not "the panel is open" — pointing
+     at a shut rail peeks it open to the full 238px without ever setting .on.
+     Keying this on .on alone left the peeked panel with the SHUT geometry:
+     the header kept padding-left:0 and the logo centred itself in 238px, so
+     it drifted to x=145 on projects and deployments, then snapped back to 44
+     the moment you clicked. Peek and open are the same picture now. */
   .ag-history.on .ag-hist-mark,
   .ag-history:hover .ag-hist-mark,
-  .ag-history.hover-open .ag-hist-mark{ order:0; margin-left:0; }
+  .ag-history.hover-open .ag-hist-mark{ order:0; margin-left:0; margin-right:0; }
   .ag-history.on .ag-hist-search,
   .ag-history:hover .ag-hist-search,
   .ag-history.hover-open .ag-hist-search{ order:2; margin-left:auto; margin-right:38px; }
+
+  /* The button does not animate its own position. It shares .ag-pv-toggle-btn
+     with the preview control, whose `transition: all` was written for a
+     border and a background — and swept `left` in with them. So the panel
+     snapped open and the button spent 185ms crawling 89, 165, 188, 195, 198
+     across it, arriving after everything else had settled. That lag is the
+     whole of "the sidebar button is still tweaking". Colour still eases. */
+  #agDeskSidebarToggle{
+    transition-property: background-color, border-color, color, box-shadow, opacity !important;
+  }
+
+  /* The button does not animate its own position. It shares .ag-pv-toggle-btn
+     with the preview control, whose `transition: all` was written for a
+     border and a background — and swept `left` in with them. So the panel
+     snapped open and the button spent 185ms crawling 89, 165, 188, 195, 198
+     across it, arriving after everything else had settled. That lag is the
+     whole of "the sidebar button is still tweaking". Colour still eases. */
+  #agDeskSidebarToggle{
+    transition-property: background-color, border-color, color, box-shadow, opacity !important;
+  }
 
   /* Present whenever the rail is shut, because it is the only way to open
      it again. security.css hid it outright in this state, which left the
      page with a closed sidebar and no control that reopens one — the rail
      pages that get this right merely fade it to opacity 0 until the rail is
      hovered, and that still leaves a button to find. */
-  #agDeskSidebarToggle:not(.on){ display:inline-flex !important; left:7px !important; }
-  #agDeskSidebarToggle.on{ left:calc(var(--sb-w) - 40px) !important; }
+  /* The PANEL says where the button goes, not the button's own class. Those
+     two are meant to be toggled together and on three of the four pages they
+     shipped disagreeing — the markup carried `on` while the aside did not, so
+     the button drew itself in the open position beside a 44px rail. It was
+     invisible while both positions were left:7 and became a button floating
+     in the content area the moment they stopped being. The markup is fixed
+     too; this makes it impossible to matter. */
+  #agDeskSidebarToggle{ left:7px !important; }
+  /* Written through the sidebar rather than as a bare id so it can outrank
+     security.css's `#agDeskSidebarToggle:not(.on){display:none}`, which is
+     one class heavier than an id on its own. That rule is why closing the
+     sidebar on /security left no control that could reopen it. */
+  .ag-history ~ #agDeskSidebarToggle,
+  .ag-history ~ * #agDeskSidebarToggle{ display:inline-flex !important; }
+  .ag-history.on ~ #agDeskSidebarToggle,
+  .ag-history.on ~ * #agDeskSidebarToggle,
+  .ag-history:hover ~ #agDeskSidebarToggle,
+  .ag-history:hover ~ * #agDeskSidebarToggle,
+  .ag-history.hover-open ~ #agDeskSidebarToggle,
+  .ag-history.hover-open ~ * #agDeskSidebarToggle{ left:calc(var(--sb-w) - 40px) !important; }
 
   .ag-hist-head{ padding-left:44px; }
-  /* !important because security.css pushes 8px here on a shut-and-hovered
-     rail, which is the one state this block exists to hold still. */
-  .ag-history:not(.on) .ag-hist-head{ padding-left:0 !important; }
+  /* Only while it is actually 44px wide. Scoped off :hover for the same
+     reason as the block above: a peeked panel is a wide panel and wants the
+     reserved strip, not the rail's zero. */
+  .ag-history:not(.on):not(:hover):not(.hover-open) .ag-hist-head{ padding-left:0 !important; }
   .ag-history:not(.on):not(:hover):not(.hover-open) .ag-hist-mark{ display:none; }
 }
 
