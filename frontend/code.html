@@ -5965,6 +5965,39 @@
         '},true);' +
         'document.addEventListener("submit",function(e){e.preventDefault();},true);' +
         '})();<' + '/script>' +
+        /* STORAGE, IN AN ORIGIN THAT HAS NONE.
+
+           The sandbox above deliberately withholds allow-same-origin, so
+           this document runs in an opaque origin — and in an opaque origin
+           `localStorage` does not return null, it THROWS a SecurityError on
+           access. Generated apps reach for it constantly (a game's high
+           score, a todo list, a theme), usually inside a useState
+           initialiser, so the throw happened during the first render and
+           React unmounted the whole tree: a blank preview and a stack in
+           the console pointing at react-dom rather than at the cause.
+
+           Switching the generated code to cookies would fix nothing —
+           document.cookie throws in an opaque origin too; both were
+           measured in this exact sandbox before this was written.
+
+           So the preview gets storage of its own: same API, backed by an
+           object, gone when the frame goes. Session-scoped is the honest
+           behaviour here, because a srcdoc preview has no durable origin
+           to persist into anyway. The DEPLOYED app is served from its own
+           subdomain with a real origin and uses the real thing — this
+           shim exists only inside the fallback preview. */
+        '<script>(function(){' +
+        'function mk(){var m={};return{getItem:function(k){k=String(k);return Object.prototype.hasOwnProperty.call(m,k)?m[k]:null;},' +
+        'setItem:function(k,v){m[String(k)]=String(v);},removeItem:function(k){delete m[String(k)];},' +
+        'clear:function(){m={};},key:function(i){var ks=Object.keys(m);return i<ks.length?ks[i]:null;},' +
+        'get length(){return Object.keys(m).length;}};}' +
+        /* Feature-detected, not assumed: on the WebContainer path this
+           same builder shows a real origin, and replacing a working
+           localStorage with an in-memory one would quietly lose writes. */
+        'var need=false; try{ window.localStorage.getItem("__probe"); }catch(e){ need=true; }' +
+        'if(need){ try{ Object.defineProperty(window,"localStorage",{configurable:true,value:mk()});' +
+        'Object.defineProperty(window,"sessionStorage",{configurable:true,value:mk()}); }catch(e){} }' +
+        '})();<' + '/script>' +
         // Babel.transform() called by hand, not the auto-run <script
         // type="text/babel"> loader — that loader has no way to pass
         // preset options, and the typescript preset's defaults
