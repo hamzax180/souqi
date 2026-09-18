@@ -5376,8 +5376,19 @@ app.get("/api/codeagent/runs/:id", async (req, res) => {
   if (run.projectId) {
     try { project = await projects.get(run.projectId); } catch (e) {}
   }
+  /* Only while it is queued, and only then is it cheap: two counts the
+     status poll was already paying a round trip for. The client draws a
+     different thing for "3rd in line" than for "generating", because a
+     spinner that says the same word for both is what made a real queue
+     indistinguishable from a real build. */
+  let queue = null;
+  if (run.status === "queued") {
+    try { queue = await runStore.queuePosition(run.id); } catch (e) { /* the status still answers */ }
+  }
+
   res.json({
     run,
+    queue,
     projectId: run.projectId,
     projectSlug: project ? project.slug : null,
     files: (chk && chk.files) || {},

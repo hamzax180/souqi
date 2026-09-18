@@ -766,6 +766,10 @@
   background: linear-gradient(115deg,
     #1aa6df 0%, #18c8a8 25%, #5cb12f 50%, #18c8a8 75%, #1aa6df 100%) 0 0 / 200% 100%;
   animation: th2Shine 2.4s linear infinite;
+  /* Lit while it runs. The sweep alone was legible only if you were
+     already looking at it; the glow is what makes "something is
+     happening here" readable from across the message. */
+  filter: drop-shadow(0 0 6px rgba(24, 200, 168, .55));
 }
 @keyframes th2Shine { from { background-position: 0 0; } to { background-position: -200% 0; } }
 /* Stopped, and holding the brand's own three stops rather than a frame
@@ -776,7 +780,27 @@
 .th2-status.is-done .th2-spark {
   animation: none;
   background: linear-gradient(135deg, #1aa6df 0%, #18c8a8 55%, #5cb12f 100%);
-  opacity: .8;
+  /* Full strength, and lit. A turn from THIS session is the live thing on
+     the page even once it has stopped, and .8 made it read as half-off —
+     the same as a turn from last week, which is the one state it should
+     never be confused with. */
+  opacity: 1;
+  filter: drop-shadow(0 0 5px rgba(24, 200, 168, .45));
+}
+/* OFF, because it is over.
+
+   A restored turn is a record, not an event: nothing is running, nothing
+   is going to, and the mark sweeping its brand gradient in the scrollback
+   claimed otherwise on every old message at once. Grey and unlit says
+   "this already happened" without another word on the row to say it.
+   Set on the row at creation rather than inherited from an ancestor, for
+   the reason the rule above it gives: the row gets moved out of the
+   panel, and anything keyed on .th2 stops applying the moment it does. */
+.th2-status.is-past .th2-spark {
+  animation: none;
+  background: var(--mut, #8a8f91);
+  opacity: .38;
+  filter: none;
 }
 /* Standing on its own under the reply rather than tucked inside the
    panel, it needs its own breathing room. */
@@ -2706,7 +2730,7 @@
     // optional extra, and a turn missing it reads as a turn missing data.
     bits.push(tokText(tokens || 0) + " tokens");
     bits.push("Done");
-    const st = el("th2-status is-loose is-done",
+    const st = el("th2-status is-loose is-done is-past",
       '<span class="th2-spark" aria-hidden="true"></span><span class="th2-num th2-time"></span>');
     st.querySelector(".th2-time").textContent = bits.join("  ·  ");
     return st;
@@ -2724,7 +2748,7 @@
         '<span class="th2-title"></span>' +
         '<svg class="th2-fold" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>' +
       '</div><div class="th2-steps"></div>' +
-      '<div class="th2-status">' +
+      '<div class="th2-status is-past">' +
         '<span class="th2-spark" aria-hidden="true"></span>' +
         '<span class="th2-num th2-time"></span>' +
       '</div>';
@@ -3182,19 +3206,89 @@
     let phaseAt = t0;
     let stopped = false;
 
-    function paintPhase() {
-      const idleFor = Date.now() - phaseAt;
-      let text = phase;
-      if (idleFor > 12000) {
-        const total = Date.now() - t0;
-        text = total > 75000 ? "Almost done thinking…"
-          : total > 20000 ? "Still thinking…" : "Thinking…";
+    /* WAITING FOR A MACHINE IS NOT THINKING.
+       -----------------------------------------------------------------
+       Both states printed "Thinking…" and span the same seconds, so a
+       run that had not started was indistinguishable from one deep in a
+       four-minute generation. Measured on 2026-09-18: a run sat queued
+       from 00:35:30 to 00:39:38 showing exactly what a working run
+       shows, and the only honest signal — zero tokens — is not
+       something anyone should have to read to know.
+
+       The position is polled rather than pushed because nothing is
+       running for a queued run; there is no process to send an event.
+       It stops the moment the run is claimed. */
+    let queued = false, qInfo = null, qTimer = null;
+
+    function ordinal(n) {
+      const s = ["th", "st", "nd", "rd"], v = n % 100;
+      return n + (s[(v - 20) % 10] || s[v] || s[0]);
+    }
+
+    function queueText() {
+      if (!qInfo || !qInfo.position) return "Waiting for a build worker…";
+      if (qInfo.position === 1) return "Next for a build worker…";
+      return "Waiting for a build worker · " + ordinal(qInfo.position) + " in line";
+    }
+
+    async function pollQueue() {
+      if (stopped || !queued || !activeRunId) return;
+      try {
+        const d = await fetch("/api/codeagent/runs/" + encodeURIComponent(activeRunId))
+          .then((r) => (r.ok ? r.json() : null));
+        if (!d) return;
+        /* The server sends `queue` only while the run is queued, so its
+           absence IS the answer: something picked the run up. */
+        if (d.queue && d.queue.position) { qInfo = d.queue; }
+        else { setQueued(false); }
+        paintPhase();
+      } catch (e) { /* a missed poll is a stale number, not a failure */ }
+    }
+
+    function setQueued(on) {
+      if (queued === on) return;
+      queued = on;
+      if (qTimer) { clearInterval(qTimer); qTimer = null; }
+      if (on) { pollQueue(); qTimer = setInterval(pollQueue, 5000); }
+      else { qInfo = null; }
+      paintPhase();
+    }
+
+    /* What to say when the events have gone quiet. It escalates with the
+       clock and names what the turn has actually produced, because "Still
+       thinking…" for four minutes reads as a hang — and on a 129k-token
+       turn that wrote 25 files, it was the least true thing on screen. */
+    function restingText() {
+      const total = Date.now() - t0;
+      const made = filesTouched;
+      if (made > 0) {
+        const n = made + (made === 1 ? " file" : " files");
+        if (total > 180000) return "Still writing — " + n + " so far";
+        return "Writing code · " + n + " so far";
       }
+      if (total > 240000) return "Still generating — this is a big one…";
+      if (total > 120000) return "Working through a large change…";
+      if (total > 75000) return "Almost done thinking…";
+      if (total > 20000) return "Still thinking…";
+      return "Thinking…";
+    }
+
+    let filesTouched = 0;
+
+    function paintPhase() {
+      let text;
+      if (queued) text = queueText();
+      else if (Date.now() - phaseAt > 12000) text = restingText();
+      else text = phase;
       if (phaseEl.textContent !== text) phaseEl.textContent = text;
     }
 
     const clockTimer = setInterval(function () {
-      if (stopped) { clearInterval(clockTimer); return; }
+      if (stopped) {
+        clearInterval(clockTimer);
+        if (qTimer) { clearInterval(qTimer); qTimer = null; }
+        return;
+      }
       const s = Math.round((Date.now() - t0) / 1000);
       timeEl.textContent = s < 60 ? s + "s" : Math.floor(s / 60) + "m " + (s % 60) + "s";
       paintPhase();
@@ -3231,6 +3325,7 @@
       breakSay() { if (saidEl) flushTyper(saidEl); saidEl = null; },
       say(text) {
         if (stopped || !text) return;
+        setQueued(false);
         if (!saidEl || saidEl !== stepsEl.lastChild) {
           saidEl = document.createElement("div");
           saidEl.className = "th2-said";
@@ -3250,9 +3345,17 @@
       /** Said by an event: "Running tools…", "Waiting for Souqi…". */
       setPhase(text) {
         if (stopped || !text) return;
+        /* Any event at all means something has the run, so the queue
+           state cannot survive one. This is the release valve: the poll
+           notices too, but an event gets here first and is free. */
+        setQueued(false);
         phase = text; phaseAt = Date.now();
         paintPhase();
       },
+      /** Parked in the line, with nothing running. Polls its own place. */
+      setQueued(on) { if (!stopped) setQueued(on); },
+      /** How much this turn has actually produced, for the resting text. */
+      setFilesTouched(n) { filesTouched = Number(n) || 0; },
       /** Cumulative tokens for the turn, from the server's usage event. */
       setTokens(n) {
         const tokens = Number(n) || 0;
@@ -4381,6 +4484,9 @@
           const bucket = wasEdit ? stepGroup.edited : stepGroup.created;
           if (bucket.indexOf(path) < 0) bucket.push(path);
           filesSeen += 1;
+          // So a long quiet stretch can say what the turn has produced
+          // rather than repeating the word "thinking" for four minutes.
+          thinkPanel.setFilesTouched(filesSeen);
           paintGroup(false);
           return;
         }
@@ -4398,6 +4504,16 @@
             /fail|error/i.test(String(detail || "")) ? "The build did not compile" : "Verified the build");
           handles[id].done();
         }
+        return;
+      }
+
+      /* The one stage that reports the absence of work. It opens no row
+         of its own — the status line says where the run is in the line,
+         and a row saying "Queued…" that never settles is the thing that
+         used to sit in the transcript for ever. */
+      if (id === "queued") {
+        if (state === "start") thinkPanel.setQueued(true);
+        else thinkPanel.setQueued(false);
         return;
       }
 

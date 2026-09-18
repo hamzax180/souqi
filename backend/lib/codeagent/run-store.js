@@ -62,6 +62,7 @@ exports.workerHeartbeat = workerHeartbeat;
 exports.getWorkerHealth = getWorkerHealth;
 exports.recoverStaleRuns = recoverStaleRuns;
 exports.touchRun = touchRun;
+exports.queuePosition = queuePosition;
 exports.recoverExpiredRuns = recoverExpiredRuns;
 const crypto = __importStar(require("crypto"));
 /* awaiting_answer is ACTIVE, not terminal. The run is alive and holding:
@@ -509,6 +510,36 @@ async function recoverStaleRuns(maxIdleMs = 600000) {
 /** Heartbeat, so `recoverStaleRuns` can tell working from abandoned. */
 async function touchRun(runId) {
     await dbRequired().collection("agent_runs").updateOne({ id: runId, status: { $in: ACTIVE } }, { $set: { updatedAt: now() } });
+}
+/**
+ * Where a queued run sits in the line, and how many workers there are to
+ * take it.
+ *
+ * "Thinking…" and "waiting for a machine" looked identical on screen for
+ * as long as both existed, which made a real four-minute queue and a real
+ * four-minute generation the same event to the person watching. They are
+ * not the same thing and only one of them is progress.
+ *
+ * claimNext sorts by { createdAt: 1, id: 1 }, so position is however many
+ * queued runs sort before this one — the same order the worker will take
+ * them in, not an estimate of it. A run that is not queued has no
+ * position, and says so with null rather than 0.
+ */
+async function queuePosition(runId) {
+    const db = await ensureIndexes();
+    const run = await db.collection("agent_runs").findOne({ id: runId }, { projection: { _id: 0 } });
+    const health = await getWorkerHealth();
+    const workers = (health.workers || []).length;
+    if (!run || run.status !== "queued")
+        return { position: null, ahead: 0, workers };
+    const ahead = await db.collection("agent_runs").countDocuments({
+        status: "queued", cancelled: false,
+        $or: [
+            { createdAt: { $lt: run.createdAt } },
+            { createdAt: run.createdAt, id: { $lt: run.id } }
+        ]
+    });
+    return { position: ahead + 1, ahead, workers };
 }
 async function recoverExpiredRuns() {
     const db = await ensureIndexes();

@@ -505,6 +505,38 @@ export async function touchRun(runId: string): Promise<void> {
   );
 }
 
+/**
+ * Where a queued run sits in the line, and how many workers there are to
+ * take it.
+ *
+ * "Thinking…" and "waiting for a machine" looked identical on screen for
+ * as long as both existed, which made a real four-minute queue and a real
+ * four-minute generation the same event to the person watching. They are
+ * not the same thing and only one of them is progress.
+ *
+ * claimNext sorts by { createdAt: 1, id: 1 }, so position is however many
+ * queued runs sort before this one — the same order the worker will take
+ * them in, not an estimate of it. A run that is not queued has no
+ * position, and says so with null rather than 0.
+ */
+export async function queuePosition(runId: string): Promise<{
+  position: number | null; ahead: number; workers: number;
+}> {
+  const db = await ensureIndexes();
+  const run = await db.collection("agent_runs").findOne({ id: runId }, { projection: { _id: 0 } });
+  const health = await getWorkerHealth();
+  const workers = (health.workers || []).length;
+  if (!run || run.status !== "queued") return { position: null, ahead: 0, workers };
+  const ahead = await db.collection("agent_runs").countDocuments({
+    status: "queued", cancelled: false,
+    $or: [
+      { createdAt: { $lt: run.createdAt } },
+      { createdAt: run.createdAt, id: { $lt: run.id } }
+    ]
+  });
+  return { position: ahead + 1, ahead, workers };
+}
+
 export async function recoverExpiredRuns(): Promise<RunDoc[]> {
   const db = await ensureIndexes();
   const expired = await db.collection("agent_runs").find(
