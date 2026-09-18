@@ -240,9 +240,26 @@
      with the preview control, whose `transition: all` was written for a
      border and a background — and swept `left` in with them, so it spent
      185ms crawling 89, 165, 188, 195, 198 across a panel that had already
-     snapped open. Colour still eases. */
+     snapped open. Colour still eases.
+
+     AND IT ARRIVES WITH THE PANEL'S EDGE, NOT AHEAD OF IT. The fade was
+     .18s from zero while the width is .3s from zero, so on hover the button
+     was fully lit at 155ms with the rail only 177 of 238 wide — a control
+     sitting out in the page, waiting for its panel to catch up. Measured on
+     /agent at 1280: opacity .64 at 64px wide, 1.00 at 177.
+
+     It is drawn at the panel's far edge, so the honest cue is the edge
+     reaching it: an ease-in-out width covers the last 40px in the final
+     third of its travel, which is the delay and the duration below. Colour
+     keeps its own .18s — a delayed hover highlight reads as a dropped
+     click. The same numbers run the fade out, where the .16s the width
+     waits before closing is the same 165ms, so the two leave together. */
   #agDeskSidebarToggle{
-    transition-property: background-color, border-color, color, box-shadow, opacity !important;
+    transition:
+      background-color .18s ease, border-color .18s ease,
+      color .18s ease, box-shadow .18s ease,
+      opacity calc(var(--sb-dur) * .45) var(--sb-ease) calc(var(--sb-dur) * .55)
+      !important;
   }
 }
 
@@ -295,10 +312,12 @@
     padding: 10px 10px 12px 8px !important;
   }
   .ag-history:not(.on):not(:hover):not(.hover-open) .ag-ws-wrap{ display: block !important; }
+  /* No left inset here on purpose — the rule at the end of this file owns
+     it, in both states, and a shorthand would quietly out-specify it. */
   .ag-history:not(.on):not(:hover):not(.hover-open) .ag-ws{
     justify-content: flex-start !important;
-    margin: 8px 10px !important;
-    padding: 6px 10px 6px 6px !important;
+    margin-top: 8px !important; margin-right: 10px !important; margin-bottom: 8px !important;
+    padding-top: 6px !important; padding-right: 10px !important; padding-bottom: 6px !important;
   }
   .ag-history:not(.on):not(:hover):not(.hover-open) .ag-hist-tabs{
     padding: 2px 6px 4px !important;
@@ -320,3 +339,26 @@
    not need to know which state it is in. */
 .ag-history .ag-hist-head{ padding-left: 8px !important; }
 .ag-history .ag-hist-mark{ order: 0 !important; margin: 0 !important; }
+
+/* THE WORKSPACE AVATAR SITS ON THE SAME COLUMN AS EVERY OTHER ICON.
+
+   Shut, the rail is one column of glyphs and all of them centre on x=21:
+   the logo, the six nav icons, the footer avatar, the gear. The workspace
+   pill's avatar centred on 29.8 — 8px out, with its right edge at 42.8
+   against a 43.2 inner edge, so the H looked shoved into the border while
+   everything above and below it was centred. It is the one the eye catches.
+
+   The inset is the open panel's, not the rail's: 10px of margin plus 6px of
+   padding puts the avatar at 16.8 in a 238px panel, where nothing lines up
+   against it and it reads fine. Moving it only while shut would put it back
+   to jumping 8px on every toggle, which is the thing the block above exists
+   to stop. So the open panel gives up the 8 instead — margin 6 and padding 2
+   land the pill's box on the nav rows' own 6px edge and the avatar on the
+   icon column, at both widths.
+
+   Left-only, and unconditional for the same reason the logo's inset is:
+   every earlier version of this keyed a number on a state and the peek or
+   code.css found the state it had not thought of. */
+@media (min-width:901px){
+  .ag-history .ag-ws{ margin-left: 6px !important; padding-left: 2px !important; }
+}
