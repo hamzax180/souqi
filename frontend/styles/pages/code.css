@@ -4022,14 +4022,9 @@
     .ag-history:not(.on) .ag-chat-item{width:32px;margin:0 auto;padding:7px 0;justify-content:center;gap:0}
     .ag-history:not(.on) .ag-chat-item .sdot{margin:0}
     .ag-history:not(.on) .ag-chat-item span{display:none}
-    /* The SKELETON collapses the same way its rows do. A loading chat list
-       is four <div class="sk-row"><i/><b/></div>, and only the real rows
-       had been taught to drop their label — so while the list loaded the
-       shut rail showed a dot AND a stub of bar beside it, in a 44px strip,
-       which reads as a second thing loading rather than as the same thing
-       narrower. Dots only, centred like the rows they become. */
-    .ag-history:not(.on) .sk-row{width:32px;margin:0 auto;padding:7px 0;justify-content:center;gap:0}
-    .ag-history:not(.on) .sk-row b{display:none}
+    /* The collapsed skeleton lives in rail-motion.css now: four pages
+       carry this rail and all four had the same bar-beside-a-dot, and a
+       copy scoped to max-width:900px fixed only the phone. */
     .ag-history:not(.on) .ag-chats-empty{display:none}
     .ag-history:not(.on) .ag-hist-head{padding:8px 0 4px !important;height:44px !important;flex:0 0 44px !important;overflow:hidden;justify-content:center}
     .ag-history:not(.on) .ag-hist-mark{margin:0 auto}

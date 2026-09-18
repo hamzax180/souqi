@@ -127,3 +127,22 @@
      pages carry the same rail and all four had it. */
   .ag-history:not(.on) .ag-hist-head{ overflow: hidden; }
 }
+
+/* THE LOADING CHAT LIST COLLAPSES LIKE THE ROWS IT BECOMES.
+
+   A loading list is four <div class="sk-row"><i/><b/></div> — a dot and a
+   bar. The real rows have always dropped their label when the rail shuts;
+   the skeleton never did, so a shut rail showed a dot AND a stub of bar
+   beside it in a 44px strip, which reads as a second thing loading rather
+   than as the same thing narrower.
+
+   Here rather than in a page sheet, and outside the width queries, for two
+   reasons: four pages carry this rail and had the same bug, and the first
+   attempt at it sat inside a max-width:900px block — so it fixed the phone
+   and left the desktop rail exactly as it was. A shut rail is 44px at
+   every width, and this is what a shut rail looks like. */
+.ag-history:not(.on) .sk-row{
+  width: 32px; margin: 0 auto; padding: 7px 0;
+  justify-content: center; gap: 0;
+}
+.ag-history:not(.on) .sk-row b{ display: none; }
