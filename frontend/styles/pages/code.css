@@ -1554,7 +1554,24 @@
      pills give up width (min-width:0 lets them shrink past their content,
      which flex items otherwise refuse to do), and the three fixed controls
      — attach, voice, send — keep their size because they are flex:none. */
-  .ag-brow{display:flex;flex-wrap:nowrap;align-items:center;gap:6px;padding-top:6px;min-width:0}
+  /* THE THUMBNAIL STRIP GETS ITS OWN LINE.
+
+     It is a child of this row, so an attached photo competed with the
+     controls for width and won: measured at 396px wide, one image took the
+     strip from 0 to 217px and the pills collapsed from 72 and 61 to 39 and
+     33 — "Effort" and "Auto" clipped to "M:" and "A.". The pills are
+     allowed to shrink so the send button can never wrap, and that
+     permission was being spent on a picture.
+
+     wrap plus a full-width basis on the strip alone: it takes the first
+     line, the controls keep the second at their natural size, and the
+     shrink rules below stay as the fallback for a genuinely narrow
+     composer. Empty, it is display:none rather than a zero-width item, or
+     the row's 6px gap would leave a gap above every composer that has no
+     attachment — which is all of them, most of the time. */
+  .ag-brow{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding-top:6px;min-width:0}
+  .ag-brow>.ag-attach-row{flex:0 0 100%;order:-1;min-width:0}
+  .ag-brow>.ag-attach-row:empty{display:none}
   .ag-brow-sp{flex:1 1 auto;min-width:0}
   .ag-brow>.ag-model-wrap,.ag-brow>.ag-effort-wrap{min-width:0;flex-shrink:1}
   .ag-brow .ag-model-pill,.ag-brow .ag-effort-pill{min-width:0;overflow:hidden}
