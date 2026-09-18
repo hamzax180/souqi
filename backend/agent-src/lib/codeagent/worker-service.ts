@@ -95,6 +95,14 @@ export function createFinalizer({ withTransaction, run, workerId, generation, on
         chatId: run.chatId || "", role: "agent", kind: status === "succeeded" ? "result" : "text",
         body: String(outcome.summary || outcome.reason || status).slice(0, 4000),
         revisionId: result.revisionId || null, fileStats: outcome.fileStats || [],
+        /* THE PLAN LIVES ON THE TURN, not only in the event stream.
+
+           It was appended as an event and nothing else, and history
+           replays turns and steps — so refreshing a chat brought the plan
+           turn back as its title in plain text with the card gone. From
+           the outside that is a plan that vanished, which is the one
+           thing a plan must not do: it is the thing being decided on. */
+        plan: outcome.plan || null,
         /* How long it took, so a replayed panel can say "Thought for 47s"
            the way the live one does. The event stream cannot supply it —
            the frames carry payloads and not the time each was written — so

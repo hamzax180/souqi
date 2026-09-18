@@ -5276,6 +5276,16 @@ function getConversationalFallback(prompt, history) {
         (owner.userId ? "u:" + owner.userId : "a:" + (owner.anonId || "")),
         project ? project.id : "", prompt,
         buildMode, effort.id, String((req.body && req.body.chatId) || ""),
+        /* AN APPROVED TURN IS NOT THE TURN THAT PLANNED IT.
+
+           Approving re-posts the same prompt, in the same chat, on the
+           same project, in the same minute - every field this key is made
+           of - so it hashed to the plan run and came straight back as that
+           run, already succeeded. The build never started, and nothing
+           said so: the response looked like a run had begun. The
+           planVersion is what makes the second request its own request,
+           and it is exactly what changed about it. */
+        (approval && approval.ok ? "approved:" + (approval.planVersion || "") : ""),
         Math.floor(Date.now() / 60000)
       ].join("\u0000")).digest("hex").slice(0, 40);
 
@@ -5672,6 +5682,22 @@ app.post("/api/codeagent/runs/:id/approve", async (req, res) => {
 
     let project = null;
     if (run.projectId) { try { project = await projects.get(run.projectId); } catch (e) {} }
+
+    /* The plan STAYS in the chat, and stays decided. It is written on the
+       turn so a refresh brings the card back, and this marks the moment a
+       choice was made - otherwise a reopened chat re-offers "Build it" on
+       a plan that was built an hour ago, and pressing it starts the work a
+       second time. Best effort: failing to write the mark must not cost
+       someone the approval they just gave. */
+    try {
+      const mdb = getMasterDb();
+      if (mdb) {
+        await mdb.collection("turns").updateOne(
+          { id: "turn_" + req.params.id },
+          { $set: { planApprovedAt: new Date().toISOString() } }
+        );
+      }
+    } catch (e) { /* the token below is the thing that matters */ }
 
     res.json({
       approvalToken: agentState.issueApproval({

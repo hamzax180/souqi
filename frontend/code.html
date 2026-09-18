@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=7.9">
+<link rel="stylesheet" href="/styles/pages/code.css?v=8.0">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.6">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -3001,6 +3001,12 @@
         renderCard(t.fileStats.map((f) => f.path), 0, t.fileStats, runId);
         renderedAnyCard = true;
       }
+      /* A plan comes back as the card it was, not as its own title in
+         prose. It is the thing being decided on — refreshing the page
+         used to lose it, which reads as the plan having been thrown
+         away. Rendered last so it sits under the summary, where it was
+         when the turn ended. */
+      if (t.plan && t.plan.title && runId) showRunPlan(t.plan, runId, !!t.planApprovedAt);
     });
 
     // Older projects have turns with no stats on them. They still get the
@@ -4282,7 +4288,7 @@
 
      Sections that are empty are not rendered. A plan with no risks should
      show no risk heading rather than a heading with nothing under it. */
-  function showRunPlan(plan, runId) {
+  function showRunPlan(plan, runId, decided) {
     if (!plan) return;
     const card = el("ag-plan2");
     const sec = [];
@@ -4343,14 +4349,23 @@
         + list(plan.verification.map(esc)) + '</div>');
     }
 
-    sec.push('<div class="pl2-actions">'
-      + '<button type="button" class="pl2-go">Build it</button>'
-      + '<button type="button" class="pl2-edit">Change something</button>'
-      + '</div>');
+    /* The choice stays on offer for as long as it has not been made. A
+       plan that came back from history is the same decision it was when
+       it was written, so it keeps its buttons; one that was already built
+       says so instead, or reopening a chat would invite you to build the
+       same plan a second time. */
+    sec.push(decided
+      ? '<div class="pl2-actions"><span class="pl2-decided">Approved — this was built</span></div>'
+      : '<div class="pl2-actions">'
+        + '<button type="button" class="pl2-go">Build it</button>'
+        + '<button type="button" class="pl2-edit">Change something</button>'
+        + '</div>');
 
     card.innerHTML = sec.join("");
+    if (decided) card.classList.add("is-approved");
     logHost().appendChild(card);
     toBottom();
+    if (decided) return;
 
     card.querySelector(".pl2-edit").addEventListener("click", function () {
       /* Not a rejection — the plan stays on screen and the composer takes

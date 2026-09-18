@@ -4753,3 +4753,8 @@
     .pop-option .pop-text small{font-size:.7rem}
   }
 
+
+  /* A plan that has been acted on says so where its buttons were, so the
+     card still reads as a record of the decision rather than losing its
+     last line to nothing. */
+  .pl2-decided{font-size:.86rem;font-weight:600;color:#22a565}
