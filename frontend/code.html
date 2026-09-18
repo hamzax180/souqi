@@ -4410,6 +4410,14 @@
         if (!r.ok || !d.approvalToken) throw new Error(d.error || "that plan could not be approved");
         card.classList.add("is-approved");
         go.textContent = "Building…";
+        /* THE MODE FOLLOWS THE DECISION. Plan mode's job ends the moment a
+           plan is approved: leaving the composer on Plan means the next
+           thing typed gets planned instead of done, which is not what
+           someone who just pressed "Build it" is asking for. Switched
+           before the turn starts so the pill already reads Build while
+           the work it approved is running. */
+        setMode("build");
+
         /* silentUser, so the thinking panel opens directly beneath this
            card rather than under a repeat of the original request. */
         runTurn(d.prompt || "", { confirmed: true, approvalToken: d.approvalToken, silentUser: true });
