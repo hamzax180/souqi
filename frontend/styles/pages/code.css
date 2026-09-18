@@ -4514,7 +4514,11 @@
      At rest the card is plain --card. The wash is the HOVER state and only
      the hover state; painted on permanently it stops being a response to
      anything and just makes the rail two-tone. */
-  .ag-usage{display:flex;flex-direction:column;gap:9px;padding:10px 11px;border-radius:12px;
+  /* Room for three meters, not two. It carried the two money limits at a
+     size that suited them; with the context window beside them the card was
+     three bars crushed into the height of two. The heading above it was
+     removed in the same change, so this costs nothing in total height. */
+  .ag-usage{display:flex;flex-direction:column;gap:12px;padding:14px 14px;border-radius:14px;
     border:1px solid var(--line);background:var(--card);box-shadow:var(--sh-subtle);
     transition:background var(--dur-snappy,.12s) ease,border-color var(--dur-snappy,.12s) ease,
                box-shadow var(--dur-snappy,.12s) ease}
@@ -4547,11 +4551,11 @@
     display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
   .ag-usage .u-up:hover{text-decoration:underline}
   .ag-usage .u-up svg{width:12px;height:12px}
-  .u-row{display:flex;flex-direction:column;gap:4px}
+  .u-row{display:flex;flex-direction:column;gap:6px}
   .u-lab{display:flex;align-items:baseline;justify-content:space-between;gap:8px;
-    font-size:.71rem;color:var(--ink-2)}
+    font-size:.76rem;color:var(--ink-2)}
   .u-lab b{font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums}
-  .u-bar{height:5px;border-radius:99px;background:color-mix(in srgb,currentColor 12%,transparent);
+  .u-bar{height:6px;border-radius:99px;background:color-mix(in srgb,currentColor 12%,transparent);
     overflow:hidden;color:var(--ink-2)}
   .u-bar i{display:block;height:100%;border-radius:99px;background:var(--accent);
     width:0;transition:width var(--dur-chill,.3s) var(--ease-snappy,ease-out)}

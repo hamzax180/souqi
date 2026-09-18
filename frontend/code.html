@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=8.1">
+<link rel="stylesheet" href="/styles/pages/code.css?v=8.2">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.6">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -915,7 +915,9 @@
   </div>
 
   <div class="ag-hist-foot">
-    <div class="ttl" id="agPlanTtl">Your Free Plan</div>
+    <!-- No "Your Free Plan" heading. The card below already says which plan
+         this is, on its own first line, so the heading was the same words
+         twice in eight vertical pixels. -->
     <div class="ag-plan-alert" id="agPlanAlert" hidden>You've reached your usage limit</div>
     <!-- The same foot as /projects and /deployments: the plan it names, the
          limits, and an Upgrade button big enough to hit.
@@ -938,6 +940,14 @@
       <div class="u-row">
         <span class="u-lab"><span class="u-name">Monthly</span><span class="u-meta"><span class="u-reset" id="agMonthReset"></span><b id="agAllowPct">—</b></span></span>
         <span class="u-bar"><i id="agAllowBar"></i></span>
+      </div>
+      <!-- The third meter is not money. It is how much of the model's window
+           this project's own source already fills, which is the other thing
+           that runs out — and the one that explains a turn going vague on a
+           big project. Hidden until there is a project to measure. -->
+      <div class="u-row" id="agCtxRow" hidden>
+        <span class="u-lab"><span class="u-name">Context window</span><span class="u-meta"><span class="u-reset" id="agCtxUsed"></span><b id="agCtxPct">—</b></span></span>
+        <span class="u-bar"><i id="agCtxBar"></i></span>
       </div>
     </div>
     <a class="ag-upgrade" href="/pricing" onclick="openUpgradeModal(event)">✦ Upgrade</a>
@@ -1378,7 +1388,26 @@
      below is only the value used before this reply lands — a free visitor
      would otherwise be told they had 16000 characters and be refused at
      2000, which is worse than having no counter at all. */
-  fetch("/api/codeagent/usage").then((r) => r.json()).then((d) => {
+  /* Named, because the context meter has to be asked again: this runs at
+     page load, and on /agent there is no project yet — the id arrives when
+     a chat opens or the first build lands. Without a second ask the row
+     would stay hidden for the whole session on the one page it is about. */
+  function refreshUsage() {
+    return fetch("/api/codeagent/usage" + (projectId ? "?projectId=" + encodeURIComponent(projectId) : ""))
+      /* Unconditionally, unlike the load-time call below. That one skips a
+         signed-in visitor because /api/account/me paints the panel for
+         them — but account/me does not know the project and so carries no
+         context figure, which left the new meter permanently blank for
+         everyone with an account. This response has the money numbers too,
+         and they come from the same server figures, so rendering from it is
+         the same picture plus the one field the other lacks. */
+      .then((r) => r.json()).then((d) => { renderUsage(d); })
+      .catch(() => {});
+  }
+  window.__refreshUsage = refreshUsage;
+
+  fetch("/api/codeagent/usage" + (projectId ? "?projectId=" + encodeURIComponent(projectId) : ""))
+    .then((r) => r.json()).then((d) => {
     signedIn = !!d.signedIn;
     // A signed-out visitor has a real allowance and can really run out of
     // it, so the card is drawn for them too rather than left on dashes.
@@ -6986,6 +7015,9 @@
          after the builder. Set here rather than at boot because the
          container starts before the page knows what is being built. */
       if (window.__wc) window.__wc.setAppName(data.project.title || "");
+      // The context meter is about THIS project; it could not be measured
+      // until the id existed.
+      if (window.__refreshUsage) window.__refreshUsage();
       try { history.replaceState(null, "", "/agent/" + projectSlug); } catch (e) {}
       refreshPublishState();
 
@@ -7332,8 +7364,9 @@
     const plan = String(d.plan || "free");
     const planEl = $("agUsagePlan"), upEl = $("agUsageUp");
     if (planEl) planEl.textContent = plan === "free" ? "Free plan" : plan + " plan";
-    // The heading above the card. Guarded like the rest of the optional
-    // chrome: a rail that omits it must not take renderUsage down with it.
+    /* The heading above the card was removed — the card's own first line
+       names the plan. Still looked up rather than deleted outright, because
+       /projects and /deployments carry the same foot and may keep theirs. */
     const ttl = $("agPlanTtl");
     if (ttl) ttl.textContent = "Your " + plan.charAt(0).toUpperCase() + plan.slice(1) + " Plan";
     // Nothing to upsell someone already on the top plan.
@@ -7341,6 +7374,30 @@
 
     usageBar("agWinBar", "agWinPct", Number(d.windowUsd || 0), Number(d.windowBudgetUsd || 0));
     usageBar("agAllowBar", "agAllowPct", Number(d.spentUsd || 0), Number(d.budgetUsd || 0));
+
+    /* The third meter reads in tokens rather than dollars, so it does not go
+       through usageBar's money formatting — but it draws the same bar
+       against the same rules, because it is the same kind of statement:
+       this much of a fixed thing is gone. */
+    const ctx = d.context;
+    const ctxRow = $("agCtxRow");
+    if (ctxRow) {
+      const win = ctx && Number(ctx.windowTokens) || 0;
+      const used = ctx && Number(ctx.usedTokens) || 0;
+      ctxRow.hidden = !(win > 0);
+      if (win > 0) {
+        const pct = Math.max(0, Math.min(100, Math.round((used / win) * 100)));
+        const bar = $("agCtxBar"), pctEl = $("agCtxPct"), usedEl = $("agCtxUsed");
+        if (bar) bar.style.width = pct + "%";
+        if (pctEl) pctEl.textContent = pct + "%";
+        // "142.3k / 400k", the way the limit above it reads as a share.
+        if (usedEl) {
+          usedEl.textContent = tokText(used) + " / " + tokText(win);
+          usedEl.title = used.toLocaleString() + " of " + win.toLocaleString() + " tokens" +
+            (ctx.files ? " · " + ctx.files + " file" + (ctx.files === 1 ? "" : "s") : "");
+        }
+      }
+    }
 
     const when = $("agWinReset");
     if (when) {
@@ -7395,6 +7452,8 @@
       if (agUserMain) agUserMain.dataset.signedOut = "1";
     }
     renderUsage(d);
+    // Then again with the project in hand, for the context meter alone.
+    if (window.__refreshUsage) window.__refreshUsage();
   }).catch((e) => {
     /* Logged, not swallowed. A bare catch here hid a null-element throw
        for as long as it existed: the rail looked merely incomplete — no
@@ -7505,6 +7564,7 @@
          after the builder. Set here rather than at boot because the
          container starts before the page knows what is being built. */
       if (window.__wc) window.__wc.setAppName(data.project.title || "");
+      if (window.__refreshUsage) window.__refreshUsage();
       chats = data.chats || [];
       renderChatsControl();
       refreshPublishState();   // opening an existing project: it may already be live

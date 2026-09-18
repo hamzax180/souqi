@@ -602,6 +602,11 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
   const seen: Record<string, string> = {};
 
   let taskCompleted = false;
+  /* How many times the model has replied with words and no tool calls on a
+     turn that is supposed to DO something. Bounded, because the recovery
+     for it is another provider call. */
+  let bareReplies = 0;
+  const MAX_BARE_REPLIES = 2;
   let finalSummary = "";
   let repairedCount = 0;
 
@@ -848,10 +853,53 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
         continue;
       }
 
-      // Natural text response without tools — could be answering a question or providing a summary
-      if ((isQuestionTurn || hasEntry) && textOf(assistantMsg.content).trim()) {
+      /* A QUESTION IS ANSWERED BY WORDS. A JOB IS NOT.
+
+         This branch used to accept any bare message as the end of the turn
+         whenever the project already had an entry point — which is every
+         follow-up there has ever been. So a model that said "Let me check
+         how this compiles before I touch the chat path" had, as far as the
+         runner was concerned, finished: the turn closed, nothing was
+         written, and the summary said the updates were complete.
+
+         Measured on three consecutive runs: "fix when going to chat it
+         goes black screen" ran check_project and stopped; "start" ran
+         check_project and stopped. Both reported success and changed
+         nothing.
+
+         A preamble is not a result. On a turn that is meant to do work the
+         model is told to get on with it and the loop continues; only after
+         MAX_BARE_REPLIES is the message taken at face value, so a model
+         that really has nothing left to do still ends the turn rather than
+         being nudged round in circles. */
+      const bareText = textOf(assistantMsg.content).trim();
+      if (isQuestionTurn && bareText) {
         taskCompleted = true;
-        finalSummary = textOf(assistantMsg.content).trim();
+        finalSummary = bareText;
+        await runStore.appendEvent(runId, "stage", {
+          id: "turn-" + turn,
+          state: "done",
+          detail: "Answered: " + (finalSummary.length > 50 ? finalSummary.slice(0, 50) + "…" : finalSummary)
+        });
+        break;
+      }
+      if (hasEntry && bareText) {
+        if (bareReplies < MAX_BARE_REPLIES) {
+          bareReplies += 1;
+          messages.push({
+            role: "user",
+            content: "That was a description of what you were about to do, not the doing of it. " +
+              "Nothing has changed on disk yet. Carry it out now with the tools — read_file to see " +
+              "what you need, then edit_file or write_file to make the change — or call complete_task " +
+              "if the work is genuinely already finished."
+          });
+          await runStore.appendEvent(runId, "stage", {
+            id: "turn-" + turn, state: "done", detail: "Step " + turn + " completed"
+          });
+          continue;
+        }
+        taskCompleted = true;
+        finalSummary = bareText;
         await runStore.appendEvent(runId, "stage", {
           id: "turn-" + turn,
           state: "done",
@@ -1196,7 +1244,16 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
     if (parts.length) {
       finalSummary = parts.join("; ") + ". Cleanly compiled and verified in preview.";
     } else {
-      finalSummary = "Completed updates for “" + (run.prompt.length > 50 ? run.prompt.slice(0, 50) + "…" : run.prompt) + "”. Cleanly verified.";
+      /* NOTHING CHANGED, AND IT SAYS SO.
+
+         The fallback claimed "Completed updates for X. Cleanly verified."
+         on a turn that had written and edited nothing — which is the
+         sentence someone reads before discovering their bug is still
+         there. Three runs in one evening ended this way. If there is no
+         file in the list it is because none was touched, and the only
+         honest thing to report is that. */
+      finalSummary = "I looked into “" + (run.prompt.length > 50 ? run.prompt.slice(0, 50) + "…" : run.prompt) +
+        "” but did not change any files. Tell me to go ahead and I will make the change.";
     }
   }
 

@@ -1965,6 +1965,36 @@ app.get("/api/codeagent/usage", async (req, res, next) => {
     const win = await codeAgentUsage.windowSpend(owner, CODEAGENT_WINDOW_HOURS);
     const counts = await codeAgentUsage.monthCounts(owner);
     const liveDeploys = (await projects.list(owner, 200)).filter((p) => p.deploymentId).length;
+
+    /* HOW MUCH OF THE MODEL'S WINDOW THIS PROJECT ALREADY TAKES.
+
+       Measured, not estimated from a turn: the project's own source is what
+       gets sent on every turn, so its size IS the standing cost of talking
+       about it. Reported against the window the route actually has, so the
+       number means the same thing as the limit it is drawn against.
+
+       Only when a project is named. There is nothing to measure about a
+       chat that has not built anything, and a meter reading 0% of a window
+       is a meter saying nothing. */
+    let context = null;
+    const ctxKey = String((req.query && (req.query.projectId || req.query.project)) || "");
+    if (ctxKey) {
+      try {
+        const cp = await resolveProject(ctxKey, owner);
+        if (cp && projects.owns(cp, owner)) {
+          const csrc = await projects.materialize(cp.id);
+          const cfiles = (csrc && csrc.files) || {};
+          let cchars = 0;
+          for (const k of Object.keys(cfiles)) cchars += String(cfiles[k] || "").length + k.length;
+          const perToken = aiClient.CHARS_PER_TOKEN || 3;
+          context = {
+            usedTokens: Math.round(cchars / perToken),
+            windowTokens: aiClient.windowFor("json"),
+            files: Object.keys(cfiles).length
+          };
+        }
+      } catch (e) { /* the meter is observability; the rest must still answer */ }
+    }
     res.json({
       spentUsd, plan: plan,
       budgetUsd: CODEAGENT_PLAN_BUDGET_USD[plan] || CODEAGENT_PLAN_BUDGET_USD.free,
@@ -1972,6 +2002,7 @@ app.get("/api/codeagent/usage", async (req, res, next) => {
       windowBudgetUsd: CODEAGENT_PLAN_WINDOW_USD[plan] || CODEAGENT_PLAN_WINDOW_USD.free,
       windowHours: CODEAGENT_WINDOW_HOURS,
       windowResetAt: win.resetAt,
+      context,
       promptChars: CODEAGENT_PLAN_PROMPT_CHARS[plan] || CODEAGENT_PLAN_PROMPT_CHARS.free,
       promptCharsMax: MAX_PROMPT_CHARS,
       freeEdits: CODEAGENT_FREE_EDITS,

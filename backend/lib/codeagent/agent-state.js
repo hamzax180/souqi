@@ -143,9 +143,15 @@ function permits(mode, tool) {
    gone. */
 function denialMessage(mode, toolName) {
     if (mode === "plan" || mode === "awaiting_approval") {
+        /* Names the tool that ends the turn. It used to say "then present it",
+           which is advice rather than an instruction — and a model that has
+           just been refused is looking for the next call to make, not for
+           prose. Eight refused writes in one plan run after the prompt already
+           said the write tools were absent. */
         return 'Error: "' + toolName + '" cannot run in plan mode. Plan mode inspects and proposes only — ' +
             "nothing is created, changed, installed or deployed until the user approves the plan. " +
-            "Use read_file, search_code and list_files to finish the plan, then present it.";
+            "Use read_file, search_code and list_files to finish working it out, then call present_plan " +
+            "with the files you would have written. The build that follows approval is what writes them.";
     }
     if (mode === "awaiting_question" || mode === "chat") {
         return 'Error: "' + toolName + '" cannot run while you are answering a question. ' +
