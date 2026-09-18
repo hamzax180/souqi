@@ -233,8 +233,19 @@
   .ag-history:hover ~ * #agDeskSidebarToggle,
   .ag-history.hover-open ~ #agDeskSidebarToggle,
   .ag-history.hover-open ~ * #agDeskSidebarToggle{
-    opacity:1; pointer-events:auto; left:calc(var(--sb-w) - 40px) !important;
+    opacity:1; pointer-events:auto;
   }
+
+  /* AND ITS LEFT IS NOT A STATE EITHER. The page sheets still sent it home
+     to left:7 whenever the rail was shut — onto the logo, the one square in
+     the rail that is already occupied. Invisible at rest, but the fade out
+     lasts 165ms and the jump does not wait for it, so closing the panel
+     showed the button landing on the mark on its way out. It waits at the
+     panel's edge in every state now and only fades; the two selectors are
+     specificity-matched to code.css's `#agDeskSidebarToggle:not(.on)` and
+     win on source order, which is what this sheet is for. */
+  #agDeskSidebarToggle:not(.on),
+  #agDeskSidebarToggle.on{ left:calc(var(--sb-w) - 40px) !important; }
 
   /* The button does not animate its own position. It shares .ag-pv-toggle-btn
      with the preview control, whose `transition: all` was written for a
@@ -361,4 +372,158 @@
    code.css found the state it had not thought of. */
 @media (min-width:901px){
   .ag-history .ag-ws{ margin-left: 6px !important; padding-left: 2px !important; }
+}
+
+/* THE PANEL DOES NOT RESIZE. THE WINDOW OVER IT DOES.
+
+   Everything above fixed where a row sits at rest. This is the half in
+   between: for the 300ms the rail is travelling, every box inside it was
+   being laid out against a width that was still moving, so the panel spent
+   the whole animation squeezing itself into shape. Measured on /agent at
+   1280, one open:
+
+     the search button   44 → 62 → 98 → 128 → 139 → 154 → 159
+     the workspace name   0 → 11 → 47 →  83 → 112 → 139 → 144 wide
+     the footer avatar     6 →  8 → 11 →  12
+     a chat row's title  re-ellipsised at every one of those widths
+
+   None of that is motion anyone asked for. The rail is one control changing
+   width; the things inside it are not moving at all, and they should not
+   look like they are.
+
+   So the column's children are pinned to the OPEN width at every width —
+   the rail's own width stops being a layout input and becomes a clip. The
+   panel is laid out once, and opening uncovers it left to right; closing
+   covers it again. Nothing inside is ever narrower than 238, so nothing
+   inside can reflow.
+
+   Three things this needs to be true:
+
+   1. The rail clips while it is not pinned. Content that is 238 wide inside
+      a 44px rail is drawn straight across the page otherwise — the peek
+      sets `overflow:visible` for the flyout, and the flyout is
+      position:fixed, so it escapes a clipped rail on its own. (Pinning
+      straight from shut without a peek still uncovers unclipped for 300ms.
+      It is not reachable with a pointer: the button that pins it only
+      appears once the rail has been peeked open.)
+   2. Nothing centres horizontally while shut. Every `margin:0 auto` and
+      `justify-content:center` in the rail was centring in 44px; in a 238px
+      box they all move to x=104, off the visible strip. They are the rules
+      that have to go, and going is the point — a row that is left-aligned
+      at both widths cannot move between them.
+   3. Labels are uncovered, not stretched. They were transitioning max-width
+      from 0, which is the workspace name growing 0→144 above. The width is
+      the rail's to animate; the label just fades. */
+@media (min-width:901px){
+  .ag-history > .ag-hist-head,
+  .ag-history > .ag-ws-wrap,
+  .ag-history > .ag-hist-tabs,
+  .ag-history > .ag-hist-chats,
+  .ag-history > .ag-hist-user,
+  .ag-history > .ag-hist-foot{
+    width: var(--sb-w) !important;
+    min-width: var(--sb-w) !important;
+    flex-shrink: 0 !important;
+  }
+
+  /* The clip. `.ag-chats-list` is the scroller, not this, so nothing here
+     costs the chat list its overflow. */
+  .ag-history:not(.on){ overflow: hidden !important; }
+
+  /* (2) — the rows the 44px rail used to centre. */
+  .ag-history:not(.on):not(:hover):not(.hover-open) .ag-hist-head{ justify-content: flex-start !important; }
+  .ag-history:not(.on):not(:hover):not(.hover-open) .ag-hist-tabs{ align-items: flex-start !important; }
+  .ag-history:not(.on):not(:hover):not(.hover-open) .ag-hist-user{
+    align-items: flex-start !important; padding-left: 6px !important;
+  }
+  .ag-history:not(.on):not(:hover):not(.hover-open) .sk-row{
+    margin-left: 6px !important; margin-right: 0 !important;
+  }
+  /* The width is back, and the reason code.css dropped it for 100% is gone
+     with the centring: a 32px row that starts at the list's own left edge
+     does not have to fit 26px of centre. It keeps the current chat's tint a
+     rounded square in the rail instead of a bar cut off at the border, and
+     9px of padding puts the dot at x=18 — where the open panel puts it. */
+  .ag-history:not(.on):not(:hover):not(.hover-open) .ag-chat-item{
+    width: 32px !important; justify-content: flex-start !important;
+    padding-left: 9px !important;
+  }
+
+  /* (3) — and the user row stops animating its own width for the same
+     reason the toggle stopped animating its left: `transition:.14s` is
+     `transition:all .14s`, and `all` included the 32px→full it does on
+     open, which walked the footer avatar 6→12. */
+  .ag-hist-tab .lbl,
+  .ag-hist-brand-text,
+  .ag-user-main .nm,
+  .ag-ws .nm{
+    transition: opacity calc(var(--sb-dur) * .55) var(--sb-ease) calc(var(--sb-dur) * .45) !important;
+  }
+  .ag-history .ag-user-main{
+    transition-property: background-color, border-color, color, box-shadow, opacity !important;
+  }
+
+  /* AND IT ARRIVES WITH THE PANEL, NOT AHEAD OF IT.
+
+     The same complaint as the toggle button, one layer in: a label that
+     starts fading at t=0 is readable by 150ms, over a rail that is still
+     half shut, so the panel's contents showed up before the panel did. The
+     delay above holds them until the edge is 40% of the way across and
+     lands them with it — the panel opens, and the text is simply there.
+
+     The rest of the wide panel was not fading at all, in either direction:
+     the search button, the chevron, the chats heading and the chat titles
+     are display:none in the rail, so they appeared the instant the pointer
+     landed, whole, over a 44px strip.
+
+     Closing is the same fade run backwards, and getting either needed the
+     display rules gone: an element that is display:none has no style to
+     transition FROM, so it pops in; and it drops out of the flow the
+     instant the pointer leaves, 160ms before the panel starts to close, so
+     it popped out of a panel that was still fully open. Nothing needs them
+     any more — the panel is laid out at 238 and clipped at 44, so a search
+     button at x=160 or a chat title at x=40 is simply not inside the
+     window. They stay in the layout at opacity 0 and fade both ways.
+
+     .ag-hist-foot is the exception and keeps its display:none: it is the
+     plan card, 226px of column, and leaving it in the flow would take that
+     much height off the chat list in a 44px rail for something nobody can
+     see. It comes in on the keyframe instead, which does run on a display
+     flip, and it is the one thing still cut off at the start of a close. */
+  .ag-history .ag-hist-search,
+  .ag-history .ag-chats-ttl,
+  .ag-history .ag-chats-empty,
+  .ag-history .ag-ws .chev,
+  .ag-history .ag-chat-item span{
+    transition: opacity calc(var(--sb-dur) * .55) var(--sb-ease) calc(var(--sb-dur) * .45) !important;
+  }
+  /* `display:block` rather than `revert`, and at the page sheets' own
+     specificity rather than below it: this is the value all five compute to
+     in the open panel, read off /agent at 1280, so keeping it in the rail
+     renders the same box the panel will show — and the rail's vertical
+     rhythm finally matches the panel's too. The chats heading alone is 27px
+     the shut column was not reserving, which is why the first chat dot sat
+     at y=339 shut against 356 open. */
+  .ag-history:not(.on):not(:hover):not(.hover-open) .ag-hist-search,
+  .ag-history:not(.on):not(:hover):not(.hover-open) .ag-chats-ttl,
+  .ag-history:not(.on):not(:hover):not(.hover-open) .ag-chats-empty,
+  .ag-history:not(.on):not(:hover):not(.hover-open) .ag-ws .chev,
+  .ag-history:not(.on):not(:hover):not(.hover-open) .ag-chat-item span{
+    display: block !important; opacity: 0 !important; pointer-events: none !important;
+  }
+  .ag-history:is(.on, :hover, .hover-open) .ag-hist-foot{
+    animation: agRailIn calc(var(--sb-dur) * .55) var(--sb-ease) calc(var(--sb-dur) * .45) both;
+  }
+}
+
+@keyframes agRailIn{ from{ opacity:0 } to{ opacity:1 } }
+
+/* A rail that opens in 1ms has nothing to stagger. */
+@media (prefers-reduced-motion: reduce){
+  .ag-history .ag-hist-foot{ animation: none !important; }
+  .ag-history .ag-hist-search,
+  .ag-history .ag-chats-ttl,
+  .ag-history .ag-chats-empty,
+  .ag-history .ag-ws .chev,
+  .ag-history .ag-chat-item span{ transition-duration: 1ms !important; transition-delay: 0s !important; }
 }
