@@ -5076,6 +5076,19 @@ function getConversationalFallback(prompt, history) {
          never estimated — the count is the provider's own. */
       let chatTokens = 0;
       const chatStartedAt = Date.now();
+      /* Named, and its files listed, so the reply can talk about THIS app
+         instead of asking which one. Capped: this is a chat turn, not a
+         build, and forty paths is enough to recognise a codebase. */
+      const convFiles = Object.keys(baseFiles || {});
+      const projectBlock = project
+        ? "\n\nTHE PROJECT THIS CHAT BELONGS TO. You already know it - never ask which project, " +
+          "which app, or which codebase this is.\n" +
+          "Name: " + String(project.title || project.slug || project.id) + "\n" +
+          (convFiles.length
+            ? "Files:\n" + convFiles.slice(0, 40).map((p) => "  " + p).join("\n") +
+              (convFiles.length > 40 ? "\n  ...and " + (convFiles.length - 40) + " more" : "")
+            : "No files have been written yet.")
+        : "";
       try {
         const history = Array.isArray(req.body && req.body.conversation) ? req.body.conversation : [];
         const answerRes = await aiClient.chat({
@@ -5104,7 +5117,16 @@ function getConversationalFallback(prompt, history) {
                 (imagesBlock
                   ? "\n\nThe user HAS attached the following image(s) to this message. You can see them — " +
                     "never say you cannot, and never ask them to upload again.\n" + imagesBlock
-                  : "")
+                  : "") +
+                /* THE PROJECT IS ALREADY DECIDED BY THE TIME ANYONE TYPES.
+                   This branch got the message and the last few turns and
+                   nothing else, so asked about a bug in the app on screen
+                   it answered "Which project is this in?" - from inside
+                   that project, whose files the build path had already
+                   materialised a few lines above. The person had opened
+                   the chat; the question could only read as the agent
+                   forgetting where it was. */
+                projectBlock
             }
           ].concat(
             history.slice(-6).map(t => ({

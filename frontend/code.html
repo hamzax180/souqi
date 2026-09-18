@@ -780,12 +780,13 @@
 .th2-status.is-done .th2-spark {
   animation: none;
   background: linear-gradient(135deg, #1aa6df 0%, #18c8a8 55%, #5cb12f 100%);
-  /* Full strength, and lit. A turn from THIS session is the live thing on
-     the page even once it has stopped, and .8 made it read as half-off —
-     the same as a turn from last week, which is the one state it should
-     never be confused with. */
-  opacity: 1;
-  filter: drop-shadow(0 0 5px rgba(24, 200, 168, .45));
+  /* Lit, but not GLOWING. The glow belongs to the turn that is running
+     and to nothing else: with it here too, a finished turn and the one
+     still working shone side by side and the eye had no way to tell
+     which was which. Three states, three weights — running glows, done
+     holds the brand colours, and a turn from last week is grey. */
+  opacity: .92;
+  filter: none;
 }
 /* OFF, because it is over.
 
@@ -3300,6 +3301,15 @@
          the most useful summary on screen, so it becomes the phase. */
       addStep(label, cls, headerLabel) {
         if (headerLabel) handle.setPhase(headerLabel);
+        /* A real step supersedes the placeholder, not only the model's
+           first words. say() was the single thing that cleared it, so a
+           turn where the model narrated NOTHING — measured: 197 seconds,
+           80.8k tokens, three silences of 80s, 65s and 46s, and not one
+           assistant_delta — left "Analyzing requirements..." sitting at
+           the top for the whole run with "Read 2 files" underneath it.
+           Whatever else is true, requirements were not still being
+           analysed while files were being read. */
+        dropPreamble();
         const sub = addRow(label, cls);
         return {
           // Not queued: this is the row correcting itself as it learns,
