@@ -228,7 +228,9 @@ function transformModule(src, path, index, ctx) {
     (m, named) => {
       if (named) {
         named.replace(/[{}]/g, "").split(",").forEach((n) => {
-          const t = n.trim().split(/\s+as\s+/)[0].trim();
+          const spec = valueSpecifier(n);
+          if (!spec) return;
+          const t = spec.split(/\s+as\s+/)[0].trim();
           if (t) ctx.reactNames.add(t);
         });
       }
@@ -323,6 +325,24 @@ function transformModule(src, path, index, ctx) {
 }
 
 /**
+ * A specifier from a named import list, or "" when it carries no value.
+ *
+ * `import type { X }` was already stripped as a whole statement, but the
+ * INLINE form is a different shape: `import { useState, type TouchEvent }`
+ * is a value import with one type in it. That `type TouchEvent` survived
+ * into `const { useState, type TouchEvent } = React`, which is not a
+ * destructuring pattern JavaScript has — Babel stopped at the T and the
+ * preview rendered its parser error instead of the app.
+ */
+function valueSpecifier(raw) {
+  const t = String(raw || "").trim();
+  if (!t) return "";
+  // `type X`, `type X as Y` — but never a binding genuinely called "type".
+  if (/^type\s+\S/.test(t)) return "";
+  return t;
+}
+
+/**
  * `A, B as C` -> binding entries.
  *
  * A plain name used to record nothing, on the reasoning that the
@@ -336,12 +356,13 @@ function transformModule(src, path, index, ctx) {
  */
 function aliasNamed(inner, out, target) {
   inner.split(",").forEach((n) => {
-    const parts = n.trim().split(/\s+as\s+/);
+    const spec = valueSpecifier(n);
+    if (!spec) return;                 // `type Direction` binds nothing at runtime
+    const parts = spec.split(/\s+as\s+/);
     if (parts.length === 2 && parts[0].trim() && parts[1].trim()) {
       out.push({ local: parts[1].trim(), source: parts[0].trim(), kind: "alias", target: target });
     } else {
-      const only = n.trim();
-      if (only) out.push({ local: only, source: only, kind: "named", target: target });
+      out.push({ local: spec, source: spec, kind: "named", target: target });
     }
   });
 }

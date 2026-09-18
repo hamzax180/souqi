@@ -1474,16 +1474,29 @@
      — "n.souqi.s…" in a pill with room to spare on both sides. It shrinks
      only when there genuinely is not room, which is what min-width:0 and the
      ellipsis are still here for. */
-  .dt-chrome .addr{flex:0 1 auto;min-width:0;margin:0 auto;text-align:center;
-    font-family:var(--mono);
-    font-size:.72rem;color:var(--mut);background:var(--card);border:1px solid var(--line);
-    border-radius:999px;padding:3px 12px;box-shadow:var(--sh-subtle);
-    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
-    transition:color var(--dur-snappy) var(--ease-snappy),border-color var(--dur-snappy) var(--ease-snappy)}
+  /* An address bar, not a label in a rounded box. The pill is recessed
+     into the chrome rather than raised off it — a browser's own address
+     field sits IN the toolbar, and a drop shadow under it read as a button
+     you could press. The padlock and the host share one baseline. */
+  .dt-chrome .addr{display:inline-flex;align-items:center;gap:6px;
+    flex:0 1 auto;min-width:0;margin:0 auto;
+    font-family:var(--mono);font-size:.72rem;letter-spacing:-.01em;
+    color:var(--ink-2);background:var(--paper-2);
+    border:1px solid transparent;border-radius:999px;padding:4px 12px;
+    box-shadow:inset 0 0 0 1px rgba(var(--wash-rgb),.06);
+    overflow:hidden;white-space:nowrap;
+    transition:color var(--dur-snappy) var(--ease-snappy),
+      background-color var(--dur-snappy) var(--ease-snappy),
+      border-color var(--dur-snappy) var(--ease-snappy)}
+  .dt-chrome .addr-host{min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .addr-lock{width:10px;height:10px;flex:none;opacity:.55}
+  /* Only the live one is a link, so only the live one lights up. */
+  .dt-chrome a.addr:hover{background:var(--card);border-color:var(--line);
+    color:var(--ink);box-shadow:var(--sh-subtle)}
+  .dt-chrome a.addr:hover .addr-lock{opacity:1;color:var(--ok)}
+  .dt-chrome a.addr:focus-visible{border-color:var(--accent);box-shadow:var(--focus-ring)}
   /* It is the address of a site that is up — so it opens it. */
-  a.dt-chrome .addr,.dt-chrome a.addr{color:var(--accent-2);cursor:pointer}
-  .dt-chrome a.addr:hover{color:var(--accent);border-color:var(--accent)}
-  :root[data-theme="dark"] .dt-chrome a.addr{color:var(--accent)}
+  .dt-chrome a.addr{cursor:pointer}
   /* Below this the bar cannot hold three ornaments, an address and two
      controls at once: at 232px it was 5px short and clipped the hostname to
      "n.souqi.s…". The traffic lights are decoration and the address is the

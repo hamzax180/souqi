@@ -166,6 +166,36 @@ check("an importer follows the export it imported through a rename", () => {
     "App no longer binds anim's pulse: " + (app && app[0]));
 });
 
+/* `import type { X }` was stripped as a whole statement; the INLINE form
+   was not. `import React, { useState, type TouchEvent } from "react"` is a
+   value import with one type inside it, and that type rode into
+   `const { useState, type TouchEvent } = React` — not a destructuring
+   pattern JavaScript has. Babel stopped at the T and the preview rendered
+   its own parser error where the app should have been. */
+check("an inline `type` specifier never reaches the React destructure", () => {
+  const r = inlineModules("src/App.tsx", {
+    "src/lib/game.ts": [
+      "export type Direction = 'up' | 'down';",
+      "export const start = 1;"
+    ].join(NEWLINE),
+    "src/App.tsx": [
+      "import React, { useState, type TouchEvent } from 'react';",
+      "import { start, type Direction } from './lib/game';",
+      "export default function App(){ return useState(start); }"
+    ].join(NEWLINE)
+  });
+
+  const react = r.code.split(NEWLINE).find((l) => l.includes("= React"));
+  assert.ok(react, "no React destructure was emitted");
+  assert.ok(react.indexOf("type ") === -1,
+    "a type specifier reached the destructure: " + react);
+  assert.ok(react.indexOf("useState") !== -1,
+    "the real hook was dropped with it: " + react);
+
+  /* The value next to the type still has to arrive. */
+  assert.ok(r.code.indexOf("start") !== -1, "the value import beside the type was lost");
+});
+
 check("an `as` alias follows the rename too", () => {
   const r = inlineModules("src/App.tsx", {
     "src/lib/a.ts": "export const tone = 1;",
