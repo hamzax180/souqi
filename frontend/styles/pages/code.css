@@ -400,6 +400,18 @@
     border-color:rgba(255,255,255,.09)}
   .ag-user .when{display:block;font-size:.76rem;color:var(--mut);margin-top:6px;
     opacity:0;animation:agIn .3s var(--ease) .16s forwards}
+  /* The reply's own time, at the end of the message and only while the
+     pointer is on it. Always-on would put a timestamp under every one of
+     forty replies, which is a column of grey nobody reads; never showing
+     one means there is no way to tell when something was said. */
+  .ag-say{position:relative}
+  .ag-say > .when{display:block;font-size:.72rem;color:var(--mut);
+    margin-top:6px;text-align:right;
+    opacity:0;transition:opacity var(--dur-snappy,.12s) var(--ease-snappy,ease-out)}
+  .ag-say:hover > .when,.ag-say:focus-within > .when{opacity:1}
+  /* No hover to give on a touch screen, so it simply stays. */
+  @media (hover:none){ .ag-say > .when{opacity:.7} }
+  @media (prefers-reduced-motion:reduce){ .ag-say > .when{transition:none} }
   @keyframes agSent{
     from{opacity:0;transform:translateY(14px) scale(.94)}
     60%{opacity:1;transform:translateY(-2px) scale(1.01)}

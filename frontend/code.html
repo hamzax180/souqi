@@ -2481,6 +2481,17 @@
     clearEmpty();
     const row = el("ag-say" + (cls ? " " + cls : ""), html);
     revealWords(row);
+    /* A reply had no time on it at all — only the user's messages did, and
+       theirs is always on show. This one is held back until the pointer is
+       over the message, because a transcript of forty replies each wearing
+       "2m ago" is a column of noise nobody reads. Same data-at the user row
+       uses, so the one ticker below re-times both. */
+    const at = new Date().toISOString();
+    const when = document.createElement("span");
+    when.className = "when";
+    when.setAttribute("data-at", at);
+    when.textContent = whenText(at);
+    row.appendChild(when);
     logHost().appendChild(row); toBottom();
     // Returned so a caller can put something before it — history inserts
     // the turn's steps above the summary they produced.

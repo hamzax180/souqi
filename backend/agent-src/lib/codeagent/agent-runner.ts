@@ -519,6 +519,25 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
         "2. If the user is asking a question or seeking an explanation (e.g. 'why did you do that', 'what was the error', 'why did it fail', 'how does this work'), answer them directly and clearly in natural conversational markdown without modifying code. DO NOT invoke write_file or edit_file when answering questions.\n" +
         "3. When code changes or new features are requested, use your tools (write_file, edit_file) to implement the changes cleanly and modularly, then call check_project to verify the build.\n" +
         "4. Always ensure src/App.tsx exists to render the application.\n" +
+        /* WHY A BATCH SIZE AT ALL.
+
+           Nothing capped this, so a seven-file build came back as seven
+           write_file calls in ONE response. They dispatch back to back in
+           milliseconds, so the person watching gets ninety seconds of a
+           spinner and then every file at once — the progress was real and
+           none of it was visible. Small batches turn the same work into
+           something you can watch happen.
+
+           Guidance, not a hard limit, and deliberately so: the loop gets
+           maxTurns = max(4, rounds * 4) turns, and a twenty-file app
+           forced into batches of two would run out of turns and stop
+           half-built. Three to four keeps a big build inside its budget
+           while still landing in visible steps.
+
+           It costs a model call per extra batch. That is the trade being
+           made on purpose: the total gets slower, the WAIT gets shorter,
+           and a wait you can see moving is the one people sit through. */
+        "4b. WRITE IN SMALL BATCHES. Put at most three or four write_file calls in one response, then let the turn end so the files land and the person sees them. Prefer the order they build on each other — types and data first, then the components that use them, then the screen that assembles them. Do not hold a finished file back to ship it with the rest, and do not pad a batch out to reach four. On a large app this means several rounds, which is correct: the point is that each round is visible.\n" +
         "5. When concluding your turn or calling complete_task, always provide a clear, concise summary of what you did: specifically state what components or files were created, what was modified, or what errors/bugs were fixed (e.g. '• Created Hero and Features components\\n• Updated App.tsx layout\\n• Fixed button click handler'). Never return an empty or vague summary.\n" +
         /* The person watching has your words and a spinner. A build runs
            for two minutes; one sentence at the start of it is silence for
