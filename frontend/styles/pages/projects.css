@@ -688,7 +688,12 @@
     .wrap{padding-top:14px}
   }
 
-  .wrap{max-width:1180px;margin:0 auto;padding:clamp(26px,5vw,46px) clamp(18px,4vw,40px) 80px;width:100%}
+  /* 1320, not 1180. The rail takes 44px before the column starts and the
+     wrap takes 40 of padding each side, so a 1180 cap left 1056 of content
+     on a 1180 screen — room for three cards, not the four the grid below
+     is sized for. Wider also stops a 1440 desktop framing the grid in two
+     fat margins. */
+  .wrap{max-width:1320px;margin:0 auto;padding:clamp(26px,5vw,46px) clamp(18px,4vw,40px) 80px;width:100%}
   .phead{display:flex;align-items:center;gap:10px;margin-bottom:20px}
   .phead svg.ic{width:22px;height:22px;color:var(--ink)}
   .phead h1{font-size:clamp(1.5rem,3vw,1.9rem)}
@@ -749,8 +754,14 @@
      merely the same width. The thumbnail is a fixed ratio and the footer a
      fixed two lines, so the content already wants one height - this stops a
      row with a short title from collapsing under its neighbours. */
+  /* 260, not 300. Four cards across is what a 1180px wrap can actually hold:
+     the content box is 1100 after padding, so four columns and three 14px
+     gaps leaves 264 each. At 300 it could only ever fit three and the fourth
+     wrapped to a row of its own with two thirds of the row empty.
+     The min() keeps the phone at two-up rather than letting 260 force a
+     single column on a 560px screen. */
   .grid{display:grid;gap:14px;grid-auto-rows:1fr;
-    grid-template-columns:repeat(auto-fill,minmax(min(300px,(100% - 14px)/2),1fr))}
+    grid-template-columns:repeat(auto-fill,minmax(min(250px,(100% - 14px)/2),1fr))}
   /* Above the glow. Both pseudo-elements are positioned and the children are
      not, so without this the spotlight paints over the title. */
   .card>*{position:relative;z-index:1}

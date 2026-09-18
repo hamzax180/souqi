@@ -7270,6 +7270,10 @@ app.get("/api/deploy/overview", async (req, res, next) => {
       const row = {
         key: p.slug || p.id, id: p.id, title: p.title, slug: p.slug,
         buildType: (p.meta || {}).buildType || null,
+        // The card's star reads this. Without it every card on /deployments
+        // renders unfavourited whatever the project actually is, which is a
+        // control that lies rather than one that works.
+        favorite: !!p.favorite,
         updatedAt: p.updatedAt,
         deployProjectId: p.deployProjectId || null,
         deploymentId: p.deploymentId || null,

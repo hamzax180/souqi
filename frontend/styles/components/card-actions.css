@@ -1,0 +1,86 @@
+/* =====================================================================
+   The card's end controls, and the menu they open.
+
+   Loaded by /projects and /deployments, which draw the same card. The
+   rules live here rather than in either page's sheet for the reason the
+   app-card comment already gives: the last time these two pages each kept
+   their own copy of a card detail, the copies drifted and one app showed
+   two different colours depending which page you were on.
+
+   Class names are ca-* rather than the names /projects used, because
+   /deployments already has a .acts — the row holding Deploy, Stop and
+   Restart — and a card control quietly inheriting a deploy button's
+   border-top is the kind of collision that only shows up on one page.
+   ===================================================================== */
+
+.card-acts {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  flex: none;
+  /* Hidden until the card is hovered or something inside it is focused.
+     Three icons on every card in a grid of forty is a wall of chrome; the
+     name and the preview are what the grid is for. */
+  opacity: 0;
+  transition: opacity var(--dur-snappy, .12s) var(--ease-snappy, ease-out);
+}
+.app:hover .card-acts,
+.card:hover .card-acts,
+.app:focus-within .card-acts,
+.card:focus-within .card-acts,
+.card-acts:focus-within { opacity: 1; }
+
+.card-acts button {
+  width: 28px; height: 28px; flex: none;
+  display: grid; place-items: center;
+  border: 0; border-radius: 8px; padding: 0;
+  background: transparent; color: var(--mut); cursor: pointer;
+  transition: background-color var(--dur-snappy, .12s) var(--ease-snappy, ease-out),
+              color var(--dur-snappy, .12s) var(--ease-snappy, ease-out);
+}
+.card-acts button:hover,
+.card-acts button.on { background: rgba(var(--wash-rgb, 18,32,46), .08); color: var(--ink); }
+.card-acts button svg { width: 15px; height: 15px; }
+
+/* Filled, not outlined, once it is set — an outlined star at 15px is hard
+   to tell from an unset one at a glance across a grid. */
+.ca-star.on { color: #e0a11a; }
+.ca-star.on svg { fill: currentColor; }
+.ca-link.copied { color: var(--ok, #22a565); }
+
+/* ---- the menu ---- */
+.pmenu {
+  position: fixed; z-index: 130; min-width: 190px;
+  background: var(--card, #fff);
+  border: 1px solid var(--line, rgba(0,0,0,.12));
+  border-radius: 12px; padding: 5px;
+  box-shadow: var(--sh-overlay, 0 16px 40px -10px rgba(11,22,38,.32));
+  opacity: 0; visibility: hidden; transform: translateY(-4px);
+  transition: opacity var(--dur-snappy, .12s) var(--ease-snappy, ease-out),
+              transform var(--dur-snappy, .12s) var(--ease-snappy, ease-out),
+              visibility var(--dur-snappy, .12s);
+}
+.pmenu.open { opacity: 1; visibility: visible; transform: none; }
+.pmenu button {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  border: 0; background: none; cursor: pointer;
+  padding: 8px 10px; border-radius: 8px;
+  font: inherit; font-size: .84rem; font-weight: 550;
+  color: var(--ink, #111); text-align: left;
+  transition: background-color var(--dur-snappy, .12s) var(--ease-snappy, ease-out);
+}
+.pmenu button:hover { background: rgba(var(--wash-rgb, 18,32,46), .06); }
+.pmenu button svg { width: 15px; height: 15px; flex: none; color: var(--ink-2, #5c6062); }
+.pmenu .sep { height: 1px; background: var(--line, rgba(0,0,0,.12)); margin: 5px 6px; }
+.pmenu .danger, .pmenu .danger svg { color: var(--danger, #d92d20); }
+.pmenu .danger:hover { background: rgba(217,45,32,.09); }
+
+/* A pointer is what reveals these; a touch screen has no hover to give, so
+   they are simply always there. */
+@media (hover: none) {
+  .card-acts { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-acts, .card-acts button, .pmenu, .pmenu button { transition: none; }
+}

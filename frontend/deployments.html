@@ -20,6 +20,7 @@
 <link rel="stylesheet" href="/styles/pages/deployments.css">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=5.6">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css">
+<link rel="stylesheet" href="/styles/components/card-actions.css?v=1">
 </head>
 <body><div class="ag-hist-backdrop" id="agHistBackdrop"></div>
 <aside class="ag-history" id="agHistory" aria-label="Your account">
@@ -191,6 +192,7 @@
 
 <script src="/js/nav-loading.js?v=1"></script>
 <script src="/js/upgrade-modal.js" defer></script>
+<script src="/js/card-actions.js?v=1"></script>
 <script>
 (function () {
   "use strict";
@@ -597,7 +599,7 @@
       /* The caption that used to print under the mark is the tooltip now -
          see .pv-none. The footer already says what state this is in. */
       var tip = title + (live ? "" : " \u2014 deploy to show a preview here");
-      return '<button type="button" class="app" data-key="' + esc(r.key) + '"' +
+      return '<div class="app" role="button" tabindex="0" data-key="' + esc(r.key) + '"' +
         ' title="' + esc(tip) + '" style="--tile:' + tileTint(r, r.key) + '">' +
         '<span class="thumb">' +
           '<span class="pv" data-key="' + esc(r.key) + '"' +
@@ -616,7 +618,8 @@
                 : '<span>' + esc(r.status ? FOOT_NOTE[r.status] || "not running" : "never deployed") + "</span>") +
           ' \u00b7 ' + esc(timeAgo(r.updatedAt)) +
           '</i></span>' +
-        "</span></button>";
+          (window.CardActions ? window.CardActions.html(r) : "") +
+        "</span></div>";
     }).join("") + "</div>";
     wirePreviews($("listBody"));
     /* The phone layout turns each card on its side, so a preview that is
@@ -1834,7 +1837,40 @@
 
   /* ---------------- events ---------------- */
 
+  /* The card's own controls. Deliberately no onRename and no onDelete:
+     this page already has a Delete that removes the DEPLOYMENT, and a
+     second Delete on the same screen that removes the whole project is how
+     somebody loses an app they meant to keep. Renaming is /projects' job.
+
+     Copy link hands back the deployed address when there is one, because on
+     THIS page that is what "the link to this" means; the builder URL is the
+     answer everywhere else. */
+  if (window.CardActions) {
+    window.CardActions.init({
+      getProject: function (slug) {
+        for (var i = 0; i < all.length; i++) {
+          if (all[i].slug === slug || all[i].key === slug) return all[i];
+        }
+        return null;
+      },
+      onChanged: function () { renderList(); },
+      linkFor: function (slug) {
+        var p = null;
+        for (var i = 0; i < all.length; i++) {
+          if (all[i].slug === slug || all[i].key === slug) { p = all[i]; break; }
+        }
+        return (p && p.status === "RUNNING" && p.url) ? p.url : (location.origin + "/agent/" + slug);
+      },
+      onOpen: function (p) { openDetail(p.key || p.slug); },
+      openLabel: "Open deployment"
+    });
+  }
+
   document.addEventListener("click", function (e) {
+    /* Let the card's own controls answer first. Without this the star and
+       the menu button both count as a click on the card and open the
+       deployment underneath them. */
+    if (e.target.closest && e.target.closest(".card-acts, .pmenu")) return;
     var card = e.target.closest(".app") || e.target.closest(".ag-chat-item");
     if (card && card.dataset.key) { openDetail(card.dataset.key); return; }
 
@@ -2216,6 +2252,19 @@
 
   $("q").addEventListener("input", renderList);
   $("fStatus").addEventListener("change", function (e) { filter = e.target.value; renderList(); });
+
+  /* The card was a <button> and got Enter and Space for nothing. It is a
+     div now — a button may not contain the star and the menu, which are
+     buttons themselves — so the promise role="button" makes has to be kept
+     by hand. Space is prevented because on a div it scrolls the page. */
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    var c = e.target && e.target.closest ? e.target.closest(".app") : null;
+    if (!c || !c.dataset.key) return;
+    if (e.target.closest(".card-acts")) return;   // its own controls answer first
+    e.preventDefault();
+    openDetail(c.dataset.key);
+  });
 
   document.addEventListener("keydown", function (e) {
     if (e.key === "/" && document.activeElement !== $("q")) { e.preventDefault(); $("q").focus(); return; }
@@ -2630,7 +2679,7 @@
     tab.addEventListener("focus", open);
     fly.addEventListener("pointerenter", function () { clearTimeout(hideAt); });
     fly.addEventListener("pointerleave", close);
-    addEventListener("keydown", function (e) { if (e.key === "Escape") { clearTimeout(hideAt); fly.classList.remove("open"); } });
+  addEventListener("keydown", function (e) { if (e.key === "Escape") { clearTimeout(hideAt); fly.classList.remove("open"); } });
     // follow() already tracks movement; these only reset the change guard so
     // the next frame recomputes instead of comparing against a stale key.
     addEventListener("scroll", function () { at = ""; }, { passive: true });
