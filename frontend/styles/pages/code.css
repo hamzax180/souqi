@@ -4363,12 +4363,24 @@
   .ag-ask-send:not([disabled]):active{transform:translateY(1px)}
   .ag-ask-send[disabled]{opacity:.4;cursor:default}
   .ag-ask-send:not([disabled]):hover{background:color-mix(in srgb,var(--accent) 88%,#000)}
+  /* The field the hint used to only describe. It grows and Send sits at
+     the end of it, so the row reads as one control rather than as a button
+     floating beside a sentence. */
+  .ag-ask-own{order:1;flex:1;min-width:0;box-sizing:border-box;
+    border:1px solid var(--line);border-radius:9px;padding:7px 11px;
+    font:inherit;font-size:.82rem;background:var(--paper);color:var(--ink);
+    transition:border-color .15s var(--ease),box-shadow .15s var(--ease)}
+  .ag-ask-own::placeholder{color:var(--mut)}
+  .ag-ask-own:focus{outline:none;border-color:var(--accent);
+    box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent)}
   .ag-ask-hint{order:1;font-size:.76rem;color:var(--mut)}
   .ag-ask.done{opacity:.6;pointer-events:none}
 
   @media (prefers-reduced-motion:reduce){
     .pl-go:hover svg{transform:none}
     .ag-ask-opt:active{transform:none}
+    .ag-ask-own,.ag-ask-send{transition:none}
+    .ag-ask-send:not([disabled]):active{transform:none}
   }
   @media (max-width:640px){
     .ag-plan{padding:13px 13px 12px;border-radius:13px}

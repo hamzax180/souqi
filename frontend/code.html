@@ -3959,7 +3959,7 @@
       b.addEventListener("click", function () {
         if (chosen.has(o.label)) { chosen.delete(o.label); b.classList.remove("on"); }
         else { chosen.add(o.label); b.classList.add("on"); }
-        send.disabled = chosen.size === 0;
+        refreshSend();
       });
       list.appendChild(b);
     });
@@ -3971,18 +3971,39 @@
     send.className = "ag-ask-send";
     send.textContent = "Send";
     send.disabled = true;
-    const hint = document.createElement("span");
-    hint.className = "ag-ask-hint";
-    hint.textContent = "or type your own answer";
-    foot.appendChild(send); foot.appendChild(hint);
+    /* It used to be a <span> reading "or type your own answer" beside a
+       Send button — a placeholder for a field that was not there. The
+       answer had to be typed into the page's main composer instead, which
+       is somewhere else entirely and looks like a different conversation.
+       It is the input now, and Send sends whichever of the two you used. */
+    const own = document.createElement("input");
+    own.type = "text";
+    own.className = "ag-ask-own";
+    own.placeholder = "or type your own answer";
+    own.setAttribute("aria-label", "Type your own answer");
+    foot.appendChild(send); foot.appendChild(own);
+
+    function typed() { return own.value.trim(); }
+    function refreshSend() { send.disabled = chosen.size === 0 && !typed(); }
+    own.addEventListener("input", refreshSend);
+    own.addEventListener("keydown", function (e) {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      if (!send.disabled) send.click();
+    });
 
     send.addEventListener("click", function () {
-      if (!chosen.size) return;
+      const own_ = typed();
+      if (!chosen.size && !own_) return;
       dismissCard(wrap);
       // Sent as the person's own message, so the transcript reads as a
       // conversation and the assessor sees an answer in the shape it asked
       // for rather than a code the server would have to decode.
-      const answer = Array.from(chosen).join(", ");
+      /* Typed text wins, because it is the more specific thing the person
+         said — and rides alongside any options they also pressed rather
+         than replacing them silently. */
+      const picked = Array.from(chosen).join(", ");
+      const answer = own_ ? (picked ? picked + " — " + own_ : own_) : picked;
       const inp = document.getElementById("agInput");
       if (inp) {
         inp.value = answer;
