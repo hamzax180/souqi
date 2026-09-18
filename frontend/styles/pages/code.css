@@ -3985,6 +3985,14 @@
     .ag-history:not(.on) .ag-chat-item{width:32px;margin:0 auto;padding:7px 0;justify-content:center;gap:0}
     .ag-history:not(.on) .ag-chat-item .sdot{margin:0}
     .ag-history:not(.on) .ag-chat-item span{display:none}
+    /* The SKELETON collapses the same way its rows do. A loading chat list
+       is four <div class="sk-row"><i/><b/></div>, and only the real rows
+       had been taught to drop their label — so while the list loaded the
+       shut rail showed a dot AND a stub of bar beside it, in a 44px strip,
+       which reads as a second thing loading rather than as the same thing
+       narrower. Dots only, centred like the rows they become. */
+    .ag-history:not(.on) .sk-row{width:32px;margin:0 auto;padding:7px 0;justify-content:center;gap:0}
+    .ag-history:not(.on) .sk-row b{display:none}
     .ag-history:not(.on) .ag-chats-empty{display:none}
     .ag-history:not(.on) .ag-hist-head{padding:8px 0 4px !important;height:44px !important;flex:0 0 44px !important;overflow:hidden;justify-content:center}
     .ag-history:not(.on) .ag-hist-mark{margin:0 auto}
@@ -4263,11 +4271,16 @@
      has to re-interpret. These are the same options it would have
      described in prose, as buttons — so the common answer is one click
      and the unusual one is still typed. */
-  .ag-ask{margin:10px 0 14px;max-width:480px;animation:agIn .3s var(--ease) forwards}
+  /* A card, not a loose stack. The options floated on the page background
+     with nothing holding them together, so a question read as four
+     unrelated buttons rather than one choice to make. */
+  .ag-ask{margin:10px 0 14px;max-width:480px;animation:agIn .3s var(--ease) forwards;
+    border:1px solid var(--line);background:var(--card);border-radius:14px;padding:13px 13px 11px;
+    box-shadow:0 2px 10px rgba(0,0,0,.05)}
   .ag-ask-q{font-size:.9rem;line-height:1.5;color:var(--ink);margin:0 0 10px}
   .ag-ask-opts{display:flex;flex-direction:column;gap:6px}
   .ag-ask-opt{display:flex;align-items:flex-start;gap:9px;width:100%;text-align:left;
-    padding:9px 11px;border-radius:10px;border:1px solid var(--line);background:var(--card);
+    padding:9px 11px;border-radius:9px;border:1px solid var(--line);background:var(--paper);
     font:inherit;font-size:.84rem;color:var(--ink);cursor:pointer;
     transition:border-color .14s var(--ease),background .14s var(--ease),transform .12s var(--ease)}
   .ag-ask-opt:hover{border-color:var(--accent);background:var(--paper-2)}
@@ -4285,13 +4298,21 @@
     border-radius:5px;padding:2px 6px;white-space:nowrap}
   .ag-ask-opt.on{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 7%,transparent)}
   .ag-ask-opt.on .k{background:var(--accent);border-color:var(--accent);color:#fff}
-  .ag-ask-foot{display:flex;gap:7px;align-items:center;margin-top:9px}
-  .ag-ask-send{border:0;border-radius:9px;padding:7px 13px;font:inherit;font-size:.82rem;
+  /* THE ACTION ON THE RIGHT, the hint on the left — the same order as the
+     other question card and as every dialog. Send was appended first and
+     so sat at the left with "or type your own answer" trailing it, which
+     puts the button in the last place the eye looks for it. Ordered rather
+     than re-appended, so it stays first for the keyboard. */
+  .ag-ask-foot{display:flex;gap:10px;align-items:center;margin-top:11px;
+    padding-top:10px;border-top:1px solid var(--line)}
+  .ag-ask-send{order:2;margin-inline-start:auto;
+    border:0;border-radius:9px;padding:7px 15px;font:inherit;font-size:.82rem;
     font-weight:600;color:#fff;background:var(--accent);cursor:pointer;
-    transition:background .15s var(--ease),opacity .15s}
-  .ag-ask-send[disabled]{opacity:.45;cursor:default}
+    transition:background .15s var(--ease),opacity .15s,transform .12s var(--ease)}
+  .ag-ask-send:not([disabled]):active{transform:translateY(1px)}
+  .ag-ask-send[disabled]{opacity:.4;cursor:default}
   .ag-ask-send:not([disabled]):hover{background:color-mix(in srgb,var(--accent) 88%,#000)}
-  .ag-ask-hint{font-size:.76rem;color:var(--mut)}
+  .ag-ask-hint{order:1;font-size:.76rem;color:var(--mut)}
   .ag-ask.done{opacity:.6;pointer-events:none}
 
   @media (prefers-reduced-motion:reduce){

@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=8.3">
+<link rel="stylesheet" href="/styles/pages/code.css?v=8.4">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.6">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -1259,7 +1259,7 @@
 </div>
 
 <script type="module">
-  import { WCRuntime } from '/js/codeagent/wc-runtime.js';
+  import { WCRuntime } from '/js/codeagent/wc-runtime.js?v=1.1';
   import { parseBuildErrors } from '/js/codeagent/build-parser-client.js';
   import { inlineModules } from '/js/codeagent/inline-modules.js';
 
@@ -3306,23 +3306,25 @@
       paintPhase();
     }
 
-    /* What to say when the events have gone quiet. It escalates with the
-       clock and names what the turn has actually produced, because "Still
-       thinking…" for four minutes reads as a hang — and on a 129k-token
-       turn that wrote 25 files, it was the least true thing on screen. */
+    /* FOUR PHRASES, AND NO OTHERS.
+
+       This line is read at a glance while something is happening, and it
+       had grown a vocabulary — file counts, "Working through a large
+       change…", "Still generating — this is a big one…". Each was true and
+       together they made a row that reads differently every time you look
+       at it. The two event phases (Running tools…, Waiting for Souqi…)
+       arrive from the server through setPhase; these two are the only
+       things said when nothing is arriving. */
     function restingText() {
-      const total = Date.now() - t0;
-      const made = filesTouched;
-      if (made > 0) {
-        const n = made + (made === 1 ? " file" : " files");
-        if (total > 180000) return "Still writing — " + n + " so far";
-        return "Writing code · " + n + " so far";
-      }
-      if (total > 240000) return "Still generating — this is a big one…";
-      if (total > 120000) return "Working through a large change…";
-      if (total > 75000) return "Almost done thinking…";
-      if (total > 20000) return "Still thinking…";
-      return "Thinking…";
+      /* Thirty seconds, not seventy-five. The first model call on a real
+         turn runs 60-90 seconds with nothing to report, and for all of it
+         the row said one unchanging word — measured on screen at 1m 49s,
+         still "Thinking…", with a token count of zero beside it. Nothing
+         about that is wrong and all of it looks frozen, which is the
+         moment someone closes the tab. Half a minute in it moves to the
+         second phrase, so the line has visibly changed before anyone
+         starts wondering whether it has. */
+      return (Date.now() - t0) > 30000 ? "Almost done thinking…" : "Thinking…";
     }
 
     let filesTouched = 0;
@@ -3330,7 +3332,11 @@
     function paintPhase() {
       let text;
       if (queued) text = queueText();
-      else if (Date.now() - phaseAt > 12000) text = restingText();
+      /* Four seconds of silence, not twelve. This is the gap between the
+         last thing the server said and the fallback taking over; at twelve
+         the row held a stale "Running tools…" long after the tools had
+         finished running. */
+      else if (Date.now() - phaseAt > 4000) text = restingText();
       else text = phase;
       if (phaseEl.textContent !== text) phaseEl.textContent = text;
     }
@@ -3352,73 +3358,22 @@
        ONE ROW that rewrites itself, not a new row each time — nine
        stacked progress lines would bury the real steps above them. It is
        removed the instant anything real arrives. */
-    let tickRow = null, tickAt = 0, tickN = 0;
-
-    function clearTick() {
-      if (!tickRow) return;
-      const r = tickRow;
-      tickRow = null;
-      if (r.parentNode) r.parentNode.removeChild(r);
-    }
-
-    /* Its own element, not addRow's. That set() takes a token ARRAY and
-       renders it through renderTokens; handing it a sentence would put
-       the sentence through the wrong renderer. This row is one string
-       that gets rewritten, so it owns itself. */
-    function showTick(text) {
-      if (!tickRow) {
-        tickRow = el("th2-step busy th2-tick", '<span class="th2-step-text"></span>');
-        stepsEl.appendChild(tickRow);
-      }
-      tickRow.firstChild.textContent = text;
-    }
-
-    function tickText() {
-      /* NO CLOCK HERE. The status row under this one already counts the
-         seconds, and printing them again put "3m 21s so far" directly
-         above "3m 24s" — two timers a few hundred milliseconds apart,
-         which reads as a bug in the timer rather than as reassurance.
-         What this row adds is what the other one cannot say: what the
-         turn has produced and what it is waiting on. */
-      const lines = [];
-      if (filesTouched > 0) {
-        lines.push(filesTouched + (filesTouched === 1 ? " file" : " files") + " changed so far");
-      }
-      // The last thing the SERVER said, quoted back rather than guessed at.
-      if (phase && phase !== "Thinking…") lines.push("Last step: " + phase);
-      lines.push("Waiting on the model — a long turn can run several minutes");
-      lines.push("Still working");
-      return lines[tickN % lines.length];
-    }
-
+    /* THE PROGRESS ROW IS GONE, and the status line carries the whole
+       job. It said things like "Still working" and "Waiting on the model —
+       a long turn can run several minutes", which are outside the four
+       phrases this surface is allowed to use; once constrained to those it
+       would have repeated the line directly beneath it. One row that
+       changes is better than two that agree. */
     const clockTimer = setInterval(function () {
       if (stopped) {
         clearInterval(clockTimer);
         if (qTimer) { clearInterval(qTimer); qTimer = null; }
-        clearTick();
         return;
       }
       const s = Math.round((Date.now() - t0) / 1000);
       timeEl.textContent = s < 60 ? s + "s" : Math.floor(s / 60) + "m " + (s % 60) + "s";
       paintPhase();
 
-      /* Only while the server has genuinely gone quiet, and never while
-         queued — a run that has not started is not working, and saying
-         so would be the exact confusion the queue line exists to end. */
-      const quietFor = Date.now() - phaseAt;
-      if (queued || quietFor < 15000) { clearTick(); return; }
-      if (!tickRow) {
-        tickN = 0;
-        showTick(tickText());
-        tickAt = Date.now();
-        toBottom();
-        return;
-      }
-      if (Date.now() - tickAt >= 20000) {
-        tickN += 1;
-        showTick(tickText());
-        tickAt = Date.now();
-      }
     }, 500);
 
     const handle = {
@@ -3436,7 +3391,6 @@
            Whatever else is true, requirements were not still being
            analysed while files were being read. */
         dropPreamble();
-        clearTick();
         const sub = addRow(label, cls);
         return {
           // Not queued: this is the row correcting itself as it learns,
@@ -3463,7 +3417,6 @@
       say(text) {
         if (stopped || !text) return;
         setQueued(false);
-        clearTick();
         if (!saidEl || saidEl !== stepsEl.lastChild) {
           saidEl = document.createElement("div");
           saidEl.className = "th2-said";
@@ -3523,7 +3476,6 @@
            progress line survived the turn. It ended a finished panel with
            "Waiting on the model", which had stopped being true the moment
            this function was called. */
-        clearTick();
         wrap.classList.add("done");
         const st = wrap.querySelector(".th2-status");
         if (st) st.classList.add("is-done");

@@ -88,6 +88,23 @@ const postcssConfigJs = `export default {
   }
 };`;
 
+/* THE PREVIEW IS A DEVICE, AND A DEVICE HAS NO SCROLLBAR.
+
+   The scaffold document carries this already, but a static site writes its
+   OWN index.html and never got it — so the mockup showed a scrollbar track
+   down the side of the page. On an Arabic build it is worse than untidy:
+   dir="rtl" moves the scrollbar to the LEFT, where it reads as a broken
+   edge rather than as chrome.
+
+   Injected into every page the build writes, for the same reason the font
+   links are: a multi-page site is about.html and menu.html too, and one
+   page without it is one page that jumps. */
+const NO_CHROME_MARK = "souqi-no-chrome";
+const noChromeStyle = '<style id="' + NO_CHROME_MARK + '">' +
+  'html,body,*{scrollbar-width:none;-ms-overflow-style:none}' +
+  'html::-webkit-scrollbar,body::-webkit-scrollbar,*::-webkit-scrollbar{display:none;width:0;height:0}' +
+  '</style>';
+
 const indexHtml = `<!doctype html>
 <html lang="en">
   <head>
@@ -413,6 +430,21 @@ class WCRuntime {
 
   async writeFiles(files) {
     if (!webcontainerInstance) throw new Error("WebContainer not booted");
+
+    /* Before anything else touches them, and independent of the font block
+       below — that one only runs when the server sent a typeface, and a
+       page without one still must not show a scrollbar. */
+    files = Object.assign({}, files);
+    for (const key of Object.keys(files)) {
+      if (!/^[^/]+.html$/.test(key)) continue;
+      if (typeof files[key] !== "string") continue;
+      if (files[key].indexOf(NO_CHROME_MARK) >= 0) continue;
+      files[key] = files[key].indexOf("</head>") >= 0
+        ? files[key].replace("</head>", "    " + noChromeStyle + "
+  </head>")
+        : files[key].replace(/<head([^>]*)>/i, "<head$1>
+    " + noChromeStyle);
+    }
 
     /* The build's typeface, which has to be fetched by the document itself —
        a font cannot be delivered through the Tailwind config. The server
