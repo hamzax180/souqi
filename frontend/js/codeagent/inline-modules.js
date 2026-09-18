@@ -262,11 +262,11 @@ function transformModule(src, path, index, ctx) {
     const def = c.match(/^([A-Za-z_$][\w$]*)\s*(?:,\s*\{([\s\S]*)\})?$/);
     if (def) {
       localBindings.push({ local: def[1], target: target, kind: "default" });
-      if (def[2]) aliasNamed(def[2], localBindings);
+      if (def[2]) aliasNamed(def[2], localBindings, target);
       return "";
     }
     const only = c.match(/^\{([\s\S]*)\}$/);
-    if (only) { aliasNamed(only[1], localBindings); return ""; }
+    if (only) { aliasNamed(only[1], localBindings, target); return ""; }
     return "";
   });
 
@@ -322,12 +322,26 @@ function transformModule(src, path, index, ctx) {
   return { code: code, defaultName: defaultName, localBindings: localBindings };
 }
 
-/** `A, B as C` -> alias entries; a plain name needs no binding at all. */
-function aliasNamed(inner, out) {
+/**
+ * `A, B as C` -> binding entries.
+ *
+ * A plain name used to record nothing, on the reasoning that the
+ * declaration is already in scope under that very name so there is
+ * nothing to bind. True right up until the declaration gets RENAMED:
+ * two modules both exporting `pulse` means the second becomes `pulse$1`,
+ * and an importer that said `import { pulse } from './Finger'` was left
+ * pointing at the FIRST module's pulse — a different object, silently,
+ * with no error until something read a property off it. Plain names are
+ * recorded now so that rename can find them.
+ */
+function aliasNamed(inner, out, target) {
   inner.split(",").forEach((n) => {
     const parts = n.trim().split(/\s+as\s+/);
     if (parts.length === 2 && parts[0].trim() && parts[1].trim()) {
-      out.push({ local: parts[1].trim(), source: parts[0].trim(), kind: "alias" });
+      out.push({ local: parts[1].trim(), source: parts[0].trim(), kind: "alias", target: target });
+    } else {
+      const only = n.trim();
+      if (only) out.push({ local: only, source: only, kind: "named", target: target });
     }
   });
 }
@@ -354,6 +368,10 @@ export function inlineModules(entry, files) {
   const defaults = new Map();  // path -> the name holding its default export
   const pending = [];          // { local, target, kind } to bind after everything is in
   const seenNames = new Set();
+  // path -> Map(original export name -> the name it ended up with), so an
+  // importer can be pointed at the rename instead of silently resolving to
+  // whichever other module declared that word first.
+  const renames = new Map();
   let index = 0;
 
   function visit(path) {
@@ -385,6 +403,22 @@ export function inlineModules(entry, files) {
     const out = transformModule(src, path, index++, ctx);
     defaults.set(path, out.defaultName);
 
+    /* Deps are visited before their importers, so by the time this module
+       is transformed every module it imports from has already been through
+       the collision rename below. Point this module's references at the
+       names those modules actually ended up using. */
+    out.localBindings.forEach((b) => {
+      if (!b.target) return;
+      const map = renames.get(b.target);
+      const to = map && map.get(b.source);
+      if (!to) return;
+      if (b.kind === "named") {
+        out.code = renameTopLevel(out.code, b.local, to);
+        b.local = to;
+      }
+      b.source = to;          // an `as` alias binds to the new name instead
+    });
+
     /* "the later one wins" was never true. Two const declarations in one
        scope is a SyntaxError, not a shadow — the whole bundle fails to
        parse, so neither one wins and the preview renders nothing at all.
@@ -396,6 +430,11 @@ export function inlineModules(entry, files) {
         out.code = renameTopLevel(out.code, n, renamed);
         if (out.defaultName === n) { out.defaultName = renamed; defaults.set(path, renamed); }
         out.localBindings.forEach((b) => { if (b.local === n) b.local = renamed; });
+        /* So an importer of THIS module can be pointed at the new name —
+           see the rewrite above. Keyed by module, because two modules
+           renaming the same word rename it to different things. */
+        if (!renames.has(path)) renames.set(path, new Map());
+        renames.get(path).set(n, renamed);
         ctx.renamed.push(path + ': "' + n + '" renamed to "' + renamed + '" - already declared elsewhere');
         seenNames.add(renamed);
         return;

@@ -121,6 +121,66 @@ check("a duplicate top-level name is renamed, not just warned about", () => {
     "the rename was not reported: " + JSON.stringify(r4.renamed));
 });
 
+/* The rename was only half of it, and the other half was silent.
+
+   Two modules exported `pulse`; the second became `pulse$1` and its own
+   uses came with it. What did NOT come with it was the module that had
+   `import { pulse } from "./finger"` — a plain named import records no
+   binding, on the reasoning that the declaration is already in scope under
+   that name. After the rename it was in scope under a DIFFERENT name, so
+   the importer bound to the first module's pulse instead: a different
+   object, no error, right up until something read a property off it.
+   Observed as "Cannot read properties of undefined (reading 'phase')"
+   thrown from inside a generated app's render. */
+check("an importer follows the export it imported through a rename", () => {
+  const r = inlineModules("src/App.tsx", {
+    "src/lib/anim.ts": "export const pulse = { phase: 0 };",
+    "src/finger.tsx": [
+      "export const pulse = { phase: 2 };",
+      "export function poseMotion(p){ return p.phase; }",
+      "export default function Finger(){ return poseMotion(pulse); }"
+    ].join(NEWLINE),
+    "src/hand.tsx": [
+      'import Finger, { pulse, poseMotion } from "./finger";',
+      "export default function Hand(){ return poseMotion(pulse); }"
+    ].join(NEWLINE),
+    "src/App.tsx": [
+      'import { pulse } from "./lib/anim";',
+      'import Hand from "./hand";',
+      "export default function App(){ return [pulse, Hand]; }"
+    ].join(NEWLINE)
+  });
+
+  assert.ok(r.renamed.length >= 1, "the collision did not rename anything");
+
+  const hand = /function Hand\(\)\{[^}]*\}/.exec(r.code);
+  assert.ok(hand, "Hand was not emitted");
+  assert.ok(/poseMotion\(pulse\$/.test(hand[0]),
+    "Hand still binds the other module's pulse: " + hand[0]);
+
+  /* And the one that really did import from anim keeps the original — a
+     fix that renamed every `pulse` everywhere would pass the line above
+     and break this one. */
+  const app = /function App\(\)\{[^}]*\}/.exec(r.code);
+  assert.ok(app && /\[pulse,/.test(app[0]),
+    "App no longer binds anim's pulse: " + (app && app[0]));
+});
+
+check("an `as` alias follows the rename too", () => {
+  const r = inlineModules("src/App.tsx", {
+    "src/lib/a.ts": "export const tone = 1;",
+    "src/b.ts": "export const tone = 2;",
+    "src/App.tsx": [
+      'import { tone } from "./lib/a";',
+      'import { tone as t2 } from "./b";',
+      "export default function App(){ return tone + t2; }"
+    ].join(NEWLINE)
+  });
+  assert.ok(/const t2 = tone\$/.test(r.code),
+    "the alias binds the wrong tone: " +
+    JSON.stringify((r.code.match(/const t2 = [\w$]+;/g) || [])));
+});
+
 /* The rename has to be a rename, not a find-and-replace. An identifier-shaped
    run of characters is not a reference to the binding when it sits inside a
    string, inside a comment, after a dot, or as an object key. */
