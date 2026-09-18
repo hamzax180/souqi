@@ -4839,6 +4839,20 @@
         : pendingCount + " images are still uploading — sending without them.", "warn");
     }
 
+    /* THE STRIP EMPTIES WHEN THE MESSAGE GOES, not when the build comes
+       back. clearAttachments() was called in the success branch alone, so
+       the thumbnails sat in the composer for the whole run — and if the
+       turn ended any other way, which it does whenever the agent asks a
+       question, presents a plan, just talks, errors or is cancelled, they
+       never left at all. The next message then carried pictures nobody
+       meant to send twice.
+
+       Here, because this is the last line that needs them: the ids are
+       captured above and the thumbnails are already in the message bubble
+       that sayUser() drew. What is left in the composer is a copy of
+       something that has been sent. */
+    clearAttachments();
+
     try {
       let runId = (opts && opts.resumeRunId) || null;
       let streamRes = null;
@@ -5291,7 +5305,10 @@
         try { history.replaceState(null, "", "/agent/" + (projectSlug || projectId)); } catch (e) { /* non-fatal */ }
         $("agNewExtras").hidden = true;
       }
-      clearAttachments();
+      /* The strip is cleared when the message is SENT, a few hundred lines
+         up, so there is nothing here to clear — and by now anything in it
+         was attached WHILE this build ran, for the next message. Clearing
+         it here would throw that away. */
       let summaryText = String(result.summary || result.note || "").trim();
       const isGeneric = !summaryText ||
         summaryText === "Application generated successfully." ||
