@@ -3323,16 +3323,20 @@
     }
 
     function tickText() {
-      const secs = Math.round((Date.now() - t0) / 1000);
-      const spent = secs < 60 ? secs + "s" : Math.floor(secs / 60) + "m " + (secs % 60) + "s";
+      /* NO CLOCK HERE. The status row under this one already counts the
+         seconds, and printing them again put "3m 21s so far" directly
+         above "3m 24s" — two timers a few hundred milliseconds apart,
+         which reads as a bug in the timer rather than as reassurance.
+         What this row adds is what the other one cannot say: what the
+         turn has produced and what it is waiting on. */
       const lines = [];
-      lines.push("Still working — " + spent + " so far");
       if (filesTouched > 0) {
         lines.push(filesTouched + (filesTouched === 1 ? " file" : " files") + " changed so far");
       }
       // The last thing the SERVER said, quoted back rather than guessed at.
       if (phase && phase !== "Thinking…") lines.push("Last step: " + phase);
       lines.push("Waiting on the model — a long turn can run several minutes");
+      lines.push("Still working");
       return lines[tickN % lines.length];
     }
 
