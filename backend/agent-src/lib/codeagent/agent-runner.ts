@@ -1045,12 +1045,23 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
              that stopped for no visible reason. */
           await runStore.appendEvent(runId, "plan", { plan: effects.planPresented });
           await runStore.recordStep(runId, { turn, toolCalls, toolResults, costUsd: aiRes.costUsd || 0 });
-          return {
+          /* THROUGH settle(), not around it. Returning the outcome straight
+             from here left the run "running" with a live lease: the worker
+             moved on, nothing wrote a terminal status, and sixty seconds
+             later recoverExpiredRuns filed the turn as "The agent worker
+             stopped before finishing" — on a run that had finished, and
+             whose plan was already recorded one line above. The user saw
+             that sentence in red instead of the plan.
+
+             A plan writes no files, so the finalizer's revision branch is
+             skipped on its own and the turn is recorded with the plan's
+             title as its body. */
+          return await settle("succeeded", { phase: "planned" }, {
             ok: true, stopReason: "plan_presented" as StopReason,
             plan: effects.planPresented,
             summary: effects.planPresented.title,
             files: currentFiles, costUsd: totalCostUsd, tokens: totalTokens
-          };
+          });
         }
         if (effects.completed) {
           taskCompleted = true;
