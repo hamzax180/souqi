@@ -1229,15 +1229,21 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
     finalSummary.trim().length < 12;
 
   if (isGeneric && !isQuestionTurn) {
-    const created = diff.filter(d => d.isNew).map(d => (d.path || "").split("/").pop()).filter(Boolean);
-    const modified = diff.filter(d => !d.isNew && (d.added || d.removed)).map(d => (d.path || "").split("/").pop()).filter(Boolean);
+    /* COUNTS, NOT A ROLL CALL.
+
+       This listed every file by name, and the card directly above the
+       message lists them too — with the directory each one sits in and how
+       many lines changed. So a build of twenty-five files ended with four
+       lines of prose naming all twenty-five, immediately under a card
+       naming all twenty-five, and the sentence that was supposed to say
+       what happened was the least readable thing in the turn.
+
+       The card is the list. This says what was done to it. */
+    const created = diff.filter(d => d.isNew).length;
+    const modified = diff.filter(d => !d.isNew && (d.added || d.removed)).length;
     const parts = [];
-    if (created.length) {
-      parts.push("Created " + created.join(", "));
-    }
-    if (modified.length) {
-      parts.push("Updated " + modified.join(", "));
-    }
+    if (created) parts.push("Created " + created + " file" + (created === 1 ? "" : "s"));
+    if (modified) parts.push((created ? "updated " : "Updated ") + modified + " file" + (modified === 1 ? "" : "s"));
     if (repairedCount > 0) {
       parts.push("resolved " + repairedCount + " build issue" + (repairedCount === 1 ? "" : "s"));
     }

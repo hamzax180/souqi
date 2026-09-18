@@ -5385,8 +5385,14 @@
         renderCard(generatedPaths, 0, []);
         showPreview(undefined, lastReceivedFiles);
         if (thinkPanel) thinkPanel.done();
-        const names = generatedPaths.map((f) => f.split("/").pop()).join(", ");
-        say('<span class="muted">Generated ' + (names ? names : "files") + " and loaded preview.</span>");
+        /* The card above already names every file, with its folder and its
+           line counts. Naming them again in prose put the same list on
+           screen twice, the second time without any of that — and on a
+           twenty-five file build it was four lines of it. How many, and
+           that the preview came back, is what this line is for. */
+        const n = generatedPaths.length;
+        say('<span class="muted">Recovered ' + (n ? n + " file" + (n === 1 ? "" : "s") : "your files") +
+          " and loaded the preview.</span>");
         return;
       }
       Object.keys(handles).forEach(function(k) {
