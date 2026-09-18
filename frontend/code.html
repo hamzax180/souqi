@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=8.5">
+<link rel="stylesheet" href="/styles/pages/code.css?v=8.8">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.6">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -3062,7 +3062,12 @@
          used to lose it, which reads as the plan having been thrown
          away. Rendered last so it sits under the summary, where it was
          when the turn ended. */
-      if (t.plan && t.plan.title && runId) showRunPlan(t.plan, runId, !!t.planApprovedAt);
+      /* A plan that was approved is not shown again. It stays through a
+         refresh for as long as the choice is still open — that is what the
+         card is for — and disappears once the choice has been made, the
+         same as it does live. What was decided is in the build that
+         followed it. */
+      if (t.plan && t.plan.title && runId && !t.planApprovedAt) showRunPlan(t.plan, runId);
     });
 
     // Older projects have turns with no stats on them. They still get the
@@ -3833,6 +3838,32 @@
      Multi-select because some questions genuinely take more than one answer
      ("which of these do you need?"). The send button is what commits, so a
      mis-click is corrected by clicking again rather than by undoing a build. */
+  /* A CARD THAT HAS BEEN ANSWERED IS NOT A CARD ANY MORE.
+
+     Question and plan cards used to settle in place — greyed, disabled,
+     still four options tall — so a long conversation filled up with
+     decisions that had already been taken and the live part of it kept
+     moving further down. The answer itself is in the transcript, as a
+     message, which is the record; the card was the way to give it.
+
+     Faded rather than yanked: something vanishing under the cursor you
+     just clicked with reads as a misfire. */
+  function dismissCard(node) {
+    if (!node || !node.parentNode) return;
+    node.style.transition = "opacity .22s ease, transform .22s ease, max-height .28s ease, margin .28s ease";
+    node.style.overflow = "hidden";
+    node.style.maxHeight = node.getBoundingClientRect().height + "px";
+    node.style.pointerEvents = "none";
+    requestAnimationFrame(function () {
+      node.style.opacity = "0";
+      node.style.transform = "translateY(-4px)";
+      node.style.maxHeight = "0px";
+      node.style.marginTop = "0px";
+      node.style.marginBottom = "0px";
+    });
+    setTimeout(function () { if (node.parentNode) node.parentNode.removeChild(node); }, 320);
+  }
+
   function showAnswerOptions(options) {
     const wrap = el("ag-ask");
     const list = document.createElement("div");
@@ -3880,7 +3911,7 @@
 
     send.addEventListener("click", function () {
       if (!chosen.size) return;
-      wrap.classList.add("done");
+      dismissCard(wrap);
       // Sent as the person's own message, so the transcript reads as a
       // conversation and the assessor sees an answer in the shape it asked
       // for rather than a code the server would have to decode.
@@ -4233,9 +4264,9 @@
     });
 
     function settle(label) {
-      card.classList.add("done");
       Array.prototype.slice.call(card.querySelectorAll(".ask-opt, .ask-input"))
         .forEach(function(n) { n.disabled = true; });
+      dismissCard(card);
       card.querySelector(".ask-actions").outerHTML = '<span class="ask-chose">' + esc(label) + '</span>';
     }
 
@@ -4400,8 +4431,8 @@
         });
         const d = await r.json().catch(() => ({}));
         if (!r.ok || !d.approvalToken) throw new Error(d.error || "that plan could not be approved");
-        card.classList.add("is-approved");
         go.textContent = "Building…";
+        dismissCard(card);
         /* THE MODE FOLLOWS THE DECISION. Plan mode's job ends the moment a
            plan is approved: leaving the composer on Plan means the next
            thing typed gets planned instead of done, which is not what

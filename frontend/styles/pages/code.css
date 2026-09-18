@@ -3911,12 +3911,49 @@
     #agDeskSidebarToggle.on span{display:none !important}
     #agDeskSidebarToggle.on{padding:4px !important;width:30px !important;height:30px !important;
       justify-content:center !important;left:calc(var(--sb-w) - 40px) !important}
-    .ag-history.on .ag-hist-search{order:2;margin-left:auto;margin-right:0}
-    .ag-history.on .ag-hist-mark{order:3;margin-left:0}
-    .ag-history:hover .ag-hist-search,.ag-history.hover-open .ag-hist-search{order:2;margin-left:auto;margin-right:0}
-    .ag-history:hover .ag-hist-mark,.ag-history.hover-open .ag-hist-mark{order:3;margin-left:0}
+    /* THE MARK STAYS PUT; THE CONTROL IS THE THING THAT MOVES.
+
+       The comment above says the mark sits at the far left with the
+       control at the far right, and the rules did the opposite: order:3
+       put the mark LAST, so opening the panel slid the logo from x=8 to
+       x=199 while the button stayed at 7. The one fixed landmark in the
+       header was the one thing travelling across it.
+
+       Worse shut than open: the toggle is fixed at left:7 and 30px wide,
+       the mark sits at x=8 and is 28px wide, so with the rail closed the
+       button was sitting directly on top of the logo.
+
+       Order 0 keeps the mark first and therefore leftmost in both states,
+       and the button moves to the panel's right edge when there is a panel
+       to have an edge — which is what the override two lines below was
+       cancelling. */
+    .ag-history.on .ag-hist-search,
+    .ag-history:hover .ag-hist-search,
+    .ag-history.hover-open .ag-hist-search{order:2;margin-left:auto;margin-right:38px}
+    .ag-history.on .ag-hist-mark,
+    .ag-history:hover .ag-hist-mark,
+    .ag-history.hover-open .ag-hist-mark{order:0;margin-left:0}
     #agDeskSidebarToggle:not(.on){left:7px !important}
-    #agDeskSidebarToggle.on{left:7px !important}
+    #agDeskSidebarToggle.on{left:calc(var(--sb-w) - 40px) !important}
+    /* AND THE HEADER MAKES ROOM FOR IT.
+
+       The toggle is position:fixed at left:7 and 30px wide; the mark is at
+       x:8 and 28px wide. They were sitting on top of each other with the
+       rail shut — a button drawn over a logo — and the only reason it was
+       not obvious when open is that the mark had been pushed to the far
+       right to get out of the way, which is the jump this block removes.
+       Reserving the strip is what lets the mark stay where it is in both
+       states without anything landing on it. */
+    .ag-hist-head{padding-left:44px}
+    /* Shut, the rail is 44px and the reserved strip IS the whole header, so
+       the mark would be pushed out of a rail it is meant to sit in — and
+       the toggle is already drawn in that square. One thing in one place:
+       the button holds the corner while the panel is closed, the logo
+       takes it back when there is a header to hold it. Hidden rather than
+       moved, because a logo that slides 36px on every toggle is the same
+       complaint in a smaller number. */
+    .ag-history:not(.on) .ag-hist-head{padding-left:0}
+    .ag-history:not(.on):not(:hover):not(.hover-open) .ag-hist-mark{display:none}
 
     /* The content column sits beside the rail, so it only needs to clear
        the fixed toggle button, not the whole panel. */
