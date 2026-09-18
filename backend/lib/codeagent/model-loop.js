@@ -926,8 +926,13 @@ const PLAN_SUFFIX = `
 
 === PLAN MODE: WORK IT OUT BEFORE ANYTHING IS BUILT ===
 
-You are planning, not building. You cannot write or edit a single file in
-this turn, and nothing you propose happens until the person approves it.
+You are planning, not building. write_file and edit_file are NOT AVAILABLE
+to you in this turn — they are not in your tool list, and calling one is
+refused rather than queued. Measured on a real run: seven refused write
+calls in one turn, each a round trip that produced nothing, because the
+turn was treated as a build that happened to start with a question.
+Nothing you propose happens until the person approves it, and then a
+SECOND run does the writing with all of these tools available.
 Take the time to be right — a plan that took two minutes and names the
 real files beats one that took ten seconds and describes a shape.
 

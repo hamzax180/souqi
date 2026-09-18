@@ -4890,6 +4890,9 @@ async function persistRunOutcome(run, project, attachedImages, outcome) {
         role: "agent", kind: hasChanges ? "result" : "text",
         body: outcome.summary || "Task completed",
         fileStats: outcome.fileStats || [],
+        // A plan turn carries its plan, so a refresh replays the card.
+        // The worker's finalizer does the same on its own path.
+        plan: outcome.plan || null,
         revisionId: rev ? rev.id : undefined, chatId: run.chatId,
         // So reopening this chat can find the steps this run took.
         runId: run.id, ms,

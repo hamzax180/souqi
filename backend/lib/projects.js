@@ -541,6 +541,12 @@ async function addTurn(projectId, turn) {
       removed: Number(f && f.removed) || 0,
       isNew: !!(f && f.isNew)
     })).filter((f) => f.path) : [],
+    /* The plan a plan turn produced, for the same reason as the two above:
+       this row is fixed-shape, so a field the caller passes and this list
+       does not name is dropped. Without it a plan made on the in-process
+       path came back from history as its title in prose with the card
+       gone — and a plan that disappears is a decision nobody can make. */
+    plan: (turn.plan && typeof turn.plan === "object") ? turn.plan : null,
     at: new Date().toISOString()
   };
 
