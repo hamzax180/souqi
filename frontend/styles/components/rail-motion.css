@@ -107,3 +107,23 @@
     transition-delay: 0s !important;
   }
 }
+
+@media (min-width: 901px){
+  /* THE SEARCH BUTTON STOPS HANGING OFF THE EDGE.
+
+     It is hidden while the rail is shut and revealed on hover, and those
+     two things run on different clocks: `display` flips the instant the
+     pointer lands, while the width waits out transition-delay (.16s) and
+     then animates for another .3s. For that half second the button is
+     laid out beside the mark inside a 44px rail — measured on /security
+     at 1280: rail 44 wide, button at x=44 with its right edge at 74. A
+     30px icon sitting in the page beyond the rail's own edge, which is
+     what someone sees and reports as the sidebar glitching.
+
+     Clipping the HEAD rather than delaying the reveal, because the head
+     is the box the button overflows and it is already clipped this way
+     below 901px. Once the rail has widened the head is ~237px, the
+     button is comfortably inside it, and this changes nothing. Four
+     pages carry the same rail and all four had it. */
+  .ag-history:not(.on) .ag-hist-head{ overflow: hidden; }
+}
