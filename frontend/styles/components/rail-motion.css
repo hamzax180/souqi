@@ -425,6 +425,19 @@
     min-width: var(--sb-w) !important;
     flex-shrink: 0 !important;
   }
+  /* ...except the chat list, which MUST be allowed to shrink.
+
+     The rail is a COLUMN flex container, so flex-shrink is the vertical
+     axis, not the horizontal one this block is about — the width is already
+     pinned by the two lines above it, and flex-shrink does nothing for it.
+     What it did instead was stop `Recent` from ever giving height back: with
+     a dozen projects in the list the block grew to its content, and the plan
+     meters, the Upgrade button, the install links and the whole signed-in
+     user row were pushed off the bottom of the viewport with no way to
+     scroll to them. The list is its own scroller — `.ag-chats-list` — so
+     letting the block shrink costs nothing and is what puts the overflow
+     back where it belongs. */
+  .ag-history > .ag-hist-chats{ flex-shrink: 1 !important; }
 
   /* The clip. `.ag-chats-list` is the scroller, not this, so nothing here
      costs the chat list its overflow. */

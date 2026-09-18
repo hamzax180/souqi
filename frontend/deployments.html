@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/base.css">
 <link rel="stylesheet" href="/styles/components/project-card.css">
 <link rel="stylesheet" href="/styles/pages/deployments.css">
-<link rel="stylesheet" href="/styles/components/rail-motion.css?v=5.5">
+<link rel="stylesheet" href="/styles/components/rail-motion.css?v=5.6">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css">
 </head>
 <body><div class="ag-hist-backdrop" id="agHistBackdrop"></div>
@@ -172,7 +172,7 @@
   <div class="wrap" id="viewDetail" hidden>
     <button type="button" class="back" id="btnBack">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
-      All deployments
+      <span class="back-label">All deployments</span><span class="back-text">Go back</span>
     </button>
     <div id="detailBody"></div>
   </div>
@@ -183,6 +183,11 @@
 </div>
 
 <div class="toast" id="toast"></div>
+<!-- Announces the deployment's state, and only when that state changes.
+     Outside #detailBody on purpose: renderDetail replaces that subtree, and
+     re-inserting a live region re-announces it whether or not the words
+     moved. -->
+<p class="sr-only" id="dxAnnounce" role="status" aria-live="polite"></p>
 
 <script src="/js/nav-loading.js?v=1"></script>
 <script src="/js/upgrade-modal.js" defer></script>
@@ -225,6 +230,11 @@
   var all = [];          // rows from /api/deploy/overview
   var capacity = null;
   var account = null;    // /api/account/me, for the plan block
+  /* Two flags, not one: "we have not asked yet" and "we asked and they are
+     signed out" are different empty lists, and conflating them flashed the
+     signed-out copy at everyone during the first paint. */
+  var accountKnown = false;
+  var signedIn = false;
   var configured = true;
   var filter = "all";
   var openKey = null;    // detail view, or null for the list
@@ -235,6 +245,16 @@
      make every toggle a full repaint, and a full repaint tears out the live
      preview iframe and reloads the running app. */
   var logWrap = false;
+  /* Console height and line filter. Both are view state, not data, so they
+     live here and go into the signature rather than being poked into the
+     DOM — a repaint mid-build would otherwise drop them. */
+  var logBig = false;
+  var logQuery = "";
+  /* Which settings tab is open, and whether the lifecycle menu is down.
+     menuOpen is in the signature too: without it a poll landing while the
+     menu is open would rebuild #detailBody and shut it under the cursor. */
+  var cfgTab = "general";
+  var menuOpen = false;
 
   /* The app's database. Loaded once when a detail view opens rather than
      on the status poll: it changes when someone changes it, not every two
@@ -546,9 +566,18 @@
       return;
     }
     if (!all.length) {
-      $("listBody").innerHTML = '<div class="empty"><h2>Nothing to deploy yet</h2>' +
-        '<p>Build an app first and it will show up here, ready to ship into its own container.</p>' +
-        '<a class="btn-d" href="/agent">Open the builder</a></div>';
+      /* Two different empty lists. A signed-out visitor owns nothing the
+         server will admit to — their apps belong to an account they are not
+         currently holding — so telling them to go and build one is the wrong
+         instruction and reads as "your work is gone". */
+      $("listBody").innerHTML = accountKnown && !signedIn
+        ? '<div class="empty"><h2>Sign in to see your deployments</h2>' +
+          '<p>Apps belong to your account. You are signed out, so there is nothing ' +
+          'here to show \u2014 signing back in brings them all with it.</p>' +
+          '<a class="btn-d" href="/login" data-nav>Sign in</a></div>'
+        : '<div class="empty"><h2>Nothing to deploy yet</h2>' +
+          '<p>Build an app first and it will show up here, ready to ship into its own container.</p>' +
+          '<a class="btn-d" href="/agent">Open the builder</a></div>';
       return;
     }
     var list = all.filter(matches);
@@ -738,6 +767,20 @@
   }
 
   function logView(logs) {
+    /* Filtering is a VIEW over the same lines, never a second request: the
+       tail we hold is all there is, and asking the plane again for a
+       narrower slice would just lose the lines it already sent. */
+    var q = logQuery.trim().toLowerCase();
+    if (q && logs && logs.lines && logs.lines.length) {
+      var kept = logs.lines.filter(function (l) {
+        var txt = typeof l === "string" ? l : (l && l.line) || "";
+        return String(txt).toLowerCase().indexOf(q) !== -1;
+      });
+      if (!kept.length) {
+        return '<div class="logs-empty">No line matches \u201c' + esc(logQuery) + '\u201d.</div>';
+      }
+      logs = { lines: kept, note: logs.note };
+    }
     if (!logs || !logs.lines || !logs.lines.length) {
       return '<div class="logs-empty">' + esc((logs && logs.note) || "No output yet.") + "</div>";
     }
@@ -749,7 +792,15 @@
          third of the way across the panel. The day is in the panel header
          instead, and the clipboard copy still carries the whole timestamp. */
       var t = l.at ? '<span class="ts">' + esc(String(l.at).replace("T", " ").slice(11, 19)) + "</span>  " : "";
-      var cls = l.stream === "stderr" ? "err" : (l.phase === "system" || l.stream === "system" ? "sys" : "");
+      /* Three levels the payload states, and one it does not. npm writes
+         its warnings to STDOUT, so a deprecation notice arrived with the
+         same shape as a progress line and was the only thing in five hundred
+         lines anyone wanted to find. Matched on the text because the plane
+         sends no level field — a heuristic, deliberately confined to this
+         one word, and never used to infer that something FAILED. */
+      var cls = l.stream === "stderr" ? "err"
+        : (l.phase === "system" || l.stream === "system") ? "sys"
+        : /\bwarn(ing)?\b/i.test(String(l.line || "")) ? "warn" : "";
       return '<span class="ln' + (cls ? " " + cls : "") + '">' + t + esc(l.line) + "</span>";
     }).join("");
     return "<pre>" + body + "</pre>";
@@ -778,6 +829,16 @@
       toast("Copying isn't available in this browser."); return;
     }
     navigator.clipboard.writeText(text).then(function () {
+      /* An icon button holds an <svg>, and textContent = "Copied" deletes it
+         — `was` is the empty string for such a button, so the restore put
+         back nothing and the icon was gone until the next repaint. Only a
+         button whose whole content is text gets the word; the rest get a
+         class and CSS draws the tick over the top. */
+      if (btn.firstElementChild) {
+        btn.classList.add("copied");
+        setTimeout(function () { btn.classList.remove("copied"); }, 1400);
+        return;
+      }
       var was = btn.textContent;
       btn.textContent = "Copied";
       setTimeout(function () { btn.textContent = was; }, 1400);
@@ -818,6 +879,7 @@
     return [d.status, d.url, d.error, c.state, c.restarts, c.exitCode, logPhase, n,
       b.mode, b.configured, b.name, b.masked, b.sizeBytes, b.builtinKept, dbTab,
       g.subdomain, g.locked, k.available, k.reason, cfgDraft,
+      cfgTab, menuOpen, logBig, logQuery,
       cd.domain, cd.verified, domDraft, domMsg, domBusy,
       secIssues ? secIssues.length : 0,
       (d.checks || []).map(function (k) { return k.id + k.status; }).join(","),
@@ -1187,26 +1249,24 @@
      Rendered OUTSIDE the `if (st)` block below, which is the whole point:
      every other section here is inside it, so on a never-deployed app the
      screen is a title and one button — exactly when there is most to decide. */
-  function cfgPanel(st) {
+  function cfgPanel(st, tab) {
     var g = cfgInfo;
     // Named while it loads, so the panel that is coming is identifiable.
     if (g === null) {
-      return '<div class="panel cfg"><div class="panel-h"><b>Configure</b></div>' +
-        '<div class="sk"><div class="bar" style="width:58%"></div>' +
+      return '<div class="cfg"><div class="sk"><div class="bar" style="width:58%"></div>' +
         '<div class="bar" style="width:34%"></div></div></div>';
     }
     if (g.unavailable) {
       // Visible, and it names the status: an address panel that silently is
       // not there is indistinguishable from one that has not loaded yet.
-      return '<div class="panel cfg"><div class="panel-h"><b>Configure</b></div>' +
-        '<div class="cfg-block"><b>Couldn\u2019t load the address settings</b>' +
+      return '<div class="cfg"><div class="cfg-block"><b>Couldn\u2019t load the address settings</b>' +
         "<p>" + esc(g.reason || "the request failed") +
         (g.status ? " (HTTP " + esc(g.status) + ")" : "") +
         ". Reload the page to try again.</p></div></div>";
     }
 
     var appDomain = g.appDomain || "souqi.site";
-    var out = '<div class="panel cfg"><div class="panel-h"><b>Configure</b></div>';
+    var out = '<div class="cfg">';
 
     // Deliberately first: it is the reason the deploy did not happen.
     if (secIssues && secIssues.length) {
@@ -1219,6 +1279,7 @@
         }).join("") + "</ul></div>";
     }
 
+    if (tab === "general") {
     // ---- address ----
     out += '<div class="cfg-sec"><b>Address</b></div>';
     if (g.locked) {
@@ -1332,6 +1393,9 @@
       }
     if (domMsg) out += '<div class="cfg-hint bad">' + esc(domMsg) + "</div>";
 
+    }
+
+    if (tab === "env") {
     // ---- environment variables ----
     /* Post-deploy only, and honest about two things people get wrong here:
        a value can never be read back out, and nothing changes in the running
@@ -1389,6 +1453,8 @@
       if (envMsg) out += '<div class="cfg-hint bad">' + esc(envMsg) + "</div>";
     }
 
+    }
+
     /* The Checks list that stood here moved into the health rail beside the
        preview — see renderDetail(). It was the odd one out in this panel:
        everything else here is something you SET, and those were results.
@@ -1396,6 +1462,7 @@
        panel wide: these ran and could have come out differently, the list
        below describes the runtime and is true before anything is built. */
 
+    if (tab === "security") {
     // ---- what we enforce ----
     // Deliberately NOT presented as a scan. These are properties of the
     // runtime, true before anything is built, and calling them test results
@@ -1409,6 +1476,8 @@
       "<li>CPU, memory and process limits enforced by the kernel</li>" +
       "</ul>";
 
+    }
+
     /* The Deploy button that stood here is up in the Deployment panel now,
        with Redeploy, Start, Stop and Restart — see renderDetail(). */
     return out + "</div>";
@@ -1417,6 +1486,20 @@
   function renderDetail() {
     var r = row(), d = detail || {};
     var st = d.status || null;
+
+    /* Status has not landed yet. loadConfig/loadEnv/loadDatabase each call
+       this when they resolve, and they are quicker than the status request,
+       so a RUNNING app rendered the full "Nothing deployed yet" workspace —
+       empty preview, unlit pipeline, Deploy button — for as long as the
+       status took. It then swapped to the real state, which read as the page
+       changing its mind. Hold the skeleton until there is something to say. */
+    if (detail === null) {
+      if (renderDetail._sig !== "__skel") {
+        renderDetail._sig = "__skel"; renderDetail._stable = null;
+        $("detailBody").innerHTML = skeletonHTML();
+      }
+      return;
+    }
 
     var sig = detailSig(d);
     if (sig === renderDetail._sig && $("detailBody").children.length) return;
@@ -1443,188 +1526,224 @@
        buttons used to sit here too, which pushed the thing you actually came
        to look at — the running app — most of a screen down the page. They are
        below the card now, with the rest of the controls. */
-    var out = '<div class="dt-app"><div class="dt-app-head">' +
-      '<span class="tile" style="--tile:' + tileTint(r, r.key) + '">' + tileMark(r) + "</span>" +
-      '<div class="dt-app-id"><h2>' + esc(title) + "</h2>" +
+    var host = d.url ? String(d.url).replace(/^https?:\/\//, "") : "";
+    var cdom = (d.customDomain && d.customDomain.verified) ? d.customDomain.domain : "";
+    var depId = r.deploymentId || d.deploymentId || "";
+    var EXT_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6M10 14 21 3"/></svg>';
+
+    /* ---- the workspace bar -------------------------------------------
+       One row carrying who you are looking at, what state it is in, and
+       the things you came to do. It replaces a title card that was mostly
+       empty and a Deploy button four scrolls further down: the primary
+       action is now never off screen, whatever you are reading. */
+    /* The one thing worth interrupting a screen reader for. #logBox used to
+       carry aria-live, which announced BUILD OUTPUT — hundreds of lines of
+       npm progress — and nothing at all when the deploy actually finished.
+       Guarded on the status WORD, not on the repaint: this function also runs
+       when a restart count or a check result moves, and "still running" is
+       not news. */
+    var ann = $("dxAnnounce");
+    if (ann && renderDetail._said !== st) {
+      renderDetail._said = st;
+      ann.textContent = st
+        ? title + " is " + String(st).toLowerCase() + ". " + (PHASE_SAY[st] || "")
+        : title + " is not deployed.";
+    }
+
+    var out = '<header class="dx-bar">' +
+      '<span class="tile" style="--tile:' + tileTint(r, r.key) + '">' + tileMark(r) + '</span>' +
+      '<div class="dx-id">' +
+        '<nav class="dx-crumb" aria-label="Breadcrumb"><span>Deployments</span>' +
+        '<i aria-hidden="true">/</i><b>' + esc(title) + '</b></nav>' +
+        '<div class="dx-sub">' + pill(st) + '</div></div>' +
+      '<div class="dx-acts">' +
+      (live ? '<a class="btn-g dx-visit" href="' + esc(d.url) + '" target="_blank" rel="noopener">' +
+              EXT_SVG + 'Visit site</a>' : '') +
+      '<a class="btn-g" href="/agent/' + esc(r.slug || r.key) + '" data-nav>Open builder</a>' +
+      (st
+        ? '<button type="button" class="btn-d" data-act="redeploy"' + (busy ? ' disabled' : '') + '>' +
+          (busy ? 'Working\u2026' : 'Redeploy') + '</button>'
+        : '<button type="button" class="btn-d" data-act="deploy">Deploy</button>') +
+      /* The lifecycle verbs live behind one control rather than as four
+         buttons of equal weight: Stop is not a thing to put one click away
+         from Redeploy. */
+      (st ? '<div class="dx-menu-wrap">' +
+        '<button type="button" class="dx-more" data-menu="toggle" aria-haspopup="true" aria-expanded="' +
+          (menuOpen ? 'true' : 'false') + '" aria-label="More actions">' +
+        '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg></button>' +
+        (menuOpen ? '<div class="dx-menu" role="menu">' +
+          (st === 'RUNNING' ? '<button type="button" role="menuitem" data-act="restart">Restart</button>' : '') +
+          (st === 'RUNNING' ? '<button type="button" role="menuitem" data-act="stop">Stop</button>' : '') +
+          (st === 'STOPPED' ? '<button type="button" role="menuitem" data-act="start">Start</button>' : '') +
+          '<button type="button" role="menuitem" class="danger-item" data-cfgtab="security">Delete\u2026</button>' +
+          '</div>' : '') +
+        '</div>' : '') +
+      '</div></header>';
+
+    if (d.error) out += '<div class="h-err">' + esc(d.error) + '</div>';
+
+    /* ---- preview + logs on the left, state on the right ---- */
+    out += '<div class="dx-grid"><div class="dx-main">';
+
+    out += '<div class="panel dx-pv">' +
+      '<div class="dt-chrome">' +
+      '<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>' +
       (live
-        ? '<a class="h-url" href="' + esc(d.url) + '" target="_blank" rel="noopener">' +
-          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><path d="M15 3h6v6M10 14 21 3"/></svg>' +
-          esc(String(d.url).replace(/^https?:\/\//, "")) + "</a>"
-        : "") +
-      "</div>" +
-      (live ? '<a class="dt-open" href="' + esc(d.url) + '" target="_blank" rel="noopener">Open</a>' : "") +
-      pill(st) + "</div>";
-
-    /* An error stays at the top of the card. It is the one thing that changes
-       what you do next, and finding it under a preview would be finding it
-       late. */
-    if (d.error) out += '<div class="h-err">' + esc(d.error) + "</div>";
-
-    /* The app itself, with what the platform knows about it in a rail beside
-       it — so "is it up, and is it healthy" is answered next to the thing
-       rather than in a Container panel three scrolls down. The address is not
-       repeated here: the header above already links it. */
-    /* Rendered whether or not anything is deployed. A project that has never
-       shipped used to get a title card and nothing else — no preview frame, no
-       health rail, no log panel, no pipeline — so the page you land on before
-       your first deploy looks like a different product from the one you get
-       after it, and none of it tells you what deploying will give you. The
-       shape is the same either way; the contents say "not yet". */
-    out += '<div class="dt-app-body"><div class="dt-app-pv">';
+        ? '<a class="addr" href="' + esc(d.url) + '" target="_blank" rel="noopener" ' +
+          'title="Open ' + esc(cdom || host) + '">' + esc(cdom || host) + '</a>'
+        : '<span class="addr">not deployed</span>') +
+      (live
+        ? '<span class="dt-chrome-acts">' +
+          '<button type="button" class="dx-icon" data-pv="reload" title="Reload preview" aria-label="Reload preview">' +
+          '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></svg></button>' +
+          '<a class="dx-icon" href="' + esc(d.url) + '" target="_blank" rel="noopener" title="Open in new tab" aria-label="Open in new tab">' +
+          EXT_SVG + '</a></span>'
+        : '') +
+      '</div>';
     if (live) {
-      out += '<div class="dt-chrome"><span class="dots"><i></i><i></i><i></i></span>' +
-        '<span class="addr">' + esc(String(d.url).replace(/^https?:\/\//, "")) + "</span></div>";
-      /* Filled in after innerHTML, not here — see mountLivePreview(). The
-         iframe is built once and only rebuilt when the address changes. */
       out += '<div class="dt-live" id="dtLive" data-url="' + esc(d.url) + '"></div>';
     } else {
-      out += '<div class="dt-live dt-live-off"><i>' + tileMark(r) + "</i><span>" +
-        (!st ? "Deploy to show preview here"
-          : st === "STOPPED" ? "Stopped — start it to see it here"
-          : LIVE[st] ? "Building — the preview appears once it is running"
-          : "Not running") + "</span></div>";
+      /* Not a grey rectangle with a sentence in it: the state, why it is
+         that state, and the one control that changes it. */
+      out += '<div class="dt-live dt-live-off"><div class="pv-empty">' +
+        '<i>' + tileMark(r) + '</i>' +
+        '<b>' + (!st ? 'Nothing deployed yet'
+          : st === 'STOPPED' ? 'Stopped'
+          : LIVE[st] ? 'Building' : 'Not running') + '</b>' +
+        '<span>' + (!st ? 'Deploy this project and its live preview appears here.'
+          : st === 'STOPPED' ? 'Start it again and it comes back on the same address.'
+          : LIVE[st] ? 'The preview appears the moment the container answers.'
+          : 'The container is not serving right now.') + '</span>' +
+        (!st ? '<button type="button" class="btn-d" data-act="deploy">Deploy</button>'
+          : st === 'STOPPED' ? '<button type="button" class="btn-g" data-act="start">Start</button>' : '') +
+        '</div></div>';
     }
-    out += "</div>";
+    out += '</div>';
 
+    /* ---- logs ---- */
+    var lgn = (d.logs && d.logs.lines || []).length;
+    var lgd = logDay(d.logs);
+    out += '<div class="panel dt-logs' + (logBig ? ' big' : '') + '">' +
+      '<div class="panel-h">' +
+      '<div class="seg" role="tablist" aria-label="Log source">' +
+      '<button type="button" role="tab" aria-selected="' + (logPhase === 'build') + '" data-phase="build" class="' + (logPhase === 'build' ? 'on' : '') + '">Build</button>' +
+      '<button type="button" role="tab" aria-selected="' + (logPhase === 'runtime') + '" data-phase="runtime" class="' + (logPhase === 'runtime' ? 'on' : '') + '">Runtime</button></div>' +
+      '<span class="log-live' + (busy ? ' on' : '') + '"><i aria-hidden="true"></i>' +
+        (busy ? 'streaming' : 'idle') + '</span>' +
+      '<span class="log-meta">' + (lgd ? esc(lgd) : '') + (lgd && lgn ? ' \u00b7 ' : '') +
+        (lgn ? lgn + (lgn === 1 ? ' line' : ' lines') : '') + '</span>' +
+      '<div class="log-find"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>' +
+      '<input type="search" id="logFind" placeholder="Filter" value="' + esc(logQuery) + '" aria-label="Filter log lines"></div>' +
+      '<button type="button" class="dbmini" data-logact="copy">Copy</button>' +
+      '<button type="button" class="dbmini' + (logWrap ? ' on' : '') + '" data-logact="wrap" aria-pressed="' + (logWrap ? 'true' : 'false') + '">Wrap</button>' +
+      '<button type="button" class="dbmini" data-logact="big" aria-pressed="' + (logBig ? 'true' : 'false') + '">' +
+        (logBig ? 'Shrink' : 'Expand') + '</button>' +
+      '</div>' +
+      '<div class="logs' + (logWrap ? ' wrap' : '') + '" id="logBox" role="log">' +
+      (st ? logView(d.logs)
+          : '<div class="logs-empty">Nothing built yet \u2014 the build output appears here the moment you deploy.</div>') +
+      '</div></div>';
+
+    out += '</div>';   // dx-main
+
+    /* ---- the rail: state, facts, pipeline ---- */
     var c = d.container || {};
-    var tone = st === "RUNNING" ? "on" : st === "FAILED" ? "bad" : LIVE[st] ? "busy" : "";
-    out += '<div class="dt-app-health">' +
-      '<div class="dt-state ' + tone + '"><div class="sv"><i></i>' +
-        esc(st ? (c.state || String(st).toLowerCase()) : "not deployed") + "</div>" +
-      '<div class="ss">' +
-        (!st ? "nothing has been built for this project yet"
-          : c.ageSeconds == null ? "not reported yet"
-          : esc("checked " + c.ageSeconds + "s ago")) +
-      "</div></div>" +
-      '<div class="dt-facts">' +
-      '<div><span class="k">restarts</span><span class="v">' + esc(String(c.restarts == null ? "—" : c.restarts)) + "</span></div>" +
-      '<div><span class="k">exit code</span><span class="v">' + esc(String(c.exitCode == null ? "—" : c.exitCode)) + "</span></div>" +
-      "</div>";
+    var tone = st === 'RUNNING' ? 'on' : st === 'FAILED' ? 'bad' : LIVE[st] ? 'busy' : '';
+    out += '<aside class="dx-side">';
 
-    /* Results, beside the thing they ran against. */
+    out += '<div class="panel dx-ov"><div class="dt-state ' + tone + '">' +
+      '<div class="sv"><i aria-hidden="true"></i>' +
+      esc(st ? (c.state || String(st).toLowerCase()) : 'not deployed') + '</div>' +
+      '<div class="ss">' + (!st ? 'nothing has been built for this project yet'
+        : c.ageSeconds == null ? 'not reported yet'
+        : esc('checked ' + c.ageSeconds + 's ago')) + '</div></div>';
+
+    /* Only what the status payload actually carries. There is no created
+       timestamp on it, so there is no Created row: a field the backend
+       cannot fill is worse than one that is not there. */
+    out += '<dl class="dx-facts">' +
+      '<div><dt>Address</dt><dd>' +
+        (live ? '<a href="' + esc(d.url) + '" target="_blank" rel="noopener">' + esc(cdom || host) + '</a>'
+              : '<span class="muted">\u2014</span>') + '</dd></div>' +
+      (depId ? '<div><dt>Deployment</dt><dd><code>' + esc(String(depId).slice(0, 18)) + '</code>' +
+        '<button type="button" class="dx-copy" data-copy="' + esc(depId) + '" aria-label="Copy deployment id">' +
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></dd></div>' : '') +
+      (r.updatedAt ? '<div><dt>Updated</dt><dd>' + esc(timeAgo(r.updatedAt)) + '</dd></div>' : '') +
+      '<div><dt>Restarts</dt><dd>' + esc(String(c.restarts == null ? '\u2014' : c.restarts)) + '</dd></div>' +
+      '<div><dt>Exit code</dt><dd>' + esc(String(c.exitCode == null ? '\u2014' : c.exitCode)) + '</dd></div>' +
+      '</dl>';
+
     var checks = d.checks || [];
     if (checks.length) {
       out += '<div class="dt-checks"><div class="dt-checks-h">Checks</div><ul>';
       for (var ci = 0; ci < checks.length; ci++) {
         var ck = checks[ci];
         out += '<li class="s-' + esc(ck.status) + '"><b>' + esc(CHECK_NAME[ck.id] || ck.id) +
-          "</b><span>" + esc(ck.summary || ck.status) + "</span></li>";
+          '</b><span>' + esc(ck.summary || ck.status) + '</span></li>';
       }
-      out += "</ul></div>";
+      out += '</ul></div>';
     }
-    out += "</div>";
+    out += '</div>';
 
-    out += "</div>";     // the body
-    out += "</div>";     // the app card
-
-    /* Logs get the full width on their own row — a build line is long, and
-       sharing a row with the preview cut the end off every one of them. The
-       header carries what day these are from and how many there are, both of
-       which were already sitting in the data. */
-    var lgn = (d.logs && d.logs.lines || []).length;
-    var lgd = logDay(d.logs);
-    out += '<div class="panel dt-logs"><div class="panel-h"><b>Logs</b>' +
-      '<span class="log-meta">' +
-        (lgd ? esc(lgd) : "") + (lgd && lgn ? " · " : "") +
-        (lgn ? lgn + (lgn === 1 ? " line" : " lines") : "") + "</span>" +
-      '<button type="button" class="dbmini" data-logact="copy">Copy</button>' +
-      '<button type="button" class="dbmini' + (logWrap ? " on" : "") + '" data-logact="wrap">Wrap</button>' +
-      '<div class="seg"><button type="button" data-phase="build" class="' + (logPhase === "build" ? "on" : "") + '">Build</button>' +
-      '<button type="button" data-phase="runtime" class="' + (logPhase === "runtime" ? "on" : "") + '">Runtime</button></div></div>' +
-      '<div class="logs' + (logWrap ? " wrap" : "") + '" id="logBox">' +
-      (st ? logView(d.logs)
-          : '<div class="logs-empty">Nothing built yet — the build output appears here the moment you deploy.</div>') +
-      "</div></div>";
-
-    /* Progress and controls, directly under the preview they act on. */
+    /* ---- pipeline ---- */
     var stepAt = FLOW.indexOf(st) + 1;
     out += '<div class="panel dt-run"><div class="panel-h"><b>' +
-      (st ? "Deployment" : "Not deployed yet") + "</b>" +
+      (st ? 'Deployment' : 'Not deployed yet') + '</b>' +
       '<span class="run-meta">' +
-        /* No step number for FAILED: the status alone does not say WHICH step
-           it died on, and FLOW.indexOf("FAILED") is -1 — reading a step name
-           out of that would have confidently reported "queued" every time. */
-        (st && LIVE[st] && stepAt ? "step " + stepAt + " of " + FLOW.length
-          : st === "RUNNING" ? "all four steps complete"
-          : "") + "</span></div>" +
-      '<div class="dt-run-body">';
-    /* The stepper draws every bead unlit when there is no status, which is
-       exactly the right picture for "none of this has happened yet" — and it
-       shows what the four steps ARE before you commit to running them. */
-    out += stepper(st);
-    out += '<div class="run-say"><b>' +
-      (st ? esc(st.charAt(0) + st.slice(1).toLowerCase()) + "." : "Not deployed.") + "</b> " +
-      esc(st ? (PHASE_SAY[st] || "")
-             : "Nothing has been built yet. Deploy below and these four steps run in order.") +
-      "</div>";
+        (st && LIVE[st] && stepAt ? 'step ' + stepAt + ' of ' + FLOW.length
+          : st === 'RUNNING' ? 'all four steps complete' : '') + '</span></div>' +
+      '<div class="dt-run-body">' + stepper(st) +
+      '<div class="run-say"><b>' +
+      (st ? esc(st.charAt(0) + st.slice(1).toLowerCase()) + '.' : 'Not deployed.') + '</b> ' +
+      esc(st ? (PHASE_SAY[st] || '')
+             : 'Nothing has been built yet. Deploy and these four steps run in order.') +
+      '</div>';
 
-    /* Every button here is queued work on the deploy plane, so each one
-       goes disabled with a present-tense label and the poll decides when
-       it is really done. Claiming success on the 202 would be a lie. */
-    out += '<div class="acts">';
-    if (!st) {
-      /* Deploy sits with the other lifecycle buttons, under the pipeline it
-         starts. It used to live at the very bottom of the Configure panel, on
-         the theory that it should come after the decisions it commits — but
-         that panel has since grown an address, a data note, a custom-domain
-         section, environment variables and a five-item list of what the
-         runtime enforces. The one button that makes the page DO anything
-         ended up below all of it, under a static description of container
-         security, a full screen from the empty preview telling you to deploy.
-         Every decision below it is optional; an address is generated if you
-         choose none. */
-      out += '<button type="button" class="btn-d" data-act="deploy">Deploy</button>' +
-        '<span class="cfg-nudge">' +
-        (cfgInfo && cfgInfo.unavailable
-          ? "Address settings could not be loaded — deploying will generate one."
-          : "Set an address in Configure first, or deploy and we'll generate one.") +
-        "</span>";
-    } else {
-      out += '<button type="button" class="btn-d" data-act="redeploy"' + (busy ? " disabled" : "") + ">Redeploy</button>";
-      if (st === "RUNNING") out += '<button type="button" class="btn-g" data-act="stop">Stop</button>';
-      else if (st === "STOPPED") out += '<button type="button" class="btn-g" data-act="start">Start</button>';
-      if (st === "RUNNING") out += '<button type="button" class="btn-g" data-act="restart">Restart</button>';
+    out += '<div class="dt-run-note">' +
+      (!st ? 'Deploying builds an image from your source, starts it in its own container and puts it on the address you choose in Settings.'
+        : busy ? 'This is in progress. The controls come back when it settles.'
+        : st === 'STOPPED' ? '<b>Start</b> brings it back on the same address, with its database and settings untouched.'
+        : st === 'FAILED' ? '<b>Redeploy</b> tries again from your latest source. Nothing was lost \u2014 the previous container, database and address are all still here.'
+        : '<b>Redeploy</b> rebuilds from your latest source. <b>Restart</b> bounces the container without rebuilding. <b>Stop</b> takes it off the air \u2014 the address, the database and the settings are all kept.') +
+      '</div></div></div>';
+
+    out += '</aside></div>';   // dx-side, dx-grid
+
+    /* ---- settings ---------------------------------------------------
+       Four sections that used to be two stacked panels and a stray red
+       box at the bottom of the page. They are all "how this deployment is
+       configured", and reading them meant scrolling past the ones you did
+       not want. Tabs, so the page has a floor again. */
+    var TABS = [["general", "General"], ["env", "Environment"], ["db", "Database"], ["security", "Security"]];
+    out += '<div class="panel dx-set"><div class="dx-tabs" role="tablist" aria-label="Deployment settings">';
+    for (var ti = 0; ti < TABS.length; ti++) {
+      out += '<button type="button" role="tab" data-cfgtab="' + TABS[ti][0] + '"' +
+        ' aria-selected="' + (cfgTab === TABS[ti][0] ? "true" : "false") + '"' +
+        ' class="' + (cfgTab === TABS[ti][0] ? "on" : "") + '">' + TABS[ti][1] + "</button>";
     }
     out += "</div>";
 
-    /* Three verbs with real consequences, offered with nothing saying which
-       one keeps your data or your address. They all do — that is worth saying
-       once, here, rather than letting people find out by trying. */
-    out += '<div class="dt-run-note">' +
-        (!st
-          ? "Deploying builds an image from your source, starts it in its own container and puts it on the address you choose above."
-          : busy
-          ? "This is in progress. The controls come back when it settles."
-          : st === "STOPPED"
-            ? "<b>Start</b> brings it back on the same address, with its database and settings untouched."
-            : st === "FAILED"
-              ? "<b>Redeploy</b> tries again from your latest source. Nothing was lost — the previous container, database and address are all still here."
-              : "<b>Redeploy</b> rebuilds from your latest source. <b>Restart</b> bounces the container without rebuilding. <b>Stop</b> takes it off the air — the address, the database and the settings are all kept.") +
-      "</div>";
+    out += '<div class="dx-pane" role="tabpanel">';
+    if (cfgTab === "db") {
+      /* Shown before the first deploy too: dbPanel() has a branch that says
+         a database will be created on that deploy, which is exactly what
+         someone looking at an undeployed project wants to know. */
+      out += dbPanel();
+    } else {
+      out += cfgPanel(st, cfgTab);
+    }
 
-    out += "</div></div>";
-
-    out += cfgPanel(st);
-
-    /* Shown before the first deploy too: dbPanel() has a branch that says a
-       database will be created on that deploy, which is exactly what someone
-       looking at an undeployed project wants to know.
-
-       (The Container panel that used to sit here says what Status & health
-       now says beside the preview, only further down the page.) */
-    out += dbPanel();
-
-    /* Delete is the one thing deliberately NOT mirrored here: it removes a
-       deployment, and before the first deploy there is no deployment to
-       remove — the button could only ever return an error. */
-    if (st) {
+    /* Delete lives under Security, and only once there is something to
+       delete: before the first deploy the button could only ever return an
+       error from the plane. */
+    if (cfgTab === "security" && st) {
       out += '<div class="danger">' +
         '<div class="danger-ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
         '<path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/>' +
         '<path d="M10 11v6M14 11v6"/></svg></div>' +
         "<b>Delete this deployment</b>" +
         "<p>Stops the container, removes its image and its network, and frees the capacity. " +
-        "Your source is untouched — you can deploy again at any time.</p>" +
+        "Your source is untouched \u2014 you can deploy again at any time.</p>" +
         '<p class="danger-ask">Type <code>' + esc(title) + "</code> to confirm.</p>" +
         '<div class="danger-act">' +
         '<input type="text" id="delConfirm" placeholder="App name" autocomplete="off" ' +
@@ -1632,6 +1751,7 @@
         '<button type="button" class="btn-danger" data-act="destroy"' +
         (delDraft.trim() === title.trim() ? "" : " disabled") + ">Delete</button></div></div>";
     }
+    out += "</div></div>";
 
     /* A repaint driven by a build log line must not take the cursor away
        from someone mid-way through pasting a connection URL or typing a name.
@@ -1657,6 +1777,7 @@
 
   function openDetail(key) {
     openKey = key; detail = null; logPinned = true;
+    renderDetail._said = undefined;   // a new app is news even in the same state
     dbInfo = null; dbTab = null; dbDraft = "";   // another app, another database
     dbTables = null; dbTable = null; dbRows = null; dbDataErr = null;
     // Another app, another address. Left set, one app's chosen name would
@@ -1672,11 +1793,30 @@
     location.hash = "#" + key;
     $("viewList").hidden = true; $("viewDetail").hidden = false;
     renderRail();                      // move the rail's current-row highlight
-    $("detailBody").innerHTML = '<div class="sk" style="height:180px"></div>';
+    /* The shape of what is coming, not a grey rectangle. One 180px bar was
+       proportionate to the old stacked page and is not to a workspace with a
+       bar, a preview, a rail and a console — it read as the panel having
+       failed rather than as it being on its way. */
+    $("detailBody").innerHTML = skeletonHTML();
     refreshDetail().catch(function () { }).then(schedule);
     loadDatabase();
     loadConfig();
     loadEnv();
+  }
+
+  /* The shape of what is coming, not a grey rectangle. One 180px bar was
+     proportionate to the old stacked page and is not to a workspace with a
+     bar, a preview, a rail and a console — it read as the panel having
+     failed rather than as it being on its way.
+
+     Shared with renderDetail, which holds it until the status lands. */
+  function skeletonHTML() {
+    return '<div class="dx-skel">' +
+      '<div class="dx-skel-bar"><span class="sq t"></span>' +
+      '<span class="sq l1"></span><span class="sq btn"></span></div>' +
+      '<div class="dx-skel-grid"><div><div class="sq pv"></div><div class="sq lg"></div></div>' +
+      '<div><div class="sq r1"></div><div class="sq r2"></div><div class="sq r3"></div></div></div>' +
+      "</div>";
   }
   function closeDetail() {
     openKey = null; detail = null;
@@ -1726,11 +1866,39 @@
     var la = e.target.closest("[data-logact]");
     if (la) {
       if (la.dataset.logact === "copy") { copyLogs(la); return; }
+      if (la.dataset.logact === "big") {
+        logBig = !logBig;
+        renderDetail();
+        var lb3 = $("logBox");
+        if (lb3 && logPinned) lb3.scrollTop = lb3.scrollHeight;
+        return;
+      }
       /* Toggled in place, deliberately — see logWrap's declaration. */
       logWrap = !logWrap;
       la.classList.toggle("on", logWrap);
       var lb2 = $("logBox");
       if (lb2) lb2.classList.toggle("wrap", logWrap);
+      return;
+    }
+
+    /* Settings tabs. Deliberately before [data-act]: the Delete item in
+       the lifecycle menu is a tab jump, not a deploy action. */
+    var ctab = e.target.closest("[data-cfgtab]");
+    if (ctab) { cfgTab = ctab.dataset.cfgtab; menuOpen = false; renderDetail(); return; }
+
+    var mtoggle = e.target.closest("[data-menu]");
+    if (mtoggle) { menuOpen = !menuOpen; renderDetail(); return; }
+
+    /* Any click that is not inside the menu closes it. Checked after the
+       toggle above so opening it does not immediately shut it again. */
+    if (menuOpen && !e.target.closest(".dx-menu-wrap")) { menuOpen = false; renderDetail(); }
+
+    var pv = e.target.closest("[data-pv]");
+    if (pv) {
+      /* Rebuild the frame rather than poking its contentWindow: the preview
+         is cross-origin, so location.reload() on it throws. */
+      var lv = $("dtLive");
+      if (lv) { lv.innerHTML = ""; mountLivePreview(); }
       return;
     }
 
@@ -1764,6 +1932,21 @@
      vanish out from under whoever was halfway through pasting it. */
   document.addEventListener("input", function (e) {
     if (!e.target) return;
+    /* Filter as you type, and repaint only the log box: going through the
+       full renderDetail would tear out the live preview iframe on every
+       keystroke. The signature is updated so the next poll agrees. */
+    if (e.target.id === "logFind") {
+      logQuery = e.target.value;
+      var fb = $("logBox");
+      if (fb) {
+        fb.innerHTML = detail && detail.status
+          ? logView(detail.logs)
+          : '<div class="logs-empty">Nothing built yet \u2014 the build output appears here the moment you deploy.</div>';
+        if (logPinned) fb.scrollTop = fb.scrollHeight;
+      }
+      renderDetail._sig = null; renderDetail._stable = null;
+      return;
+    }
     if (e.target.id === "delConfirm") {
       delDraft = e.target.value;
       /* Arm the button here rather than repainting: putting delDraft in the
@@ -2142,7 +2325,15 @@
       // Signed out is a real state, not a missing one. Leaving the markup's
       // placeholder in place invented a workspace and an account both
       // called "S", which is worse than saying nothing.
-      if (!d || !d.signedIn) { $("agWsNm").textContent = "Sign in"; return; }
+      accountKnown = true;
+      if (!d || !d.signedIn) {
+        $("agWsNm").textContent = "Sign in";
+        /* The list may already have painted "Nothing to deploy yet" before
+           this answered. Repaint now that the reason is known. */
+        if (!openKey) renderList();
+        return;
+      }
+      signedIn = true;
       // Read by the rail's account row to decide between Settings and /login.
       document.body.dataset.signedIn = "1";
       var who = d.company || d.email || "Account";

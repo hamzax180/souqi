@@ -45,6 +45,31 @@
     --card-rest-shadow:0px 1px 2px #00000008,0px 4px 8px -2px #0000000a;
     --card-hover-border:#bdb7b1;
     --card-hover-shadow:0px 2px 4px #0000000a,0px 8px 16px -4px #0000000f;
+    /* Panel chrome. The detail view declared every one of its surfaces as a
+       flat --card with a --line border, ignoring the card tokens right above
+       it — so the panel you land on looked cheaper than the grid card you
+       clicked to get there. --panel-head gives a header its own ground and
+       --chrome-surface gives the browser bar and the log title bar theirs. */
+    --panel-head:rgba(246,245,244,.72);
+    --chrome-surface:linear-gradient(180deg,#f7f6f5,#efeeed);
+    /* One step softer than --line, one step firmer than --hair. The detail
+       card drew its outer edge and every interior divider in the SAME --line,
+       which is why it read as a box with lines in it rather than as a panel:
+       nothing said which edge was the container and which was a split. */
+    --hair-2:#e4e0dc;
+    /* Status tints. Each pill already had its own inline rgba() at three
+       different alphas, so "green" meant a different green in the pill, the
+       check dot and the stepper bead. One value per tone, both themes. */
+    --accent-wash:rgba(26,166,223,.10);
+    --ok-wash:rgba(34,165,101,.12);
+    --warn-wash:rgba(224,161,26,.12);
+    --danger-wash:rgba(217,45,32,.09);
+    --focus-ring:0 0 0 3px rgba(26,166,223,.25);
+    /* The primary button was a flat fill — the one control on the page that
+       still looked like an unstyled rectangle next to cards that had gained
+       a gradient and a tray. */
+    --btn-d-surface:linear-gradient(180deg,#22b0e8,#1592cc);
+    --btn-d-surface-hover:linear-gradient(180deg,#1aa6df,#0f8ec4);
     /* Sidebar geometry, matching the builder rail so the two pages feel
        like one product rather than two that happen to share colours. */
     --rail:44px; --sb-w:238px; --sb-pad:6px; --ease-sb:cubic-bezier(.32,.72,0,1);
@@ -76,6 +101,20 @@
     --card-rest-shadow:0 1px 2px rgba(0,0,0,.45);
     --card-hover-border:rgba(255,255,255,.15);
     --card-hover-shadow:0 2px 6px rgba(0,0,0,.35),0 16px 34px -16px rgba(0,0,0,.8);
+    /* Every wash is roughly double its light alpha. A tint that reads as a
+       clear ground on paper disappears entirely on #26282b — the first pass
+       reused the light values here and the dark "Running" rail came out
+       indistinguishable from the "Not deployed" one. */
+    --panel-head:rgba(255,255,255,.028);
+    --chrome-surface:linear-gradient(180deg,#2f3135,#282a2d);
+    --hair-2:rgba(255,255,255,.09);
+    --accent-wash:rgba(26,166,223,.18);
+    --ok-wash:rgba(34,165,101,.20);
+    --warn-wash:rgba(224,161,26,.20);
+    --danger-wash:rgba(217,45,32,.18);
+    --focus-ring:0 0 0 3px rgba(26,166,223,.35);
+    --btn-d-surface:linear-gradient(180deg,#1aa6df,#1183b6);
+    --btn-d-surface-hover:linear-gradient(180deg,#26b2ea,#118cc0);
   }
 
   /* clip, not hidden. overflow-x:hidden turns the element into a scroll
@@ -667,13 +706,38 @@
   .nav{display:flex;align-items:center;gap:16px;padding:14px clamp(18px,4vw,40px) 14px 114px;background:var(--paper);transition:padding-left .26s var(--ease)}
   .ag-history.on ~ .ag-main .nav{padding-left:clamp(18px,4vw,40px)}
   .nav .sp{margin-left:auto}
-  .btn-g{padding:9px 15px;border:1px solid var(--line);border-radius:10px;font-size:.86rem;font-weight:600;transition:.16s;background:var(--card);color:var(--ink);cursor:pointer}
-  .btn-g:hover{border-color:var(--line-hover)}
-  .btn-d{padding:9px 17px;border-radius:10px;background:var(--accent);color:#fff;font-size:.86rem;font-weight:600;transition:.16s;border:0;cursor:pointer}
-  .btn-d:hover{background:var(--accent-2)}
+  /* `transition:.16s` is `all` at a duration on no token scale. Named
+     properties instead, because these buttons now carry a gradient and a
+     shadow and `all` would animate the gradient's position too. */
+  .btn-g{padding:9px 15px;border:1px solid var(--line);border-radius:10px;font-size:.86rem;font-weight:600;
+    background:var(--card-surface);color:var(--ink);cursor:pointer;box-shadow:var(--sh-subtle);
+    transition:border-color var(--dur-snappy) var(--ease-snappy),background-color var(--dur-snappy) var(--ease-snappy),
+      box-shadow var(--dur-snappy) var(--ease-snappy),transform var(--dur-snappy) var(--ease-snappy)}
+  .btn-g:hover{border-color:var(--line-hover);background-color:rgba(var(--wash-rgb),.04);box-shadow:var(--sh-raised)}
+  .btn-g:active{transform:translateY(1px);box-shadow:none}
+  /* A flat fill was the last control on the page still reading as an
+     unstyled rectangle, next to cards that had a gradient and a tray. */
+  .btn-d{padding:9px 17px;border-radius:10px;background:var(--btn-d-surface);color:#fff;font-size:.86rem;font-weight:600;border:0;cursor:pointer;
+    box-shadow:0 1px 2px rgba(0,0,0,.14),inset 0 1px 0 rgba(255,255,255,.22);
+    transition:background-image var(--dur-snappy) var(--ease-snappy),box-shadow var(--dur-snappy) var(--ease-snappy),
+      transform var(--dur-snappy) var(--ease-snappy)}
+  .btn-d:hover{background:var(--btn-d-surface-hover)}
+  .btn-d:active{transform:translateY(1px)}
+  /* The global `button:focus{box-shadow:none !important}` at the top of this
+     file kills the ring on every button on the page, which left keyboard
+     users with no focus indicator anywhere on /deployments — including on
+     Stop and Destroy. Restored for this page's own controls only.
+     :focus-visible, so a mouse click never paints it; !important and (0,3,0)
+     specificity, because both are needed to beat the global rule's own. */
+  .wrap .btn-g:focus-visible,.wrap .btn-d:focus-visible,.wrap .btn-danger:focus-visible,
+  .wrap .dbmini:focus-visible,.wrap .seg button:focus-visible,.wrap .back:focus-visible,
+  .wrap .jump:focus-visible,
+  .wrap .dx-more:focus-visible,.wrap .dx-icon:focus-visible,
+  .wrap .dx-copy:focus-visible,.wrap .dx-tabs button:focus-visible,
+  .wrap .dx-menu button:focus-visible{box-shadow:var(--focus-ring) !important}
   .btn-d:disabled,.btn-g:disabled{opacity:.55;cursor:not-allowed}
   .btn-danger{padding:9px 15px;border:1px solid rgba(217,45,32,.35);border-radius:10px;background:transparent;color:var(--danger);font-size:.86rem;font-weight:600;cursor:pointer;transition:.16s}
-  .btn-danger:hover{background:rgba(217,45,32,.08)}
+  .btn-danger:hover{background:var(--danger-wash)}
   /* Armed only once the name matches. The guard already existed, but it
      fired as a toast AFTER the click — you learned the rule by breaking it.
      Showing the button dimmed says the same thing before you reach for it,
@@ -701,27 +765,42 @@
   .wrap{max-width:1180px;margin:0 auto;padding:clamp(26px,5vw,46px) clamp(18px,4vw,40px) 80px;width:100%}
   .phead{display:flex;align-items:center;gap:10px;margin-bottom:6px}
   .phead svg.ic{width:22px;height:22px;color:var(--ink)}
-  .phead h1{font-size:clamp(1.5rem,3vw,1.9rem)}
-  .psub{color:var(--mut);font-size:.9rem;margin:0 0 22px}
+  .phead h1{font-size:clamp(1.5rem,3vw,1.9rem);line-height:1.15;letter-spacing:-.025em}
+  /* A measure. The subtitle ran the full 1180px of the wrap on a desktop,
+     which is about 140 characters — twice anything anyone reads comfortably. */
+  .psub{color:var(--mut);font-size:.9rem;margin:0 0 22px;max-width:62ch;line-height:1.5}
 
   /* ---- KPI row ---- */
   .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:22px}
-  .kpi{border:1px solid var(--line);background:var(--card);border-radius:14px;padding:14px 16px}
+  .kpi{border:1px solid var(--line);background:var(--card-surface);border-radius:14px;
+    box-shadow:inset 0 1px 0 var(--card-sheen),var(--card-rest-shadow);padding:14px 16px}
   .k-label{font-size:.72rem;letter-spacing:.13em;text-transform:uppercase;color:var(--mut);font-weight:600}
   .k-val{font-family:var(--disp);font-weight:700;font-size:1.6rem;letter-spacing:-.02em;margin-top:6px;font-variant-numeric:tabular-nums}
   .k-sub{font-size:.78rem;color:var(--mut);margin-top:2px}
-  .k-meter{height:5px;border-radius:999px;background:var(--paper-2);overflow:hidden;margin-top:9px}
-  .k-meter i{display:block;height:100%;border-radius:999px;background:var(--ok);transition:width .5s var(--ease),background .3s}
+  .k-meter{height:5px;border-radius:999px;background:rgba(var(--wash-rgb),.08);overflow:hidden;margin-top:9px;
+    box-shadow:inset 0 0 0 1px rgba(var(--wash-rgb),.04)}
+  /* background-image, not background: the fill colour is set by .warn/.hot
+     below, and folding the highlight into the shorthand would have wiped it. */
+  .k-meter i{display:block;height:100%;border-radius:999px;background:var(--ok);
+    background-image:linear-gradient(180deg,rgba(255,255,255,.26),transparent);
+    transition:width .5s var(--ease),background-color .3s}
   .k-meter i.warn{background:var(--warn)}
   .k-meter i.hot{background:var(--danger)}
 
   .toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:20px}
   .search{position:relative;width:min(260px,100%)}
-  .search svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);width:16px;height:16px;color:var(--mut)}
+  .search svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);width:16px;height:16px;color:var(--mut);
+    transition:color var(--dur-snappy) var(--ease-snappy)}
+  /* The magnifier lights with the field. It is a PRECEDING sibling of the
+     input, so no sibling combinator reaches it — :focus-within on the
+     wrapper is the only selector that does. */
+  .search:focus-within svg{color:var(--accent)}
   .search input{width:100%;border:1px solid var(--line);border-radius:10px;padding:9px 12px 9px 34px;font:inherit;font-size:.9rem;background:var(--card);color:var(--ink)}
-  .search input:focus{outline:none;border-color:var(--accent)}
+  .search input{transition:border-color var(--dur-snappy) var(--ease-snappy),box-shadow var(--dur-snappy) var(--ease-snappy)}
+  .search input:focus{outline:none;border-color:var(--accent);box-shadow:var(--focus-ring)}
   .search kbd{position:absolute;right:10px;top:50%;transform:translateY(-50%);font-family:var(--mono);font-size:.7rem;color:var(--mut);
-    border:1px solid var(--line);border-radius:5px;padding:1px 5px;background:var(--paper-2)}
+    border:1px solid var(--line);border-radius:5px;padding:1px 5px;background:var(--paper-2);
+    box-shadow:inset 0 -1px 0 rgba(var(--wash-rgb),.14)}
   /* The status filter, and it is /projects' .fsel to the character.
 
      This was five pills and that page was three dropdowns, so the two
@@ -731,7 +810,8 @@
      styles/components/ then. */
   .fsel{border:1px solid var(--line);border-radius:10px;padding:9px 12px;font:inherit;font-size:.87rem;
     background:var(--card);color:var(--ink);cursor:pointer}
-  .fsel:focus{outline:none;border-color:var(--accent)}
+  .fsel{transition:border-color var(--dur-snappy) var(--ease-snappy),box-shadow var(--dur-snappy) var(--ease-snappy)}
+  .fsel:focus{outline:none;border-color:var(--accent);box-shadow:var(--focus-ring)}
   /* display:contents, so the select stays a direct flex child of .toolbar
      and the row lays out exactly as it did with the pills. */
   .filters{display:contents}
@@ -840,10 +920,17 @@
      app looks the same on both pages. */
   .app .thumb{position:relative;width:100%;aspect-ratio:16/9;flex:none;
     overflow:hidden;background:var(--paper-2);border-bottom:1px solid var(--hair)}
+  /* Seats the preview in its frame instead of letting it run flush to the
+     edges. box-shadow on a pseudo rather than a filter or a mask, because
+     the preview under it is a live iframe and either of those would promote
+     it to its own layer for no reason. The pseudo is z-index:auto, so it
+     paints over .pv but under the pill's z-index:2 — the pill stays crisp. */
+  .app .thumb::after{content:"";position:absolute;inset:0;pointer-events:none;
+    box-shadow:inset 0 -1px 0 var(--hair),inset 0 0 44px -20px rgba(0,0,0,.4)}
   /* Status is the whole point of this page, so unlike /projects the pill is
      on every card whatever state it is in. */
   .app .thumb .pill{position:absolute;top:9px;right:9px;z-index:2;
-    box-shadow:0 1px 4px rgba(0,0,0,.12)}
+    box-shadow:0 2px 6px rgba(0,0,0,.18),inset 0 0 0 1px color-mix(in srgb,currentColor 26%,transparent)}
   /* One inline --tile drives the fill, the inner highlight and the drop glow.
      The wash over it is fixed white-to-black, so every identity colour gets
      the same light without needing a second value per card. */
@@ -880,16 +967,24 @@
 
   /* Open sits in the card header now, beside the status pill, rather than in
      a panel header the card no longer has. */
-  .dt-open{font-size:.78rem;font-weight:600;color:var(--accent);margin-top:3px}
-  .dt-open:hover{text-decoration:underline}
+  .dt-open{font-size:.78rem;font-weight:600;color:var(--accent);margin-top:3px;
+    transition:color var(--dur-snappy) var(--ease-snappy)}
+  .dt-open:hover{color:var(--accent-2);text-decoration:underline;text-underline-offset:3px}
   /* A shape, not just a height. The app is always rendered at 1280x800 — a
      real desktop viewport — and that frame is scaled to FIT this box, so the
      preview looks like the site looks on a desktop no matter how wide the
      panel happens to be. Sizing the iframe to the panel instead handed the
      app a 1353x470 viewport and it laid itself out for that, which is not a
      preview of anything anyone will see. */
+  /* Everything here is background or INSET shadow, and that is a hard rule,
+     not a style choice: scaleLivePreview() reads clientWidth/clientHeight off
+     this box to work out the 1280x800 frame's scale. A padding, a border, a
+     transform or a filter here either changes that arithmetic or turns the
+     element into a containing block the absolutely-positioned iframe then
+     resolves against. */
   .dt-live{position:relative;width:100%;flex:1;min-height:clamp(300px,46vh,520px);
-    overflow:hidden;background:var(--paper-2)}
+    overflow:hidden;background:var(--paper-2);
+    box-shadow:inset 0 0 0 1px var(--hair)}
   /* pointer-events:none deliberately: the app is here to be SEEN. A 3D scene
      that grabs the wheel would trap the page scroll, and Open is right there
      for actually using it. */
@@ -897,20 +992,37 @@
     transform-origin:0 0;pointer-events:none}
   /* Centred icon over centred text, the same placeholder the cards grid
      shows — so "nothing to preview" looks the same wherever you meet it. */
+  /* Before a first deploy this slab is the largest thing on the page and it
+     was a flat grey rectangle with a sentence in it — the emptiest state in
+     the product getting the least drawn. A graph-paper ground and a vignette
+     give it a floor to sit on. Scoped to .dt-live-off, never .dt-live: the
+     live frame must stay a plain background behind the iframe. */
   .dt-live-off{display:flex;flex-direction:column;align-items:center;justify-content:center;
     gap:12px;background:var(--paper-2);color:var(--mut);font-size:.82rem;
-    text-align:center;padding:0 20px}
+    text-align:center;padding:0 20px;
+    background-image:radial-gradient(circle at 1px 1px,rgba(var(--wash-rgb),.07) 1px,transparent 0);
+    background-size:16px 16px;
+    box-shadow:inset 0 0 80px -40px rgba(var(--wash-rgb),.22)}
+  .dt-live-off span{max-width:34ch;line-height:1.5}
   .dt-live-off i{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;
     flex:none;background:#0f0f0f;color:var(--tile);
-    box-shadow:inset 0 0 0 1px rgba(255,255,255,.07)}
+    box-shadow:0 10px 26px -14px var(--tile),inset 0 0 0 1px rgba(255,255,255,.07)}
   .dt-live-off i svg{width:20px;height:20px}
   /* The log box fills its column instead of the fixed 420px it had when it
      was a full-width panel with nothing beside it. */
   /* max-height:none was mine, and it is what made a long build run off the
      end of the page — the base .logs rule caps at 420px for exactly this
      reason. Bounded again, and it scrolls inside itself. */
+  /* Literal colours, deliberately — everything inside the terminal is fixed
+     in both themes, and a token here would flip the console to paper in
+     light mode. An inner lip and a shadow under the title bar are what make
+     the black box read as recessed rather than pasted on.
+     A mask-image fade was the other option and is wrong: the mask is fixed
+     to the border box, so it would permanently dim the sticky Jump button
+     sitting ten pixels off the bottom. */
   .dt-logs .logs{min-height:clamp(220px,26vh,320px);
-    max-height:clamp(280px,40vh,460px);overflow-y:auto;overflow-x:auto}
+    max-height:clamp(280px,40vh,460px);overflow-y:auto;overflow-x:auto;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.06),inset 0 10px 16px -14px #000}
 
   /* A scrollbar worth looking at, on a terminal that is worth reading.
      A gradient pill floating inside a transparent border, brightening under
@@ -938,12 +1050,12 @@
   .dt-run-body .acts{margin-top:16px}
   .dt-run-body .steps{margin:0}
   .dt-run .panel-h b{flex:none}
-  .run-meta{flex:1;min-width:0;font-size:.76rem;color:var(--mut);
+  .run-meta{flex:1;min-width:0;font-size:.76rem;color:var(--mut);font-variant-numeric:tabular-nums;
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   /* What the beads mean, in words. Four circles and a filling bar say which
      stage you are at but never what that stage IS, and "Starting" is not
      self-explanatory when you are waiting on it. */
-  .run-say{margin-top:14px;font-size:.82rem;color:var(--ink-2);line-height:1.55}
+  .run-say{margin-top:14px;font-size:.82rem;color:var(--ink-2);line-height:1.6}
   .run-say b{font-weight:600;color:var(--ink)}
   /* And what the buttons do. Redeploy, Stop and Restart are three verbs with
      real consequences for something that is live, offered with no indication
@@ -953,8 +1065,19 @@
      rather than opening a dialog — same gesture, one extra beat, and it
      disarms on its own if it was a misclick. */
   .btn-g.arming{border-color:rgba(217,45,32,.5);color:var(--danger);
-    background:rgba(217,45,32,.07)}
-  @media (prefers-reduced-motion:reduce){ }
+    background:var(--danger-wash)}
+  /* Every selector on this page that gained a transition or a transform in
+     the polish pass is listed here or in the stepper's block further down.
+     The other reduced-motion blocks in this file belong to the rail, the
+     upgrade meter and the skeletons — nothing from this pass goes in them. */
+  @media (prefers-reduced-motion:reduce){
+    .btn-g,.btn-d,.btn-danger,.dbmini,.seg button,.jump,.back,.back svg,
+    .dt-app-head .tile,.dt-app-head .h-url,.dt-open,
+    .search input,.search svg,.fsel,.dbform input,.danger input,
+    .k-meter i{transition:none}
+    .btn-g:active,.btn-d:active,.dbmini:active,.jump:active{transform:none}
+    .back:hover svg{transform:none}
+  }
   /* ONE line, not two. The footer has to be exactly as tall on every card in
      the grid or the cards stop matching, and a title that is allowed a
      second line decides that per card. The full string is on the card's
@@ -976,7 +1099,7 @@
   .app .foot{display:flex;align-items:center;gap:10px;flex:1;
     font-size:.765rem;color:var(--mut);
     min-height:58px;box-sizing:border-box;padding:10px 13px 11px;
-    background:var(--card-tray)}
+    background:var(--card-tray);box-shadow:inset 0 1px 0 var(--card-sheen)}
   /* An unconstrained inline SVG fills its flex line. META_PRIV's padlock did
      exactly that the moment the old .body .m svg rule went with .body - a
      12px lock became a 200px one and the card grew around it. Scoped to the
@@ -997,11 +1120,278 @@
      a card inside an identical card, which reads as an empty box rather than
      as something on its way. Strip the chrome and leave the bars. */
   .panel > .sk{border:0;background:none;border-radius:0;height:auto;padding:14px 16px}
+  /* Uneven bars, so a loading panel reads as a list of different titles
+     rather than as a stack of identical grey rectangles. Scoped to the panel
+     skeleton: renderList() sets an inline width on every bar in the grid
+     skeleton, and an inline style wins over this anyway. */
+  .panel > .sk .bar:nth-of-type(1){width:46%}
+  .panel > .sk .bar:nth-of-type(2){width:78%}
+  .panel > .sk .bar:nth-of-type(3){width:61%}
+
+  /* ====================================================================
+     THE DEPLOYMENT WORKSPACE
+
+     What was here: a title card, a preview, a health panel, a log panel, a
+     pipeline panel, a Configure panel, a Database panel and a red box, each
+     a full-width slab stacked down a page you scrolled for a metre. The
+     thing you came to do — Deploy — was the seventh screenful.
+
+     What is here now: one bar that always carries the primary action, a
+     two-column body with the app on the left and its state on the right,
+     and the eight settings sections folded into four tabs. Same controls,
+     same endpoints, roughly a third of the scroll.
+     ==================================================================== */
+
+  /* ---- the bar ---- */
+  /* sticky, not fixed: it has to scroll with the column on a phone, where
+     the rail is a drawer and there is no second scroll container to pin to. */
+  .dx-bar{position:sticky;top:0;z-index:20;
+    display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+    padding:12px 0 14px;margin-bottom:16px;
+    background:var(--paper);
+    border-bottom:1px solid var(--hair-2)}
+  .dx-bar .tile{width:34px;height:34px;flex:none;border-radius:11px;display:grid;place-items:center;
+    color:var(--tile);background:#0f0f0f;
+    box-shadow:0 6px 18px -9px var(--tile),inset 0 0 0 1px rgba(255,255,255,.07)}
+  .dx-bar .tile svg{width:18px;height:18px}
+  .dx-id{flex:1;min-width:0}
+  .dx-crumb{display:flex;align-items:center;gap:7px;min-width:0;
+    font-family:var(--disp);font-size:1.02rem;letter-spacing:-.018em}
+  .dx-crumb span{color:var(--mut);font-weight:600;flex:none}
+  .dx-crumb i{color:var(--mut);font-style:normal;flex:none}
+  .dx-crumb b{font-weight:700;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .dx-sub{display:flex;align-items:center;gap:9px;margin-top:4px;min-width:0}
+  .dx-acts{display:flex;align-items:center;gap:8px;flex:none;margin-left:auto}
+  .dx-acts .btn-g{display:inline-flex;align-items:center;gap:7px}
+  .dx-acts .btn-g svg{width:13px;height:13px;flex:none}
+
+  /* ---- the lifecycle menu ---- */
+  .dx-menu-wrap{position:relative;flex:none}
+  .dx-more{width:36px;height:36px;display:grid;place-items:center;
+    border:1px solid var(--line);border-radius:10px;background:var(--card-surface);
+    color:var(--ink-2);cursor:pointer;box-shadow:var(--sh-subtle);
+    transition:color var(--dur-snappy) var(--ease-snappy),border-color var(--dur-snappy) var(--ease-snappy)}
+  .dx-more:hover{color:var(--ink);border-color:var(--line-hover)}
+  .dx-more svg{width:16px;height:16px}
+  .dx-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:40;min-width:168px;
+    display:flex;flex-direction:column;padding:5px;
+    border:1px solid var(--line);border-radius:12px;background:var(--card-surface);
+    box-shadow:var(--sh-overlay);
+    animation:dxPop var(--dur-snappy) var(--ease-snappy) both}
+  @keyframes dxPop{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+  .dx-menu button{display:block;width:100%;text-align:left;border:0;background:none;
+    padding:8px 10px;border-radius:8px;cursor:pointer;
+    font-size:.84rem;font-weight:550;color:var(--ink);
+    transition:background-color var(--dur-snappy) var(--ease-snappy)}
+  .dx-menu button:hover{background:rgba(var(--wash-rgb),.06)}
+  .dx-menu .danger-item{color:var(--danger)}
+  .dx-menu .danger-item:hover{background:var(--danger-wash)}
+
+  /* ---- the body ----
+     1.62fr/1fr rather than a fixed rail: the preview is the thing that
+     benefits from every pixel, and the facts beside it are short. */
+  .dx-grid{display:grid;grid-template-columns:minmax(0,1.62fr) minmax(280px,1fr);
+    gap:16px;align-items:start;margin-bottom:16px}
+  .dx-main{min-width:0;display:flex;flex-direction:column;gap:16px}
+  .dx-side{min-width:0;display:flex;flex-direction:column;gap:16px}
+
+  /* ---- preview ---- */
+  .dx-pv{display:flex;flex-direction:column;overflow:hidden}
+  .dx-pv .dt-live{min-height:clamp(280px,42vh,460px)}
+  .dt-chrome-acts{display:flex;align-items:center;gap:2px;flex:none}
+  .dx-icon{width:26px;height:26px;display:grid;place-items:center;flex:none;
+    border:0;border-radius:7px;background:none;color:var(--mut);cursor:pointer;
+    transition:background-color var(--dur-snappy) var(--ease-snappy),color var(--dur-snappy) var(--ease-snappy)}
+  .dx-icon:hover{background:rgba(var(--wash-rgb),.07);color:var(--ink)}
+  .dx-icon svg{width:14px;height:14px}
+  /* The empty state is a state, not a placeholder: what it is, why, and the
+     one control that changes it. */
+  .pv-empty{display:flex;flex-direction:column;align-items:center;gap:9px;
+    text-align:center;padding:0 24px;max-width:38ch}
+  .pv-empty i{width:44px;height:44px;border-radius:13px;display:grid;place-items:center;
+    flex:none;background:#0f0f0f;color:var(--tile);margin-bottom:2px;
+    box-shadow:0 10px 26px -14px var(--tile),inset 0 0 0 1px rgba(255,255,255,.07)}
+  .pv-empty i svg{width:22px;height:22px}
+  .pv-empty b{font-family:var(--disp);font-size:1.02rem;font-weight:700;color:var(--ink);letter-spacing:-.015em}
+  .pv-empty span{font-size:.82rem;line-height:1.5;color:var(--mut)}
+  .pv-empty .btn-d,.pv-empty .btn-g{margin-top:5px}
+
+  /* ---- overview facts ---- */
+  .dx-ov{overflow:hidden}
+  .dx-facts{margin:0;padding:0;display:flex;flex-direction:column}
+  .dx-facts > div{display:flex;align-items:baseline;gap:12px;
+    padding:9px 18px;border-top:1px solid var(--hair)}
+  .dx-facts dt{flex:none;width:86px;font-size:.72rem;letter-spacing:.06em;
+    text-transform:uppercase;color:var(--mut);font-weight:600}
+  .dx-facts dd{margin:0;flex:1;min-width:0;font-family:var(--mono);font-size:.8rem;
+    color:var(--ink);font-variant-numeric:tabular-nums;
+    display:flex;align-items:center;gap:6px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dx-facts dd a{color:var(--accent-2);transition:color var(--dur-snappy) var(--ease-snappy);
+    overflow:hidden;text-overflow:ellipsis}
+  .dx-facts dd a:hover{color:var(--accent);text-decoration:underline;text-underline-offset:3px}
+  :root[data-theme="dark"] .dx-facts dd a{color:var(--accent)}
+  .dx-facts .muted{color:var(--mut)}
+  .dx-copy{width:22px;height:22px;flex:none;display:grid;place-items:center;
+    border:0;border-radius:6px;background:none;color:var(--mut);cursor:pointer;
+    transition:background-color var(--dur-snappy) var(--ease-snappy),color var(--dur-snappy) var(--ease-snappy)}
+  .dx-copy:hover{background:rgba(var(--wash-rgb),.07);color:var(--ink)}
+  .dx-copy svg{width:12px;height:12px}
+
+  /* ---- logs ---- */
+  .dt-logs .panel-h{flex-wrap:wrap;row-gap:8px}
+  /* A light that is on only while something is actually streaming. It reads
+     the same flag the poll cadence does, so it cannot claim "live" over a
+     finished build. */
+  .log-live{display:inline-flex;align-items:center;gap:6px;flex:none;
+    font-size:.72rem;letter-spacing:.03em;color:var(--mut)}
+  .log-live i{width:6px;height:6px;border-radius:50%;background:var(--mut);flex:none}
+  .log-live.on{color:var(--ok)}
+  .log-live.on i{background:var(--ok);animation:breathe 2.4s ease-in-out infinite}
+  :root[data-theme="dark"] .log-live.on{color:#3ecb84}
+  .log-find{position:relative;flex:none;width:132px}
+  .log-find svg{position:absolute;left:8px;top:50%;transform:translateY(-50%);
+    width:13px;height:13px;color:var(--mut);pointer-events:none}
+  .log-find input{width:100%;box-sizing:border-box;
+    padding:5px 8px 5px 26px;border:1px solid var(--line);border-radius:8px;
+    font:inherit;font-size:.75rem;background:var(--card);color:var(--ink);
+    transition:border-color var(--dur-snappy) var(--ease-snappy),box-shadow var(--dur-snappy) var(--ease-snappy)}
+  .log-find input:focus{outline:none;border-color:var(--accent);box-shadow:var(--focus-ring)}
+  .log-find input::-webkit-search-cancel-button{-webkit-appearance:none;appearance:none}
+  /* Expanded is a taller box, not a modal. The console keeps its place in
+     the column so the scroll position means the same thing afterwards. */
+  .dt-logs.big .logs{max-height:clamp(420px,68vh,820px)}
+  /* Seven controls over a console that is 540px wide in the two-column
+     layout wrapped the header onto three rows, which is more chrome than
+     log. The day/line count is the one that carries least — it is also in
+     the console itself — so it goes first, and the filter narrows. */
+  .dt-logs .panel-h{gap:7px}
+  @media (max-width:1200px){
+    .dt-logs .panel-h .log-meta{display:none}
+    .log-find{width:108px}
+  }
+
+  /* ---- the loading skeleton ----
+     Same bones as the thing arriving: a bar, a two-column body, a console.
+     .sq carries the sweep so every block shimmers together rather than each
+     running its own clock. */
+  .dx-skel{animation:dxFade var(--dur-chill) var(--ease-snappy) both}
+  .dx-skel .sq{display:block;border-radius:10px;background:var(--paper-2);
+    position:relative;overflow:hidden}
+  .dx-skel .sq::after{content:"";position:absolute;inset:0;transform:translateX(-100%);
+    background:linear-gradient(90deg,transparent,rgba(139,152,165,.13),transparent);
+    animation:sweep 1.4s var(--ease) infinite}
+  .dx-skel-bar{display:flex;align-items:center;gap:12px;
+    padding:12px 0 14px;margin-bottom:16px;border-bottom:1px solid var(--hair-2)}
+  .dx-skel-bar .t{width:34px;height:34px;border-radius:11px;flex:none}
+  .dx-skel-bar .l1{flex:1;max-width:260px;height:16px}
+  .dx-skel-bar .btn{width:104px;height:36px;border-radius:10px;flex:none;margin-left:auto}
+  .dx-skel-grid{display:grid;grid-template-columns:minmax(0,1.62fr) minmax(280px,1fr);
+    gap:16px;align-items:start}
+  .dx-skel-grid > div{display:flex;flex-direction:column;gap:16px;min-width:0}
+  .dx-skel .pv{height:clamp(280px,42vh,460px);border-radius:16px}
+  .dx-skel .lg{height:200px;border-radius:16px}
+  .dx-skel .r1{height:132px;border-radius:16px}
+  .dx-skel .r2{height:96px;border-radius:16px}
+  .dx-skel .r3{height:180px;border-radius:16px}
+  @media (max-width:900px){ .dx-skel-grid{grid-template-columns:1fr} }
+
+  /* ---- the copy tick ----
+     Drawn OVER the icon rather than replacing it: swapping textContent on a
+     button whose content is an <svg> deletes the icon, which is exactly the
+     bug this replaced. */
+  .dx-copy{position:relative}
+  .dx-copy.copied svg{opacity:0}
+  .dx-copy.copied::after{content:"\2713";position:absolute;inset:0;
+    display:grid;place-items:center;color:var(--ok);font-size:.82rem;font-weight:700}
+
+  /* ---- screen-reader only ---- */
+  .sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;
+    overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0}
+
+  /* ---- settings tabs ---- */
+  .dx-set{overflow:visible}
+  .dx-tabs{display:flex;gap:2px;padding:6px 8px;border-bottom:1px solid var(--hair-2);
+    background:var(--panel-head);overflow-x:auto;scrollbar-width:none}
+  .dx-tabs::-webkit-scrollbar{height:0}
+  .dx-tabs button{position:relative;flex:none;border:0;background:none;cursor:pointer;
+    padding:8px 13px;border-radius:9px;font:inherit;font-size:.84rem;font-weight:600;
+    color:var(--mut);white-space:nowrap;
+    transition:color var(--dur-snappy) var(--ease-snappy),background-color var(--dur-snappy) var(--ease-snappy)}
+  .dx-tabs button:hover{color:var(--ink-2);background:rgba(var(--wash-rgb),.05)}
+  .dx-tabs button.on{color:var(--ink);background:var(--card)}
+  /* The underline is on the button, inside its own padding — an ::after on
+     the strip would have to be positioned against a scrolling container. */
+  .dx-tabs button.on::after{content:"";position:absolute;left:13px;right:13px;bottom:-7px;
+    height:2px;border-radius:2px;background:var(--accent)}
+  .dx-pane{animation:dxFade var(--dur-chill) var(--ease-snappy) both}
+  @keyframes dxFade{from{opacity:0}to{opacity:1}}
+  /* The two panels folded in here brought their own chrome with them. A
+     bordered card inside a bordered card reads as a box someone forgot to
+     fill in. */
+  .dx-pane > .panel,.dx-pane > .cfg{border:0;background:none;border-radius:0;
+    margin:0;box-shadow:none}
+  /* The tab already says Database. The bar stays because it carries Refresh
+     size and the Built-in / Your own switch — only the title goes. */
+  .dx-pane > .panel > .panel-h > b{display:none}
+  .dx-pane > .panel > .panel-h:empty{display:none}
+  .dx-pane > .danger{margin:16px}
+
+  /* ---- responsive ----
+     The rail goes under the preview before it gets narrow enough to hyphenate
+     a hostname, and the bar keeps its actions on one line by dropping the
+     breadcrumb's leading crumb rather than by wrapping. */
+  @media (max-width:900px){
+    .dx-grid{grid-template-columns:1fr}
+    .dx-pv .dt-live{min-height:clamp(240px,38vh,420px)}
+  }
+  @media (max-width:720px){
+    .dx-bar{gap:9px;padding:10px 0 12px}
+    .dx-crumb span,.dx-crumb i{display:none}
+    .dx-crumb{font-size:.96rem}
+    .dx-acts{margin-left:0;flex:1 1 100%;order:3}
+    .dx-acts .btn-g,.dx-acts .btn-d{flex:1;justify-content:center;text-align:center}
+    .dx-menu-wrap{flex:none}
+    .dx-facts dt{width:74px}
+    .log-find{width:100%;order:9}
+    .dt-logs .panel-h .log-meta{flex:1 1 100%;order:-1}
+  }
+  @media (max-width:520px){
+    /* Visit site and Open builder both leave the page; on a phone that is
+       one row too many under a primary action. The address is a tap away in
+       the preview chrome and in the facts list. */
+    .dx-acts .dx-visit{display:none}
+  }
+
+  @media (prefers-reduced-motion:reduce){
+    .dx-menu,.dx-pane,.dx-skel{animation:none}
+    .dx-skel .sq::after{animation:none}
+    .log-live.on i{animation:none}
+    .dx-more,.dx-icon,.dx-copy,.dx-tabs button,.dx-menu button,.dt-chrome a.addr,
+    .dx-facts dd a,.log-find input{transition:none}
+  }
 
   /* ---- detail ---- */
-  .back{display:inline-flex;align-items:center;gap:7px;color:var(--ink-2);font-size:.86rem;font-weight:500;cursor:pointer;border:0;background:none;padding:0;margin-bottom:16px}
+  .back{display:inline-flex;align-items:center;gap:7px;color:var(--ink-2);font-size:.86rem;font-weight:500;cursor:pointer;border:0;background:none;padding:0;margin-bottom:16px;
+    transition:color var(--dur-snappy) var(--ease-snappy)}
   .back:hover{color:var(--ink)}
-  .back svg{width:15px;height:15px}
+  .back svg{width:15px;height:15px;flex:none;transition:transform var(--dur-snappy) var(--ease-snappy)}
+  .back:hover svg,.back:focus-visible svg{transform:translateX(-3px)}
+  /* The label swaps rather than a tooltip appearing. signup.html and
+     checkout.html both turn their wordmark into "Back" on hover, and a
+     console growing its own tooltip vocabulary for the same gesture would be
+     a second answer to a question the product has already answered. */
+  /* Both labels share ONE grid cell, so the button is always as wide as the
+     longer of them and swapping does not resize it. Toggling display instead
+     shrank it from 123px to 75px under the pointer — hover near the right
+     end of "All deployments" and the button moved out from under the click
+     that was already on its way. visibility, not display, for the same
+     reason: display:none would collapse the cell again. */
+  .back{display:inline-grid;grid-template-columns:auto auto;align-items:center}
+  .back .back-label,.back .back-text{grid-column:2;grid-row:1;text-align:left}
+  .back .back-text{visibility:hidden}
+  .back:hover .back-label,.back:focus-visible .back-label{visibility:hidden}
+  .back:hover .back-text,.back:focus-visible .back-text{visibility:visible}
   /* ---- the app card ------------------------------------------------------
      The title, the preview and the health readout used to be three separate
      bordered boxes stacked down the page: a title card that was mostly empty,
@@ -1010,25 +1400,43 @@
      card — the header names it, the body shows it running, the rail beside it
      says how it is doing. Two card borders, a 14px gutter and a duplicated
      status pill went with them. */
-  .dt-app{border:1px solid var(--line);background:var(--card);border-radius:16px;
+  /* The surface tokens were sitting eight hundred lines up being used by
+     nothing but the grid card. Flat --card plus one --line border is what
+     made this panel read as a div with text in it while the card you clicked
+     to get here read as built. The lit edge is an INSET shadow, not a
+     ::before — .panel's children are unpositioned, so an absolutely
+     positioned pseudo paints over the content, which is the whole reason
+     .app>*{z-index:1} exists further up. Inset costs no stacking context. */
+  .dt-app{border:1px solid var(--line);background:var(--card-surface);border-radius:16px;
+    box-shadow:inset 0 1px 0 var(--card-sheen),var(--card-rest-shadow);
     margin-bottom:16px;overflow:hidden}
   .dt-app-head{display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;
-    padding:18px 22px;border-bottom:1px solid var(--line)}
+    padding:18px 22px;border-bottom:1px solid var(--hair-2);background:var(--panel-head)}
   /* The same tile the cards grid and the builder's recent list draw, so one
      app looks like itself everywhere — including on its own page, which was
      the one place it had no face at all. */
+  /* Glow only, never a transform. The grid's own comment two hundred lines
+     up records why: a tile that scales under the cursor slides out from
+     under the cursor. */
   .dt-app-head .tile{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;
     flex:none;color:var(--tile);background:#0f0f0f;
-    box-shadow:0 5px 14px -7px var(--tile),inset 0 0 0 1px rgba(255,255,255,.07)}
+    box-shadow:0 6px 18px -9px var(--tile),inset 0 0 0 1px rgba(255,255,255,.07);
+    transition:box-shadow var(--dur-chill) var(--ease)}
   .dt-app-head .tile svg{width:22px;height:22px}
   .dt-app-id{flex:1;min-width:0}
-  .dt-app-head h2{font-size:1.35rem}
+  .dt-app-head h2{font-size:1.35rem;line-height:1.2;letter-spacing:-.022em}
   .dt-app-head .h-url{display:inline-flex;align-items:center;gap:6px;font-size:.86rem;
-    color:var(--accent-2);font-weight:500;margin-top:6px}
+    color:var(--accent-2);font-weight:500;margin-top:6px;
+    transition:color var(--dur-snappy) var(--ease-snappy)}
+  .dt-app-head .h-url:hover{color:var(--accent);text-decoration:underline;text-underline-offset:3px}
   .dt-app-head .h-url svg{width:13px;height:13px}
   /* Full bleed inside the card: a rounded error box inside a rounded card,
      inset on all four sides, was a third border in a design losing borders. */
-  .h-err{border-bottom:1px solid rgba(217,45,32,.3);background:rgba(217,45,32,.07);
+  /* The marker bar is an inset shadow because a border-left would push all
+     of this text 3px right, and an error is the one row on the card you want
+     lining up with the header above it. */
+  .h-err{border-bottom:1px solid rgba(217,45,32,.3);background:var(--danger-wash);
+    box-shadow:inset 3px 0 0 var(--danger);
     color:var(--danger);padding:11px 22px;font-size:.85rem;line-height:1.45}
 
   /* Preview and health share one row, divided by a hairline rather than by
@@ -1041,34 +1449,66 @@
      chrome bar with the address in it says "this is the site, live, right
      now" without a caption having to. */
   .dt-chrome{display:flex;align-items:center;gap:10px;flex:none;
-    padding:9px 12px;border-bottom:1px solid var(--line);background:var(--paper-2)}
+    padding:9px 12px;border-bottom:1px solid var(--hair-2);background:var(--chrome-surface)}
   .dt-chrome .dots{display:flex;gap:6px;flex:none}
-  .dt-chrome .dots i{width:9px;height:9px;border-radius:50%;background:var(--line)}
-  .dt-chrome .addr{flex:1;min-width:0;text-align:center;font-family:var(--mono);
+  /* An inset ring, or the three dots read as holes punched in the bar rather
+     than as the traffic lights they are imitating. */
+  .dt-chrome .dots i{width:9px;height:9px;border-radius:50%;background:var(--hair-2);
+    box-shadow:inset 0 0 0 1px rgba(var(--wash-rgb),.06)}
+  /* Sized to the address, not stretched to the bar. flex:1 made the pill as
+     wide as whatever space was going and then clipped the hostname inside it
+     — "n.souqi.s…" in a pill with room to spare on both sides. It shrinks
+     only when there genuinely is not room, which is what min-width:0 and the
+     ellipsis are still here for. */
+  .dt-chrome .addr{flex:0 1 auto;min-width:0;margin:0 auto;text-align:center;
+    font-family:var(--mono);
     font-size:.72rem;color:var(--mut);background:var(--card);border:1px solid var(--line);
-    border-radius:999px;padding:3px 12px;
-    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    border-radius:999px;padding:3px 12px;box-shadow:var(--sh-subtle);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    transition:color var(--dur-snappy) var(--ease-snappy),border-color var(--dur-snappy) var(--ease-snappy)}
+  /* It is the address of a site that is up — so it opens it. */
+  a.dt-chrome .addr,.dt-chrome a.addr{color:var(--accent-2);cursor:pointer}
+  .dt-chrome a.addr:hover{color:var(--accent);border-color:var(--accent)}
+  :root[data-theme="dark"] .dt-chrome a.addr{color:var(--accent)}
+  /* Below this the bar cannot hold three ornaments, an address and two
+     controls at once: at 232px it was 5px short and clipped the hostname to
+     "n.souqi.s…". The traffic lights are decoration and the address is the
+     one piece of information in the row, so the lights are what gives way. */
+  @media (max-width:720px){
+    .dt-chrome{gap:8px;padding:9px 10px}
+    .dt-chrome .dots{display:none}
+  }
 
-  .dt-app-health{border-left:1px solid var(--line);min-width:0}
+  .dt-app-health{border-left:1px solid var(--hair-2);min-width:0}
   /* Status as a statement, not a table row. "state / running" in a key-value
      list made the single most important fact on the page look like metadata
      — same weight as the exit code. */
-  .dt-state{padding:17px 18px 15px;border-bottom:1px solid var(--line)}
+  /* A ground in the tone of the state. The most important fact on the page
+     was drawn on the same blank white as the exit code beneath it — the only
+     thing separating "Running" from "Failed" was nine pixels of dot. */
+  .dt-state{padding:17px 18px 15px;border-bottom:1px solid var(--hair-2)}
+  .dt-state.on{background:linear-gradient(180deg,var(--ok-wash),transparent)}
+  .dt-state.bad{background:linear-gradient(180deg,var(--danger-wash),transparent)}
+  .dt-state.busy{background:linear-gradient(180deg,var(--accent-wash),transparent)}
   .dt-state .sv{display:flex;align-items:center;gap:10px;font-family:var(--disp);
     font-weight:700;font-size:1.12rem;letter-spacing:-.01em;text-transform:capitalize}
   .dt-state .sv i{width:9px;height:9px;border-radius:50%;background:var(--mut);flex:none}
-  .dt-state.on .sv i{background:var(--ok);box-shadow:0 0 0 4px rgba(34,165,101,.16)}
-  .dt-state.bad .sv i{background:var(--danger);box-shadow:0 0 0 4px rgba(217,45,32,.16)}
+  /* Ring plus a short glow, so the dot reads as lit rather than painted. */
+  .dt-state.on .sv i{background:var(--ok);box-shadow:0 0 0 4px var(--ok-wash),0 0 10px -2px var(--ok)}
+  .dt-state.bad .sv i{background:var(--danger);box-shadow:0 0 0 4px var(--danger-wash),0 0 10px -2px var(--danger)}
   .dt-state.busy .sv i{background:var(--accent);animation:halo 2s ease-in-out infinite}
   .dt-state .ss{font-size:.77rem;color:var(--mut);margin-top:6px}
   /* Two-up: these are short numbers, and one per full-width row was what left
      the rail mostly empty. */
   .dt-facts{display:flex;flex-wrap:wrap}
-  .dt-facts > div{flex:1 1 50%;min-width:0;padding:12px 18px;border-bottom:1px solid var(--line)}
-  .dt-facts > div + div{border-left:1px solid var(--line)}
+  .dt-facts > div{flex:1 1 50%;min-width:0;padding:12px 18px;border-bottom:1px solid var(--hair)}
+  .dt-facts > div + div{border-left:1px solid var(--hair)}
   .dt-facts .k{display:block;font-size:.68rem;letter-spacing:.1em;text-transform:uppercase;
     color:var(--mut);font-weight:600}
-  .dt-facts .v{display:block;font-family:var(--mono);font-size:.9rem;color:var(--ink);margin-top:4px}
+  /* Tabular figures on a value that ticks: the restart count changes under
+     you during a crash loop, and proportional digits made the cell twitch. */
+  .dt-facts .v{display:block;font-family:var(--mono);font-size:.9rem;color:var(--ink);margin-top:4px;
+    font-variant-numeric:tabular-nums}
   @media (max-width:1000px){
     .dt-app-body{grid-template-columns:1fr}
     .dt-app-health{border-left:0;border-top:1px solid var(--line)}
@@ -1115,38 +1555,69 @@
      fills. It turns a status string into something you can watch. */
   .steps{display:flex;align-items:center;margin:22px 0 4px;padding:0 2px}
   .step{display:flex;flex-direction:column;align-items:center;gap:7px;flex:none;width:78px}
+  /* `all` was animating box-shadow too, which meant the halo keyframes on
+     .step.now fought a 0.4s transition on the same property and the pulse
+     came out lumpy. Named properties, halo left alone. */
   .step .bead{width:26px;height:26px;border-radius:50%;border:2px solid var(--line);background:var(--card);
-    display:grid;place-items:center;transition:all .4s var(--ease);color:var(--mut)}
+    display:grid;place-items:center;color:var(--mut);box-shadow:var(--sh-subtle);
+    transition:background-color .4s var(--ease),border-color .4s var(--ease),color .4s var(--ease)}
   .step .bead svg{width:13px;height:13px;opacity:0;transition:opacity .3s}
   .step .lb{font-size:.74rem;color:var(--mut);font-weight:500;transition:color .3s}
-  .step.done .bead{border-color:var(--ok);background:var(--ok);color:#fff}
+  .step.done .bead{border-color:var(--ok);background:var(--ok);color:#fff;box-shadow:0 0 0 3px var(--ok-wash)}
   .step.done .bead svg{opacity:1}
   .step.done .lb{color:var(--ink-2)}
   .step.now .bead{border-color:var(--accent);background:var(--card);color:var(--accent);animation:halo 2s ease-in-out infinite}
   .step.now .lb{color:var(--ink);font-weight:600}
-  .step.fail .bead{border-color:var(--danger);background:var(--danger);color:#fff}
+  .step.fail .bead{border-color:var(--danger);background:var(--danger);color:#fff;box-shadow:0 0 0 3px var(--danger-wash)}
   .step.fail .bead svg{opacity:1}
   .step.fail .lb{color:var(--danger);font-weight:600}
   @keyframes halo{0%,100%{box-shadow:0 0 0 0 rgba(26,166,223,.5)}70%{box-shadow:0 0 0 8px rgba(26,166,223,0)}}
-  .strut{flex:1;height:2px;background:var(--line);position:relative;margin-bottom:22px;border-radius:2px;overflow:hidden}
-  .strut i{position:absolute;inset:0;width:0;background:linear-gradient(90deg,var(--ok),var(--accent));transition:width .5s var(--ease)}
+  .strut{flex:1;height:2px;background:var(--hair-2);position:relative;margin-bottom:22px;border-radius:2px;overflow:hidden}
+  /* The filled run glows; the empty run does not. Two flat stripes a shade
+     apart was the whole difference between "done" and "not yet". */
+  .strut i{position:absolute;inset:0;width:0;background:linear-gradient(90deg,var(--ok),var(--accent));
+    box-shadow:0 0 8px -2px var(--accent);transition:width .5s var(--ease)}
   .strut.full i{width:100%}
+  /* A stage can sit at BUILDING for minutes, and between stages nothing on
+     this bar moved — the only thing saying work was happening was the bead's
+     halo. The sweep runs on the run's OWN strut (the first unfilled one) and
+     nowhere else, so there is never a second one to fall out of step with. */
+  .step.now + .strut:not(.full)::after{content:"";position:absolute;inset:0;
+    background:linear-gradient(90deg,transparent,rgba(26,166,223,.55),transparent);
+    transform:translateX(-100%);animation:sweep 1.6s var(--ease) infinite}
   @media (prefers-reduced-motion:reduce){
     .step.now .bead{animation:none}
+    .step.now + .strut:not(.full)::after{animation:none;display:none}
+    /* The bead kept a 0.4s transition after the halo was killed — the pulse
+       stopped but the colour still crawled. */
+    .step .bead,.step .bead svg,.step .lb,.strut i{transition:none}
     .pill.s-building::after,.pill .dot{animation:none !important}
     .app,.app .tile{transition:none}
     .app:hover,.app:hover .tile{transform:none}
     .sk::after{animation:none}
   }
 
-  .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}
+  .acts{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px;padding-top:16px;border-top:1px solid var(--hair-2)}
 
-  .panel{border:1px solid var(--line);background:var(--card);border-radius:16px;margin-bottom:16px;overflow:hidden}
-  .panel-h{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--line)}
+  .panel{border:1px solid var(--line);background:var(--card-surface);border-radius:16px;
+    box-shadow:inset 0 1px 0 var(--card-sheen),var(--card-rest-shadow);
+    margin-bottom:16px;overflow:hidden}
+  /* --hair-2 inside, --line outside. One strong edge with soft splits is what
+     tells you where the container ends; the same colour for both told you
+     nothing. */
+  .panel-h{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--hair-2)}
   .panel-h b{font-size:.92rem;font-weight:600;flex:1}
-  .seg{display:flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--paper-2)}
-  .seg button{border:0;background:none;color:var(--mut);padding:5px 12px;font-size:.8rem;font-weight:600;cursor:pointer;transition:.15s}
-  .seg button.on{background:var(--card);color:var(--ink)}
+  /* A recessed track with a raised thumb. Flat-on-flat meant the selected
+     half was distinguishable only by text colour. */
+  .seg{display:flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--paper-2);
+    box-shadow:inset 0 1px 2px rgba(var(--wash-rgb),.07)}
+  /* Named properties, not `transition:.15s`. The shorthand is `all`, which
+     also animates the background-position of anything that later gains a
+     gradient — and a sub-token duration nobody else on the page uses. */
+  .seg button{border:0;background:none;color:var(--mut);padding:5px 12px;font-size:.8rem;font-weight:600;cursor:pointer;
+    transition:background-color var(--dur-snappy) var(--ease-snappy),color var(--dur-snappy) var(--ease-snappy)}
+  .seg button:hover:not(.on){color:var(--ink-2)}
+  .seg button.on{background:var(--card);color:var(--ink);box-shadow:var(--sh-subtle)}
 
   /* ---- log viewer ----
      Deliberately dark in BOTH themes. A terminal that follows the page
@@ -1163,32 +1634,57 @@
   .logs .ln{display:block;padding:0 16px;border-left:2px solid transparent}
   .logs .ln.err{color:#f87171;border-left-color:#f87171;background:rgba(248,113,113,.07)}
   .logs .ln.sys{color:#58a6ff;border-left-color:#2f5878}
+  /* Amber, and dimmer than an error on purpose: a deprecation notice is
+     worth finding and is not worth the same alarm as a stack trace. */
+  .logs .ln.warn{color:#e3b341;border-left-color:#7a5c16;background:rgba(227,179,65,.05)}
   .logs .ts{color:#4d5866;font-variant-numeric:tabular-nums}
   /* Wrapping is a choice, not a default: pre keeps a long line readable by
      scrolling, wrap keeps it on screen. Toggled by adding a class rather than
      re-rendering, so flipping it does not rebuild the panel — and with it the
      live preview iframe. */
+  /* A wrapped continuation is indented under its own line, so a long npm
+     path folding onto three rows still reads as ONE entry. Without it a
+     wrapped line is indistinguishable from three new ones. */
   .logs.wrap pre,.logs.wrap .ln{white-space:pre-wrap;overflow-wrap:anywhere}
+  .logs.wrap .ln{padding-left:32px;text-indent:-16px}
+  /* The terminal's title bar. Same surface as the preview's chrome, because
+     they are the same idea: a frame that says the dark rectangle below is a
+     thing being shown, not a block of page. */
+  .dt-logs .panel-h{background:var(--chrome-surface)}
   .dt-logs .panel-h b{flex:none}
+  /* Tabular figures: the line count re-renders every two seconds during a
+     build, and proportional digits made the header visibly breathe. */
   .log-meta{flex:1;min-width:0;font-family:var(--mono);font-size:.73rem;color:var(--mut);
+    letter-spacing:.02em;font-variant-numeric:tabular-nums;
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .dt-logs .panel-h .dbmini{flex:none}
-  .dbmini.on{border-color:var(--accent);color:var(--accent)}
-  .logs-empty{padding:26px 16px;color:#6e7681;font-family:var(--mono);font-size:.78rem}
+  .dbmini.on{border-color:var(--accent);color:var(--accent);background:var(--accent-wash)}
+  /* A prompt, in the same blue .ln.sys already uses. Before a first deploy
+     this is the entire contents of the console, and one grey sentence on
+     black does not read as a terminal waiting for work — it reads as a panel
+     that failed to load. The glyph is CSS because the markup is generated. */
+  .logs-empty{padding:26px 16px;color:#6e7681;font-family:var(--mono);font-size:.78rem;line-height:1.7}
+  .logs-empty::before{content:"$ ";color:#2f5878}
+  /* The transform is on .jump ITSELF, which is safe. An ancestor transform
+     is what kills position:sticky — that rule is why nothing above this
+     element in the detail card is allowed one. */
   .jump{position:sticky;bottom:10px;float:right;margin-right:14px;border:0;border-radius:999px;background:var(--accent);color:#fff;
-    font-size:.75rem;font-weight:600;padding:5px 12px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.35)}
+    font-size:.75rem;font-weight:600;padding:5px 12px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.35);
+    transition:background-color var(--dur-snappy) var(--ease-snappy),transform var(--dur-snappy) var(--ease-snappy)}
+  .jump:hover{background:var(--accent-2)}
+  .jump:active{transform:translateY(1px)}
 
   /* .kv is gone: the last key-value table row on this page became either a
      fact cell or a value in its own right. */
 
   /* ---- database panel ---- */
-  .dbnote{padding:12px 16px;font-size:.8rem;color:var(--mut);line-height:1.55;border-bottom:1px solid var(--line)}
+  .dbnote{padding:12px 16px;font-size:.8rem;color:var(--mut);line-height:1.55;border-bottom:1px solid var(--hair)}
   /* ---- configure ---- */
   .cfg-suffix{display:flex;align-items:center;padding:0 2px;color:var(--mut);font-size:.85rem;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap}
   .cfg-hint{padding:0 16px 12px;font-size:.78rem}
   .cfg-hint.ok{color:var(--ok)}
   .cfg-hint.bad{color:var(--danger)}
-  .cfg-sec{display:flex;align-items:center;gap:10px;padding:13px 16px 3px;border-top:1px solid var(--line)}
+  .cfg-sec{display:flex;align-items:center;gap:10px;padding:13px 16px 3px;border-top:1px solid var(--hair-2)}
   .cfg-sec b{flex:1;font-size:.84rem}
   .cfg-list{margin:0;padding:10px 16px 14px 34px;color:var(--mut);font-size:.8rem;line-height:1.8}
   /* Beside the button rather than instead of it, so it needs to sit on the
@@ -1300,9 +1796,9 @@
   .dt-checks li{display:flex;gap:9px;align-items:flex-start;padding:5px 0;font-size:.8rem}
   .dt-checks li::before{content:"";flex:none;width:7px;height:7px;border-radius:50%;
     margin-top:5px;background:var(--mut)}
-  .dt-checks li.s-pass::before{background:var(--ok)}
-  .dt-checks li.s-warn::before{background:var(--warn)}
-  .dt-checks li.s-fail::before{background:var(--danger)}
+  .dt-checks li.s-pass::before{background:var(--ok);box-shadow:0 0 0 3px var(--ok-wash)}
+  .dt-checks li.s-warn::before{background:var(--warn);box-shadow:0 0 0 3px var(--warn-wash)}
+  .dt-checks li.s-fail::before{background:var(--danger);box-shadow:0 0 0 3px var(--danger-wash)}
   .dt-checks b{display:block;font-weight:600;font-size:.79rem}
   .dt-checks span{display:block;color:var(--mut);line-height:1.45;font-size:.76rem;margin-top:1px}
   /* Environment variables are a SET, so they get a container of their own.
@@ -1317,7 +1813,7 @@
   .env-head .n{margin-left:auto;letter-spacing:0;text-transform:none;font-size:.74rem}
   .cfg-env{list-style:none;margin:0;padding:0}
   .cfg-env li{display:flex;align-items:center;gap:12px;padding:10px 14px;
-    border-bottom:1px solid var(--line)}
+    border-bottom:1px solid var(--hair)}
   .cfg-env li:last-child{border-bottom:0}
   .cfg-env code{flex:0 1 auto;max-width:50%;min-width:0;overflow:hidden;text-overflow:ellipsis;
     white-space:nowrap;font-family:var(--mono);font-size:.8rem;color:var(--ink);font-weight:600}
@@ -1334,21 +1830,25 @@
   .dbnote:last-child{border-bottom:0}
   .dbnote code{font-family:var(--mono);font-size:.75rem;background:var(--paper-2);border:1px solid var(--line);
     border-radius:5px;padding:1px 5px;color:var(--ink)}
-  .dbform{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:14px 16px;border-bottom:1px solid var(--line)}
+  .dbform{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:14px 16px;border-bottom:1px solid var(--hair-2)}
   .dbform:last-child{border-bottom:0}
   .dbform input{flex:1 1 260px;min-width:0;border:1px solid var(--line);border-radius:9px;padding:8px 11px;
     font:inherit;font-size:.8rem;font-family:var(--mono);background:var(--card);color:var(--ink)}
-  .dbform input:focus{outline:none;border-color:var(--accent)}
+  .dbform input{transition:border-color var(--dur-snappy) var(--ease-snappy),box-shadow var(--dur-snappy) var(--ease-snappy)}
+  .dbform input:focus{outline:none;border-color:var(--accent);box-shadow:var(--focus-ring)}
   .dbmini{border:1px solid var(--line);background:var(--paper-2);color:var(--ink);border-radius:8px;
-    padding:5px 10px;font-size:.75rem;font-weight:600;cursor:pointer;transition:.16s}
-  .dbmini:hover{border-color:var(--accent)}
+    padding:5px 10px;font-size:.75rem;font-weight:600;cursor:pointer;
+    transition:border-color var(--dur-snappy) var(--ease-snappy),background-color var(--dur-snappy) var(--ease-snappy),
+      color var(--dur-snappy) var(--ease-snappy),transform var(--dur-snappy) var(--ease-snappy)}
+  .dbmini:hover{border-color:var(--accent);background:rgba(var(--wash-rgb),.05)}
+  .dbmini:active{transform:translateY(1px)}
   .dbmini:disabled{opacity:.55;cursor:not-allowed}
   .dbmini.warn{color:var(--danger);border-color:rgba(217,45,32,.3);background:transparent}
   .dbmini.warn:hover{background:rgba(217,45,32,.08);border-color:rgba(217,45,32,.5)}
 
   /* ---- data browser ---- */
   .dbtable-row{display:flex;align-items:center;gap:10px;width:100%;text-align:left;cursor:pointer;
-    padding:11px 16px;border:0;border-bottom:1px solid var(--line);background:none;color:var(--ink);font:inherit}
+    padding:11px 16px;border:0;border-bottom:1px solid var(--hair);background:none;color:var(--ink);font:inherit}
   .dbtable-row:last-child{border-bottom:0}
   .dbtable-row:hover{background:var(--paper-2)}
   .dbtable-row .nm{flex:1;min-width:0;font-family:var(--mono);font-size:.82rem;overflow:hidden;text-overflow:ellipsis}
@@ -1369,7 +1869,7 @@
   table.dbgrid tr:last-child td{border-bottom:0}
   .dbpager{display:flex;align-items:center;gap:8px;padding:10px 16px}
   .dbpager .sp{flex:1;min-width:0;color:var(--mut);font-size:.75rem}
-  .dbcrumb{display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--line)}
+  .dbcrumb{display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--hair-2)}
   .dbcrumb .nm{font-family:var(--mono);font-size:.82rem;color:var(--ink);flex:1;min-width:0;
     overflow:hidden;text-overflow:ellipsis}
 
@@ -1387,7 +1887,8 @@
      A faint red wash as well as the outline, so it reads as a ZONE rather
      than as one more panel that happens to have a red border. */
   .danger{border:1px solid rgba(217,45,32,.28);border-radius:16px;
-    background:rgba(217,45,32,.035);padding:26px 20px;margin-top:22px;text-align:center}
+    background:var(--danger-wash);box-shadow:var(--card-rest-shadow);
+    padding:26px 20px;margin-top:22px;text-align:center}
   .danger-ico{width:42px;height:42px;border-radius:13px;margin:0 auto 13px;display:grid;
     place-items:center;background:rgba(217,45,32,.1);color:var(--danger)}
   .danger-ico svg{width:20px;height:20px}
@@ -1405,7 +1906,7 @@
   .danger input{border:1px solid var(--line);border-radius:10px;padding:9px 13px;font:inherit;
     font-size:.85rem;background:var(--card);color:var(--ink);width:min(280px,100%);
     text-align:center;transition:border-color .15s}
-  .danger input:focus{outline:none;border-color:var(--danger)}
+  .danger input:focus{outline:none;border-color:var(--danger);box-shadow:0 0 0 3px var(--danger-wash)}
 
   .empty{text-align:center;padding:70px 20px;color:var(--ink-2)}
   .empty h2{font-size:1.25rem;margin-bottom:8px;color:var(--ink)}
