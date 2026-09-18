@@ -419,17 +419,24 @@
   var THEME_KEY = "souqi-theme";
   var DARK_Q = window.matchMedia ? window.matchMedia("(prefers-color-scheme:dark)") : null;
 
-  /* Three choices, two themes. "system" is a CHOICE that is stored; what
-     gets painted is always light or dark, resolved here and again by the
-     one-line script in every page's <head> so a reload never flashes the
-     wrong one. Keeping the two separate is the whole trick: data-theme is
-     the resolved theme, localStorage holds the preference. */
+  /* Two choices, two themes. "system" was a third CHOICE that resolved to
+     one of the other two, and it is gone — but it is still in the storage
+     of everyone who picked it, and the head script on every page still
+     honours it, so nothing they have breaks before they next open this
+     sheet. The migration below turns it into whichever theme it was
+     already painting, which is the one change they will not notice.
+
+     data-theme is the resolved theme, localStorage holds the preference.
+     Keeping those two separate is still the trick. */
   function resolveTheme(pref) {
     if (pref === "dark" || pref === "light") return pref;
     return (DARK_Q && DARK_Q.matches) ? "dark" : "light";
   }
   function applyTheme(pref) {
-    if (pref !== "dark" && pref !== "light" && pref !== "system") pref = "light";
+    // "system" can no longer be chosen; anything unrecognised RESOLVES
+    // rather than silently becoming light over someone's dark theme.
+    if (pref === "system") pref = resolveTheme("system");
+    if (pref !== "dark" && pref !== "light") pref = "light";
     var painted = resolveTheme(pref);
     document.documentElement.setAttribute("data-theme", painted);
     try { localStorage.setItem(THEME_KEY, pref); } catch (e) { /* private mode */ }
@@ -467,7 +474,7 @@
     var mock = '<span class="mock"><span><span class="bar"></span>'
       + '<span class="bar s" style="margin-top:7px"></span></span>'
       + '<span class="row"><span class="dot"></span><span class="bar"></span></span></span>';
-    return ["light", "dark", "system"].map(function (k) {
+    return ["light", "dark"].map(function (k) {
       return '<button type="button" class="theme" data-theme="' + k + '" aria-pressed="false">'
         + tick + mock + '<span class="name">' + (k.charAt(0).toUpperCase() + k.slice(1)) + '</span></button>';
     }).join("");
@@ -481,7 +488,15 @@
   var current = "light";
   try {
     var storedTheme = localStorage.getItem(THEME_KEY);
-    if (storedTheme === "dark" || storedTheme === "light" || storedTheme === "system") current = storedTheme;
+    if (storedTheme === "dark" || storedTheme === "light") current = storedTheme;
+    /* Held "system", which no longer has a card. Pin it to the theme it
+       was already resolving to and write that back — otherwise the picker
+       opens with nothing selected, and the only way out is to choose the
+       theme you were already looking at. */
+    else if (storedTheme === "system") {
+      current = resolveTheme("system");
+      try { localStorage.setItem(THEME_KEY, current); } catch (e2) {}
+    }
   } catch (e) { /* keep the theme applied before paint */ }
   var thEl = document.getElementById("themes");
   if (thEl) {
