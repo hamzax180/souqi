@@ -1160,7 +1160,10 @@
   .dx-crumb span{color:var(--mut);font-weight:600;flex:none}
   .dx-crumb i{color:var(--mut);font-style:normal;flex:none}
   .dx-crumb b{font-weight:700;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .dx-sub{display:flex;align-items:center;gap:9px;margin-top:4px;min-width:0}
+  /* The status pill that sat here is gone. The rail beside the preview says
+     Running in words, with a lit dot and how long ago it was checked — a
+     second, smaller copy of the same fact under the title was the third
+     place the bar was repeating something. */
   .dx-acts{display:flex;align-items:center;gap:8px;flex:none;margin-left:auto}
   .dx-acts .btn-g{display:inline-flex;align-items:center;gap:7px}
   .dx-acts .btn-g svg{width:13px;height:13px;flex:none}
