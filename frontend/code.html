@@ -2612,18 +2612,44 @@
       clause([tText((out.length ? "ran " : done ? "Ran " : "Running ") +
         (g.commands.length === 1 ? g.commands[0] : g.commands.length + " commands"))]);
     }
-    if (!out.length && g.reads) {
-      clause([tText((done ? "Read " : "Reading ") + g.reads + " file" + (g.reads === 1 ? "" : "s"))]);
+    /* Reads used to appear only when NOTHING else had: a turn that wrote
+       three files and read eleven reported the three. They are work, and
+       on a turn that went looking before it wrote they are most of it. */
+    if (g.reads) {
+      clause([tText((out.length ? "read " : done ? "Read " : "Reading ") +
+        g.reads + " file" + (g.reads === 1 ? "" : "s"))]);
+    }
+    if (g.tools) {
+      clause([tText((out.length ? "used " : done ? "Used " : "Using ") +
+        (g.tools === 1 ? "a tool" : g.tools + " tools"))]);
     }
     return out;
   }
 
   /** One line per thing the batch actually did, for the expansion. */
+  /* Reported by their own events, so counting them again as "used a tool"
+     would say the same work twice. ask_user_question and complete_task are
+     the loop's own control flow rather than work it did. */
+  const TOOL_QUIET = ["write_file", "edit_file", "run_command",
+    "read_file", "list_files", "search_code",
+    "ask_user_question", "complete_task"];
+
+  const TOOL_SAY = {
+    read_file: "Read", list_files: "Listed", search_code: "Searched",
+    check_project: "Checked the build"
+  };
+
   function groupItems(g) {
     return (g.items || []).map((it) => {
-      const tokens = it.command
-        ? [tText("Ran "), tName(it.command)]
-        : [tText(it.verb + " "), tName(baseName(it.path))];
+      let tokens;
+      if (it.command) tokens = [tText("Ran "), tName(it.command)];
+      else if (it.tool) {
+        /* The tool's own first line of output when it has one — it says
+           what the call actually found, which the tool's name cannot. */
+        const say = TOOL_SAY[it.tool] || it.tool.replace(/_/g, " ");
+        tokens = it.detail ? [tText(say + " "), tName(String(it.detail).slice(0, 90))]
+                           : [tText(say)];
+      } else tokens = [tText(it.verb + " "), tName(baseName(it.path))];
       return { tokens: tokens, added: it.added, removed: it.removed };
     });
   }
@@ -2683,7 +2709,14 @@
         continue;
       }
       if (e.type === "tool_result" && p.ok && ["read_file", "list_files", "search_code"].indexOf(p.tool) >= 0) {
-        if (group) group.reads += 1;
+        if (group) { group.reads += 1; group.items.push({ tool: p.tool, detail: p.detail }); }
+        continue;
+      }
+      /* The same two branches the live panel grew. This function's own
+         header promises a replayed turn reads exactly like the watched
+         one, and that is only true while both count the same things. */
+      if (e.type === "tool_result" && p.ok && TOOL_QUIET.indexOf(p.tool) < 0) {
+        if (group) { group.tools += 1; group.items.push({ tool: p.tool, detail: p.detail }); }
         continue;
       }
       if (e.type === "command" && p.state === "start" && p.command) {
@@ -2700,7 +2733,7 @@
         flush();
         openedProse = false;
         if (p.state === "start") {
-          group = { created: [], edited: [], commands: [], reads: 0, added: 0, removed: 0, items: [] };
+          group = { created: [], edited: [], commands: [], reads: 0, tools: 0, added: 0, removed: 0, items: [] };
         }
         continue;
       }
@@ -4897,7 +4930,7 @@
            speaks before it acts, and a row created at turn start pins
            itself above prose that has not arrived yet. Claimed at the
            top, the summary sat over the sentence explaining it. */
-        stepGroup = { id: id, created: [], edited: [], commands: [], reads: 0, added: 0, removed: 0, items: [], handle: null };
+        stepGroup = { id: id, created: [], edited: [], commands: [], reads: 0, tools: 0, added: 0, removed: 0, items: [], handle: null };
         thinkPanel.breakSay();
         return;
       }
@@ -5311,6 +5344,19 @@
             if (em[1] === "tool_result" && payload.ok &&
                 ["read_file", "list_files", "search_code"].indexOf(payload.tool) >= 0) {
               stepGroup.reads += 1;
+              /* Kept, not just counted. "Read 8 files" with no way to ask
+                 WHICH eight is a number standing where an answer goes —
+                 and the row already grows a chevron the moment it has
+                 more than one item behind it. */
+              stepGroup.items.push({ tool: payload.tool, detail: payload.detail });
+              paintGroup(false);
+            } else if (em[1] === "tool_result" && payload.ok &&
+                TOOL_QUIET.indexOf(payload.tool) < 0) {
+              /* Everything that is not a write, a command or a read. A
+                 turn that only checked the build used to summarise itself
+                 as having done nothing at all. */
+              stepGroup.tools += 1;
+              stepGroup.items.push({ tool: payload.tool, detail: payload.detail });
               paintGroup(false);
             } else if (em[1] === "command" && payload.state === "start" && payload.command) {
               const short = String(payload.command).split(/\s+/).slice(0, 3).join(" ");
