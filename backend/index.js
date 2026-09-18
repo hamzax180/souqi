@@ -2284,6 +2284,55 @@ app.post("/api/projects/:key/restore", async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+/**
+ * POST /api/projects/:key/undo — Body: { runId }
+ *
+ * Put the project back to how it was before one turn ran.
+ *
+ * The previous state comes from the RUN, not from the revision chain.
+ * The worker's finalizer writes its revision with parentId: null — it
+ * guards the head swap on { headRevision: run.baseRevisionId } instead,
+ * so the run document is the only record of what the turn started from.
+ *
+ * Appends rather than rewinds, exactly like /restore: undoing is itself
+ * a version, so changing your mind again costs nothing and nothing the
+ * agent wrote is destroyed.
+ */
+app.post("/api/projects/:key/undo", async (req, res, next) => {
+  try {
+    const owner = appOwnerOf(req, res);
+    const project = await resolveProject(req.params.key, owner);
+    if (!project) return res.status(404).json({ error: "project not found" });
+    if (!projects.owns(project, owner)) return res.status(403).json({ error: "not your project" });
+
+    const runId = String((req.body && req.body.runId) || "");
+    const run = runId ? await runStore.getRun(runId, owner) : null;
+    if (!run || run.projectId !== project.id) return res.status(404).json({ error: "turn not found" });
+
+    /* The first turn has nothing behind it. Undoing to "no revision" is
+       not a state the project can hold — it would be a project whose head
+       points at nothing — so it is refused in words rather than by
+       restoring an empty tree that looks like a broken build. */
+    if (!run.baseRevisionId) {
+      return res.status(409).json({ error: "this was the first version — there is nothing behind it to go back to" });
+    }
+
+    const target = await projects.getRevision(run.baseRevisionId);
+    if (!target || target.projectId !== project.id) {
+      return res.status(410).json({ error: "the version before this turn is no longer available" });
+    }
+
+    const verdict = validateSiteConfig(target.config, { forAgent: true });
+    if (!verdict.ok) return res.status(422).json({ error: "the version before this turn is no longer valid" });
+
+    const revision = await projects.addRevision(project.id, verdict.config, "Undid: " + (target.label || "the last change"));
+    await projects.addTurn(project.id, {
+      role: "agent", kind: "result", body: "Undid the last change.", revisionId: revision.id
+    });
+    res.json({ ok: true, revisionId: revision.id, config: verdict.config });
+  } catch (e) { next(e); }
+});
+
 /** DELETE /api/projects/:key */
 /** PATCH /api/projects/:key - Body: { title }
     Renames a project. The SLUG is deliberately left alone: it is the URL the

@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=7.7">
+<link rel="stylesheet" href="/styles/pages/code.css?v=7.8">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -2997,7 +2997,7 @@
          last turn's counts — so a file changed three turns ago showed with
          no +/- at all, which is most of them. */
       if (t.fileStats && t.fileStats.length) {
-        renderCard(t.fileStats.map((f) => f.path), 0, t.fileStats);
+        renderCard(t.fileStats.map((f) => f.path), 0, t.fileStats, runId);
         renderedAnyCard = true;
       }
     });
@@ -3438,8 +3438,15 @@
   }
   const IC_FILE_CHEV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>';
 
-  function renderCard(files, costUsd, stats) {
+  function renderCard(files, costUsd, stats, runId) {
     const card = el("ag-card");
+    /* Only the newest change is undoable, and the way that stays true is
+       that the previous card loses its button when this one appears.
+       Undo restores the state a turn STARTED from, so running it on an
+       older card would throw away every turn since — recoverably, because
+       restoring appends, but silently, which is worse than not offering
+       it. */
+    $("agLog") && $("agLog").querySelectorAll(".ag-card-undo").forEach((b) => b.remove());
     const list = el("files");
     const byPath = {};
     (stats || []).forEach((s) => { if (s && s.path) byPath[s.path] = s; });
@@ -3475,6 +3482,48 @@
       toggle.textContent = open ? "Hide paths" : "View paths";
     });
     if (paths.some((p) => p.indexOf("/") >= 0)) top.appendChild(toggle);
+
+    /* Undo, and it really undoes: the server puts the project back to the
+       revision the turn started from. It APPENDS that as a new version
+       rather than rewinding, so the work is still there afterwards and
+       changing your mind twice costs nothing. */
+    if (runId && projectSlug) {
+      const undo = document.createElement("button");
+      undo.type = "button";
+      undo.className = "ag-card-view ag-card-undo";
+      undo.textContent = "Undo";
+      undo.addEventListener("click", async function () {
+        if (undo.disabled) return;
+        undo.disabled = true;
+        const was = undo.textContent;
+        undo.textContent = "Undoing…";
+        try {
+          const r = await fetch("/api/projects/" + encodeURIComponent(projectSlug) + "/undo", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            credentials: "same-origin", body: JSON.stringify({ runId: runId })
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.error || "that could not be undone");
+          undo.textContent = "Undone";
+          undo.classList.add("done");
+          card.classList.add("is-undone");
+          /* Put the preview back to what the files now are, or the phone
+             keeps showing the change that was just reverted. */
+          const cfg = d.config && d.config.files;
+          if (cfg) { try { await renderAppPreview(cfg); } catch (e) {} }
+        } catch (e) {
+          undo.textContent = was;
+          undo.disabled = false;
+          /* Said in the log, not swallowed. The refusals this can hit are
+             ones a person has to act on — the first version has nothing
+             behind it, or the earlier one is gone — and a button quietly
+             springing back explains neither. */
+          say(esc(String((e && e.message) || "that could not be undone")));
+        }
+      });
+      top.appendChild(undo);
+    }
+
     card.appendChild(top);
 
     paths.forEach((path) => {
@@ -5024,7 +5073,7 @@
       }
       say(esc(summaryText).replace(/\n/g, "<br>"));
       if (result.fileStats && result.fileStats.length) {
-        renderCard(result.files, result.costUsd, result.fileStats);
+        renderCard(result.files, result.costUsd, result.fileStats, runId);
       }
       if (!/\?\s*$/.test(summaryText) && result.fileStats && result.fileStats.length) {
         say('Tell me what to change and I\'ll update it.');

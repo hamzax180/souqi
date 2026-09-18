@@ -785,6 +785,16 @@
     border-radius:7px;padding:3px 9px;font:inherit;font-size:.72rem;font-weight:500;
     transition:background .18s,border-color .18s,color .18s}
   .ag-card-view:hover{background:var(--paper-2);border-color:var(--line-hover);color:var(--ink)}
+  /* Undo sits beside "View paths", so it needs its own left margin —
+     margin-inline-start:auto on both would push them apart to opposite
+     ends of the heading instead of grouping them at the right. */
+  .ag-card-undo{margin-inline-start:8px}
+  .ag-card-undo:disabled{cursor:default;opacity:.7}
+  .ag-card-undo.done{color:var(--ink-2);border-color:var(--line);opacity:.75}
+  /* The list stays readable — this is a record of what WAS changed, and
+     dimming it to nothing would hide the thing you just reverted. */
+  .ag-card.is-undone .files{opacity:.55}
+  .ag-card.is-undone .ttl::after{content:" · undone";color:var(--ink-2);font-weight:500}
   /* ONE ROW PER FILE, WITH WHAT IT COST.
      These were pills carrying a path and nothing else, so a one-word copy
      fix and a rewritten component were the same object on screen — a wrapped
