@@ -7384,6 +7384,11 @@
     if (ctxRow) {
       const win = ctx && Number(ctx.windowTokens) || 0;
       const used = ctx && Number(ctx.usedTokens) || 0;
+      /* Shown from the first empty chat onwards. It used to appear only once
+         a project existed, which meant the one moment someone might wonder
+         what "context" is — before anything has been built — was the moment
+         it was invisible. An empty chat is not 0%: the instructions go in
+         every turn, and that is what the bar starts at. */
       ctxRow.hidden = !(win > 0);
       if (win > 0) {
         const pct = Math.max(0, Math.min(100, Math.round((used / win) * 100)));

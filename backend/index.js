@@ -1973,10 +1973,21 @@ app.get("/api/codeagent/usage", async (req, res, next) => {
        about it. Reported against the window the route actually has, so the
        number means the same thing as the limit it is drawn against.
 
-       Only when a project is named. There is nothing to measure about a
-       chat that has not built anything, and a meter reading 0% of a window
-       is a meter saying nothing. */
-    let context = null;
+       ALWAYS, including a chat with nothing in it. The instructions are
+       sent on every turn whether or not a project exists, so an empty
+       chat is not 0% of the window — it is however much the system prompt
+       takes, and seeing that is what explains to someone what the other
+       numbers are being added TO. Code and conversation join it when there
+       is a project to read them from. */
+    const perTokenBase = aiClient.CHARS_PER_TOKEN || 3;
+    const loopBase = require("./lib/codeagent/model-loop");
+    const baseSystemTokens = aiClient.estimateTokens(
+      [{ role: "system", content: loopBase.systemPromptFor("auto") }], undefined);
+    let context = {
+      usedTokens: baseSystemTokens,
+      windowTokens: aiClient.windowFor("json"),
+      files: 0, codeTokens: 0, chatTokens: 0, systemTokens: baseSystemTokens
+    };
     const ctxKey = String((req.query && (req.query.projectId || req.query.project)) || "");
     if (ctxKey) {
       try {
@@ -1986,7 +1997,6 @@ app.get("/api/codeagent/usage", async (req, res, next) => {
           const cfiles = (csrc && csrc.files) || {};
           let cchars = 0;
           for (const k of Object.keys(cfiles)) cchars += String(cfiles[k] || "").length + k.length;
-          const perToken = aiClient.CHARS_PER_TOKEN || 3;
 
           /* EVERYTHING THAT GOES IN THE WINDOW, not just the code.
 
@@ -1996,16 +2006,17 @@ app.get("/api/codeagent/usage", async (req, res, next) => {
              carrying. It counts all three parts of a turn's prompt now,
              and names them, because a percentage is only useful if you
              can see which part is filling it. */
-          const loop = require("./lib/codeagent/model-loop");
+          /* The instructions figure is the one measured above, not a
+             second measurement of the same prompt: two numbers for one
+             thing is how they start to disagree. */
           let chatChars = 0;
           try {
-            const hist = loop.buildHistory(await projects.listTurns(cp.id, null));
+            const hist = loopBase.buildHistory(await projects.listTurns(cp.id, null));
             for (const hm of hist || []) chatChars += String((hm && hm.content) || "").length;
           } catch (e) { /* a project with no turns yet reads as no chat */ }
-          const systemTokens = aiClient.estimateTokens(
-            [{ role: "system", content: loop.systemPromptFor("auto") }], undefined);
-          const codeTokens = Math.round(cchars / perToken);
-          const chatTokens = Math.round(chatChars / perToken);
+          const systemTokens = baseSystemTokens;
+          const codeTokens = Math.round(cchars / perTokenBase);
+          const chatTokens = Math.round(chatChars / perTokenBase);
           context = {
             usedTokens: systemTokens + codeTokens + chatTokens,
             windowTokens: aiClient.windowFor("json"),
