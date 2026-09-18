@@ -95,6 +95,23 @@ function createMockDb() {
           if (update.$inc) { for (const [k, v] of Object.entries(update.$inc)) dotSet(match, k, (dotGet(match, k) || 0) + v); }
           return { modifiedCount: 1, matchedCount: 1 };
         },
+        /* claimNext is the only caller, and it is the one that hands a run
+           its lease — a double without it cannot exercise anything that
+           happens to a leased run. Sort, then apply, then return the doc
+           AFTER the update, which is what returnDocument:"after" means. */
+        async findOneAndUpdate(query, update, opts) {
+          const matches = docs.filter((d) => queryMatches(d, query));
+          if (!matches.length) return null;
+          if (opts && opts.sort) {
+            const [sortKey, sortDir] = Object.entries(opts.sort)[0];
+            matches.sort((a, b) => sortDir === -1 ? (b[sortKey] > a[sortKey] ? 1 : -1) : (a[sortKey] > b[sortKey] ? 1 : -1));
+          }
+          const match = matches[0];
+          if (update.$set) { for (const [k, v] of Object.entries(update.$set)) dotSet(match, k, v); }
+          if (update.$unset) { for (const k of Object.keys(update.$unset)) dotUnset(match, k); }
+          if (update.$inc) { for (const [k, v] of Object.entries(update.$inc)) dotSet(match, k, (dotGet(match, k) || 0) + v); }
+          return Object.assign({}, match);
+        },
         find(query, opts) {
           let res = docs.filter((d) => queryMatches(d, query));
           if (opts && opts.sort) {
@@ -423,6 +440,41 @@ async function check(name, fn) {
     assert.strictEqual(await runStore.recoverToolResult(run.id, "call_never_made", owner), null);
     assert.strictEqual(await runStore.recoverToolResult("run_does_not_exist", "call_known", owner), null);
     assert.strictEqual(await runStore.recoverToolResult(run.id, "", owner), null);
+  });
+
+  /* The bug this pins: answering left the WORKER's lease on a run the app
+     process had taken over, and recoverExpiredRuns reaps status:"running"
+     with an expired lease. Every answered question died 60s after the
+     original claim, mid-build, blaming the worker for stopping. */
+  await check("answering releases the worker's lease, so the reaper leaves it alone", async () => {
+    const owner = { userId: "u_lease" };
+    const run = await runStore.createRun({
+      projectId: "pr_lease", owner, prompt: "build a shop", mode: "act", effort: "balanced"
+    });
+    /* Earlier tests leave queued runs in the shared double, and claimNext
+       takes the oldest — so drain until this one comes up rather than
+       asserting it is first, which is a fact about the other tests. */
+    let claimed = null;
+    for (let i = 0; i < 50 && !claimed; i++) {
+      const next = await runStore.claimNext("worker_lease_test");
+      if (!next) break;
+      if (next.id === run.id) claimed = next;
+    }
+    assert.ok(claimed, "the queue never produced the test run");
+    assert.ok(claimed.leaseExpiresAt, "a claimed run must carry a lease");
+
+    await runStore.askQuestion(run.id, { id: "aq_lease", askedAt: "now", questions: [] });
+    assert.strictEqual(await runStore.answerQuestion(run.id, owner, "aq_lease", { q: "a" }), true);
+
+    const after = await runStore.getRun(run.id);
+    assert.strictEqual(after.status, "running");
+    assert.strictEqual(after.leaseExpiresAt, undefined, "the worker's lease outlived the question");
+    assert.strictEqual(after.leaseOwner, undefined, "the worker still owns a run it is not executing");
+
+    // The lease reaper must not see it at all, however long the answer took.
+    const reaped = await runStore.recoverExpiredRuns();
+    assert.ok(!reaped.some((r) => r.id === run.id), "an answered run was reaped as an expired lease");
+    assert.strictEqual((await runStore.getRun(run.id)).status, "running");
   });
 
   await check("steps come back in turn order", async () => {

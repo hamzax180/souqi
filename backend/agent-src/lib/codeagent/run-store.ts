@@ -345,7 +345,24 @@ export async function answerQuestion(
         status: "running", phase: "resuming", updatedAt: now(),
         "meta.answeredQuestion": { id: questionId, answers: copy(answers || {}), at: now() }
       },
-      $unset: { "meta.pendingQuestion": "" }
+      /* THE WORKER'S LEASE GOES WITH THE QUESTION.
+
+         The run is resumed by whoever served this request — the answer
+         route calls executeRun in process — but the document still
+         carried the lease the WORKER took when it first claimed the run,
+         and nothing in the app renews it. recoverExpiredRuns matches
+         status:"running" with an expired lease, so every answered
+         question died exactly 60 seconds after the original claim, mid
+         build, saying "The agent worker stopped before finishing" while
+         the build was still writing files. Measured: claimed 00:59:49,
+         reaped 01:00:50, still emitting tool calls at 01:02:31.
+
+         An in-process run has no lease at all — recoverStaleRuns is the
+         reaper that governs it, on idle time it can actually observe.
+         Releasing the lease here is what makes the document agree with
+         who is running the work. leaseGeneration stays: it only ever
+         counts up, and a fence that resets is a fence that collides. */
+      $unset: { "meta.pendingQuestion": "", leaseExpiresAt: "", leaseOwner: "" }
     }
   );
   return !!result.matchedCount;
