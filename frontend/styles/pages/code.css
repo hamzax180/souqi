@@ -3721,6 +3721,20 @@
     .ag-hist-foot{padding-top:8px;padding-bottom:8px}
     .ag-meter-row{padding:2px 0}
   }
+  /* Where the floor has to go entirely.
+
+     The ladder above was measured against a two-meter card. The context
+     window made it three, and 32px is exactly the height at which a 620px
+     window stopped being able to hold header, workspace pill, six nav rows,
+     a 56px chat list, the card and the account row: 632px of content in
+     620px of rail. A floor that cannot be met is not a floor, it is an
+     overflow — and the item that paid it was whichever one flex found
+     cheapest, which on a peeked panel was the header.
+
+     Below ~640 the list gives up its minimum and scrolls instead, which is
+     what the tier at the bottom of the ladder has always said should
+     happen; only the height it happens at moved. */
+  @media (max-height:640px){ .ag-hist-chats{min-height:0} }
   @media (max-height:620px){
     .ag-meter-row .lab i{display:inline;margin-left:6px}
     .ag-meter-row{padding:1px 0}
@@ -3952,7 +3966,12 @@
        takes it back when there is a header to hold it. Hidden rather than
        moved, because a logo that slides 36px on every toggle is the same
        complaint in a smaller number. */
-    .ag-history:not(.on) .ag-hist-head{padding-left:0}
+    /* Shut, and only shut. `:not(.on)` is also true of a peeked panel, and
+       a peeked panel is 238px wide with a header to hold — so this zeroed
+       the 8px that rail-motion.css gives the logo in every other state and
+       sat the mark flush against the edge. The line below it already drew
+       the distinction; this one had not caught up. */
+    .ag-history:not(.on):not(:hover):not(.hover-open) .ag-hist-head{padding-left:0}
     .ag-history:not(.on):not(:hover):not(.hover-open) .ag-hist-mark{display:none}
 
     /* The content column sits beside the rail, so it only needs to clear
@@ -4537,11 +4556,24 @@
 
      The hover flyout is switched off here: it has to paint outside the rail
      and overflow-y:auto would clip it, and a list of recent projects was
-     never going to fit in 560px of window. */
+     never going to fit in 560px of window.
+
+     The peeked panel gets the same treatment, and did not have it: these
+     rules were written `.ag-history.on` only, so a rail pointed at rather
+     than pinned went back to losing its account row off the bottom edge at
+     the very heights this tier exists for. A wide panel is a wide panel —
+     whichever of the two made it wide. */
   @media (max-height:559px){
-    .ag-history.on{overflow-y:auto !important;overflow-x:hidden !important}
-    .ag-history.on .ag-hist-chats{min-height:96px}
-    .ag-history.on .ag-hist-user{position:sticky;bottom:0;z-index:2}
+    .ag-history.on,
+    .ag-history:not(.on):not(.hover-suppressed):hover,
+    .ag-history.hover-open:not(.on):not(.hover-suppressed){
+      overflow-y:auto !important;overflow-x:hidden !important}
+    .ag-history.on .ag-hist-chats,
+    .ag-history:not(.on):hover .ag-hist-chats,
+    .ag-history.hover-open:not(.on) .ag-hist-chats{min-height:96px}
+    .ag-history.on .ag-hist-user,
+    .ag-history:not(.on):hover .ag-hist-user,
+    .ag-history.hover-open:not(.on) .ag-hist-user{position:sticky;bottom:0;z-index:2}
     .ag-fly{display:none !important}
   }
 

@@ -125,7 +125,17 @@
      below 901px. Once the rail has widened the head is ~237px, the
      button is comfortably inside it, and this changes nothing. Four
      pages carry the same rail and all four had it. */
-  .ag-history:not(.on) .ag-hist-head{ overflow: hidden; }
+  /* flex:none is not decoration. `overflow:hidden` also takes the head's
+     min-height:auto down to zero, which made it the one item in the column
+     that could be squeezed to nothing — and only while peeked, because the
+     pinned panel is `.on` and never gets this rule. So a rail whose content
+     no longer fit (the limits card grew a third meter) crushed its header
+     on peek and left it alone when pinned: the logo rode up out of the
+     52px row, clipped against the top edge, while the fixed sidebar button
+     stayed where it was. Two different pictures of the same open panel.
+     The header is a fixed row in both states now; what gives is the chat
+     list, which scrolls. */
+  .ag-history:not(.on) .ag-hist-head{ overflow: hidden; flex: 0 0 auto; }
 }
 
 /* THE LOADING CHAT LIST COLLAPSES LIKE THE ROWS IT BECOMES.
