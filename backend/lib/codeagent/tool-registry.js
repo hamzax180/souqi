@@ -83,6 +83,7 @@ exports.applyTurnBudget = applyTurnBudget;
 const model_loop_1 = require("./model-loop");
 const agentState = __importStar(require("./agent-state"));
 const file_retrieval_1 = require("./context/file-retrieval");
+const scaffoldFiles = __importStar(require("./scaffold-files"));
 const diffstat_1 = require("./diffstat");
 /* Copied verbatim from agent-runner.js:28-128. A test asserts this is
    deep-equal to what that file exported, because the point of moving
@@ -484,6 +485,16 @@ const TOOLS = [
         run(args, ctx) {
             const path = str(args.path).trim();
             const content = ctx.files[path];
+            /* Falls through to the scaffold for the same reason list_files names
+               it: index.html and src/main.tsx are on disk, so "File not found"
+               was a false answer about a file the build depends on. */
+            if (content === undefined) {
+                const fromScaffold = scaffoldFiles.readScaffold()[path];
+                if (typeof fromScaffold === "string") {
+                    return { ok: true, content: "// " + path + " - provided by the scaffold. It is already " +
+                            "correct and must not be rewritten." + "\n" + fromScaffold };
+                }
+            }
             if (content === undefined)
                 return { ok: true, content: "File not found: " + path };
             /* Remember WHICH version the model was shown. edit_file compares
@@ -499,8 +510,29 @@ const TOOLS = [
         readOnly: true,
         schema: schemaOf("list_files"),
         run(_args, ctx) {
-            const names = Object.keys(ctx.files);
-            return { ok: true, content: names.length ? names.join("\n") : "(empty project)" };
+            /* THE SCAFFOLD IS ON DISK, SO IT IS IN THE LIST.
+      
+               ctx.files holds the model's half only — a revision stores src/**
+               and nothing else, because PROTECTED_PATHS forbids writing the
+               scaffold and withScaffold() merges it back at build time. So this
+               listed 28 real files and none of the ones that make them run, and
+               a model checking its own work concluded the project had no entry
+               point. Caught on a working app: "it doesn't show a root
+               index.html or src/main.tsx ... I'll write the pages fresh at the
+               root", which would have replaced a React app with static HTML
+               over a misreading of this list. */
+            const mine = Object.keys(ctx.files).sort();
+            const scaffold = Object.keys(scaffoldFiles.readScaffold())
+                .filter((p) => !(p in ctx.files)).sort();
+            const parts = [];
+            parts.push(mine.length ? mine.join("\n") : "(no files written yet)");
+            if (scaffold.length) {
+                parts.push("");
+                parts.push("--- provided by the scaffold, already on disk and already correct ---");
+                parts.push("These exist. Do not write or rewrite them; the build supplies them.");
+                parts.push(scaffold.join("\n"));
+            }
+            return { ok: true, content: parts.join("\n") };
         }
     },
     {
