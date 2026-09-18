@@ -7086,7 +7086,7 @@ app.post("/api/deploy/:key/deploy", deployLimiter, async (req, res, next) => {
     // correct, because there was nothing there to build. The WebContainer
     // never hit this: it mounts the scaffold and writes the model's files
     // over it, which is the same precedence used here.
-    const source = scaffoldFiles.withScaffold(files);
+    const source = scaffoldFiles.withScaffold(files, project.title);
 
     /* Nothing leaves for the deploy plane before this.
        A deployed app is built and served on a public hostname, so anything
@@ -7340,7 +7340,7 @@ app.post("/api/deploy/:key/:action", deployLimiter, async (req, res, next) => {
       if (files && Object.keys(files).length && src.complete) {
         // Same merge as the first deploy — a redeploy shipping only the
         // model's half would fail detection in exactly the same way.
-        const source = scaffoldFiles.withScaffold(files);
+        const source = scaffoldFiles.withScaffold(files, project.title);
 
         // And the same gate. A redeploy publishes exactly as hard as a first
         // deploy; checking only the first one would leave the obvious way
@@ -7900,7 +7900,7 @@ app.get("/api/security/overview", async (req, res, next) => {
       let source = {};
       try {
         const src = await projects.materialize(p.id);
-        if (src && src.files) source = scaffoldFiles.withScaffold(src.files);
+        if (src && src.files) source = scaffoldFiles.withScaffold(src.files, p.title);
       } catch (e) { /* ignore if history pruned */ }
 
       const secretResult = secretscan.scan(source);
@@ -7958,7 +7958,7 @@ app.post("/api/security/scan/:projectKey", async (req, res, next) => {
     let source = {};
     try {
       const src = await projects.materialize(project.id);
-      if (src && src.files) source = scaffoldFiles.withScaffold(src.files);
+      if (src && src.files) source = scaffoldFiles.withScaffold(src.files, project.title);
     } catch (e) {}
 
     const secretResult = secretscan.scan(source);
@@ -8014,7 +8014,7 @@ app.get("/api/security/scan/:projectKey/details", async (req, res, next) => {
     let source = {};
     try {
       const src = await projects.materialize(project.id);
-      if (src && src.files) source = scaffoldFiles.withScaffold(src.files);
+      if (src && src.files) source = scaffoldFiles.withScaffold(src.files, project.title);
     } catch (e) {}
 
     const secretResult = secretscan.scan(source);

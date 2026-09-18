@@ -30,6 +30,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.readScaffold = readScaffold;
 exports.withScaffold = withScaffold;
+exports.titled = titled;
 /* Static require, so the bundler traces it. Do not make this dynamic,
    and do not turn it into an `import` — resolveJsonModule would inline
    280KB of scaffold into the emitted JavaScript instead of leaving it
@@ -49,9 +50,28 @@ function readScaffold() {
  * That is the same precedence the WebContainer gets by mounting the
  * scaffold first and writing over it.
  */
-function withScaffold(files) {
+function withScaffold(files, title) {
     const merged = Object.assign({}, DATA);
     for (const [p, content] of Object.entries(files || {}))
         merged[p] = content;
-    return merged;
+    return titled(merged, title);
+}
+/* The scaffold's index.html ships a fixed <title>, so every app anyone
+   deployed opened a browser tab called "Souqi Code app" — the builder's
+   name on the customer's product, repeated for every tab they had open.
+
+   Only the placeholder is replaced. A static site that wrote its own
+   index.html chose that title on purpose, and overwriting it here would
+   be this bug again with a different name in it. */
+const PLACEHOLDER = "<title>Souqi Code app</title>";
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function titled(files, title) {
+    const name = String(title || "").trim();
+    const html = files["index.html"];
+    if (!name || typeof html !== "string" || html.indexOf(PLACEHOLDER) < 0)
+        return files;
+    files["index.html"] = html.replace(PLACEHOLDER, "<title>" + escapeHtml(name) + "</title>");
+    return files;
 }

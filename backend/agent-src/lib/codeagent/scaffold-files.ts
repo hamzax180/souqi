@@ -46,9 +46,35 @@ export function readScaffold(): Record<string, string> {
  * scaffold first and writing over it.
  */
 export function withScaffold(
-  files: Record<string, string> | null | undefined
+  files: Record<string, string> | null | undefined,
+  title?: string | null
 ): Record<string, string> {
   const merged: Record<string, string> = Object.assign({}, DATA);
   for (const [p, content] of Object.entries(files || {})) merged[p] = content;
-  return merged;
+  return titled(merged, title);
+}
+
+/* The scaffold's index.html ships a fixed <title>, so every app anyone
+   deployed opened a browser tab called "Souqi Code app" — the builder's
+   name on the customer's product, repeated for every tab they had open.
+
+   Only the placeholder is replaced. A static site that wrote its own
+   index.html chose that title on purpose, and overwriting it here would
+   be this bug again with a different name in it. */
+const PLACEHOLDER = "<title>Souqi Code app</title>";
+
+function escapeHtml(s: string): string {
+  return String(s).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" } as Record<string, string>)[c]);
+}
+
+export function titled(
+  files: Record<string, string>,
+  title?: string | null
+): Record<string, string> {
+  const name = String(title || "").trim();
+  const html = files["index.html"];
+  if (!name || typeof html !== "string" || html.indexOf(PLACEHOLDER) < 0) return files;
+  files["index.html"] = html.replace(PLACEHOLDER, "<title>" + escapeHtml(name) + "</title>");
+  return files;
 }

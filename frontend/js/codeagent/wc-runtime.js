@@ -393,6 +393,24 @@ class WCRuntime {
   /** Why prepare() failed, when it did. */
   installError() { return this._installError || ""; }
 
+  /* The app's own name, for the browser tab.
+
+     The scaffold document ships a fixed <title>, so a preview and anything
+     built from it opened a tab called "Souqi Code app" - the builder's name
+     on the customer's product. It is set here rather than at boot because
+     the container starts before the page knows what is being built: a new
+     chat has no project yet, and the head start on npm install is worth more
+     than waiting for a name. */
+  setAppName(name) { this._appName = String(name || "").trim(); return this; }
+
+  _titled(html) {
+    const P = "<title>Souqi Code app</title>";
+    if (!this._appName || html.indexOf(P) < 0) return html;
+    const esc = String(this._appName).replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    return html.replace(P, "<title>" + esc + "</title>");
+  }
+
   async writeFiles(files) {
     if (!webcontainerInstance) throw new Error("WebContainer not booted");
 
@@ -429,7 +447,7 @@ class WCRuntime {
          landing correct by luck rather than by design. */
       if (!Object.prototype.hasOwnProperty.call(files, "index.html")) {
         await webcontainerInstance.fs.writeFile(
-          "index.html", indexHtml.replace("<title>", fontTag + "\n    <title>"));
+          "index.html", this._titled(indexHtml).replace("<title>", fontTag + "\n    <title>"));
       }
     }
 
