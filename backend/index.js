@@ -2322,14 +2322,41 @@ app.post("/api/projects/:key/undo", async (req, res, next) => {
       return res.status(410).json({ error: "the version before this turn is no longer available" });
     }
 
-    const verdict = validateSiteConfig(target.config, { forAgent: true });
-    if (!verdict.ok) return res.status(422).json({ error: "the version before this turn is no longer valid" });
+    /* TWO KINDS OF REVISION LIVE IN THIS COLLECTION, and only one of them
+       is a site config. validateSiteConfig requires config.pages; a code
+       agent revision is { files: { path: contents } } and has never had
+       pages, so running it through that validator rejected every undo
+       with "no longer valid" — which was a lie about the data and a true
+       statement about the validator. Verified against a real pair of
+       turns before this branch existed: base rv_run_Oh32xz6-6teB5A, one
+       file, refused 422.
 
-    const revision = await projects.addRevision(project.id, verdict.config, "Undid: " + (target.label || "the last change"));
+       An agent revision is checked for the shape it actually has. It does
+       not get a deep pass: these are bytes this server wrote itself and
+       validated when it wrote them, and the restore puts them back
+       exactly. */
+    const isAgentRevision = target.config && target.config.files
+      && typeof target.config.files === "object" && !Array.isArray(target.config.files);
+
+    let restoreConfig;
+    if (isAgentRevision) {
+      const files = target.config.files;
+      const paths = Object.keys(files);
+      const sane = paths.length > 0 && paths.every((p) =>
+        typeof p === "string" && p && p.indexOf("..") < 0 && typeof files[p] === "string");
+      if (!sane) return res.status(422).json({ error: "the version before this turn is no longer valid" });
+      restoreConfig = { files: files };
+    } else {
+      const verdict = validateSiteConfig(target.config, { forAgent: true });
+      if (!verdict.ok) return res.status(422).json({ error: "the version before this turn is no longer valid" });
+      restoreConfig = verdict.config;
+    }
+
+    const revision = await projects.addRevision(project.id, restoreConfig, "Undid: " + (target.label || "the last change"));
     await projects.addTurn(project.id, {
       role: "agent", kind: "result", body: "Undid the last change.", revisionId: revision.id
     });
-    res.json({ ok: true, revisionId: revision.id, config: verdict.config });
+    res.json({ ok: true, revisionId: revision.id, config: restoreConfig });
   } catch (e) { next(e); }
 });
 
