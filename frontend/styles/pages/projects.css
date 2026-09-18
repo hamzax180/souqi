@@ -890,6 +890,10 @@
     padding:20px;background:var(--scrim);
     -webkit-backdrop-filter:var(--scrim-blur);backdrop-filter:var(--scrim-blur)}
   .pdlg.open{display:flex}
+  /* Blur belongs to the scrim, not the dialog: on the dialog it would make
+     it a containing block and the sticky header would stop sticking. */
+  .pdlg{backdrop-filter:blur(3px) saturate(102%);padding:18px;box-sizing:border-box}
+  @media (max-width:640px){ .pdlg{padding:0} }
   .pdlg .box{width:min(420px,100%);box-sizing:border-box;background:var(--card);
     border:1px solid var(--line);border-radius:16px;padding:20px;
     box-shadow:0 24px 60px -24px rgba(24,20,14,.5)}
@@ -906,32 +910,156 @@
      the app is made of, how much of it there is, and where its source has
      been pushed. Read-only apart from the one button, because everything
      else about a project is already editable in the builder. */
-  .pdlg .box.wide{width:min(580px,100%);max-height:86vh;overflow-y:auto}
-  .dt-head{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+  /* ====================================================================
+     PROJECT DETAILS
+
+     .box.wide was a 580px column with max-height:86vh and overflow-y:auto,
+     holding a file list that had its own 168px scroller — two scrollbars a
+     few pixels apart, and Close and Open in builder at the bottom of the
+     scrolled content, reachable only by scrolling past every file.
+
+     Three regions now, and exactly one of them moves.
+     ==================================================================== */
+  .pd{display:flex;flex-direction:column;
+    width:min(860px,100%);max-height:min(88vh,860px);
+    box-sizing:border-box;overflow:hidden;
+    background:var(--card-surface,var(--card));border:1px solid var(--line);
+    border-radius:18px;box-shadow:var(--sh-overlay,0 24px 60px -12px rgba(11,22,38,.4));
+    animation:pdIn .2s var(--ease-snappy,cubic-bezier(.16,1,.3,1)) both}
+  @keyframes pdIn{from{opacity:0;transform:translateY(8px) scale(.99)}to{opacity:1;transform:none}}
+  .pd:focus{outline:none}
+
+  /* ---- header ---- */
+  .pd-head{display:flex;align-items:flex-start;gap:14px;flex:none;
+    padding:20px 22px 16px;border-bottom:1px solid var(--line)}
+  .pd-head .dt-tile{margin-top:1px}
+  .pd-id{flex:1;min-width:0}
+  .pd-head h3{margin:0;font-family:var(--disp);font-size:1.18rem;font-weight:700;
+    letter-spacing:-.02em;line-height:1.25;color:var(--ink);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pd-slug{display:block;margin-top:2px;font-family:var(--mono,ui-monospace,Menlo,monospace);
+    font-size:.76rem;color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* Status, type and language on one line with hairline separators, rather
+     than as three pills competing with the title above them. */
+  .pd-meta{display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin-top:7px;
+    font-size:.78rem;color:var(--ink-2)}
+  .pd-meta i{font-style:normal;color:var(--line-hover,var(--mut));opacity:.8}
+  .pd-x{flex:none;width:32px;height:32px;display:grid;place-items:center;
+    border:0;border-radius:9px;background:none;color:var(--mut);cursor:pointer;
+    transition:background-color .12s ease,color .12s ease}
+  .pd-x:hover{background:rgba(var(--wash-rgb,18,32,46),.07);color:var(--ink)}
+  .pd-x svg{width:17px;height:17px}
+
+  /* ---- body: the one scroller ---- */
+  .pd-body{flex:1;min-height:0;overflow-y:auto;padding:18px 22px 22px;
+    overscroll-behavior:contain}
+  .pd-prompt{margin:0 0 18px;font-size:.88rem;line-height:1.55;color:var(--ink-2);
+    padding-left:12px;border-left:2px solid var(--line)}
+  .pd-sec{margin-top:20px}
+  .pd-sec:first-child{margin-top:0}
+  .pd-sec h4{margin:0 0 10px;font-size:.7rem;font-weight:600;letter-spacing:.09em;
+    text-transform:uppercase;color:var(--mut)}
+
+  /* Five small values, so five rows in a grid rather than five cards. */
+  .pd-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+    gap:1px;background:var(--line);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .dt-fact{display:flex;flex-direction:column;gap:3px;padding:10px 13px;background:var(--card)}
+  .dt-fact span{font-size:.7rem;letter-spacing:.05em;text-transform:uppercase;color:var(--mut);font-weight:600}
+  .dt-fact b{font-size:.92rem;font-weight:650;color:var(--ink);font-variant-numeric:tabular-nums}
+
+  /* ---- the file tree ----
+     <details>/<summary> per folder: native disclosure, so it is keyboard
+     operable and needs no state. The tree does NOT scroll — the body does,
+     which is the whole point. */
+  .pd-tree{border:1px solid var(--line);border-radius:12px;overflow:hidden;
+    background:var(--card);font-family:var(--mono,ui-monospace,Menlo,monospace);font-size:.775rem}
+  .pd-tree .dt-row,.pd-tree summary{display:flex;align-items:center;gap:8px;
+    padding:5px 12px 5px calc(12px + var(--d,0) * 15px);
+    border-bottom:1px solid var(--hair,rgba(0,0,0,.05));
+    transition:background-color .12s ease}
+  .pd-tree .dt-row:hover,.pd-tree summary:hover{background:rgba(var(--wash-rgb,18,32,46),.045)}
+  .pd-tree > :last-child,.pd-tree details:last-child > :last-child{border-bottom:0}
+  .pd-tree summary{cursor:pointer;list-style:none;font-weight:600;color:var(--ink)}
+  .pd-tree summary::-webkit-details-marker{display:none}
+  .dt-chev{width:12px;height:12px;flex:none;color:var(--mut);
+    transition:transform .16s var(--ease-snappy,ease-out)}
+  details[open] > summary .dt-chev{transform:rotate(90deg)}
+  .dt-ico{flex:none;width:15px;height:15px;color:var(--mut);display:block}
+  .dt-ico svg{width:15px;height:15px;display:block}
+  /* A small set on purpose: twenty colours is not a legend. */
+  .dt-ico.dir{color:var(--accent)}
+  .dt-ico.ts{color:#3b82f6}
+  .dt-ico.js{color:#e0a11a}
+  .dt-ico.css{color:#a855f7}
+  .dt-ico.html{color:#ef6c3b}
+  .dt-ico.cfg{color:#64748b}
+  .dt-ico.doc{color:#7a8894}
+  .dt-ico.img{color:#22a565}
+  .dt-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2)}
+  .pd-tree summary .dt-name{color:var(--ink)}
+  .pd-tree em{font-style:normal;flex:none;font-size:.72rem;color:var(--mut);
+    font-variant-numeric:tabular-nums}
+
+  /* ---- an unavailable feature is a state, not an error ---- */
+  .dt-empty{display:flex;flex-direction:column;align-items:center;text-align:center;gap:4px;
+    padding:22px 18px;border:1px solid var(--line);border-radius:12px;background:var(--card)}
+  .dt-empty svg{width:22px;height:22px;color:var(--mut);margin-bottom:4px}
+  .dt-empty b{font-size:.88rem;font-weight:650;color:var(--ink)}
+  .dt-empty span{font-size:.8rem;line-height:1.5;color:var(--mut);max-width:44ch}
+
+  /* ---- footer ---- */
+  .pd-foot{flex:none;display:flex;align-items:center;justify-content:flex-end;gap:8px;
+    padding:14px 22px;border-top:1px solid var(--line);background:var(--card-tray,var(--paper-2))}
+  .pd-foot .btn-g,.pd-foot .btn-d{padding:9px 17px;border-radius:10px;
+    font-size:.86rem;font-weight:600;cursor:pointer;text-decoration:none;
+    display:inline-flex;align-items:center;
+    transition:background-color .12s ease,border-color .12s ease,transform .12s ease}
+  .pd-foot .btn-g{border:1px solid var(--line);background:var(--card);color:var(--ink)}
+  .pd-foot .btn-g:hover{border-color:var(--line-hover);background:rgba(var(--wash-rgb,18,32,46),.04)}
+  .pd-foot .btn-d{border:0;background:var(--accent);color:#fff}
+  .pd-foot .btn-d:hover{background:var(--accent-2)}
+  .pd-foot .btn-g:active,.pd-foot .btn-d:active{transform:translateY(1px)}
+
+  /* ---- loading ---- */
+  .pd-skel{display:flex;flex-direction:column;gap:12px}
+  .pd-skel .sq{display:block;height:13px;border-radius:7px;background:var(--paper-2);
+    position:relative;overflow:hidden}
+  .pd-skel .sq.blk{height:104px;border-radius:12px}
+  .pd-skel .w40{width:40%} .pd-skel .w55{width:55%} .pd-skel .w70{width:70%}
+  .pd-skel .sq::after{content:"";position:absolute;inset:0;transform:translateX(-100%);
+    background:linear-gradient(90deg,transparent,rgba(139,152,165,.13),transparent);
+    animation:sweep 1.4s var(--ease) infinite}
+
+  /* ---- phone: a sheet, not a shrunken dialog ---- */
+  @media (max-width:640px){
+    .pdlg{align-items:flex-end}
+    .pd{width:100%;max-height:92vh;border-radius:18px 18px 0 0;
+      animation:pdUp .22s var(--ease-snappy,cubic-bezier(.16,1,.3,1)) both}
+    @keyframes pdUp{from{opacity:0;transform:translateY(24px)}to{opacity:1;transform:none}}
+    .pd-head{padding:16px 16px 14px;gap:11px}
+    .pd-body{padding:16px 16px 20px}
+    .pd-foot{padding:12px 16px}
+    .pd-foot .btn-g,.pd-foot .btn-d{flex:1;justify-content:center}
+    .pd-facts{grid-template-columns:repeat(2,1fr)}
+  }
+
+  @media (prefers-reduced-motion:reduce){
+    .pd{animation:none}
+    .pd-x,.pd-tree .dt-row,.pd-tree summary,.dt-chev,
+    .pd-foot .btn-g,.pd-foot .btn-d{transition:none}
+    .pd-foot .btn-g:active,.pd-foot .btn-d:active{transform:none}
+    .pd-skel .sq::after{animation:none}
+  }
+
   .dt-tile{width:42px;height:42px;border-radius:12px;flex:none;display:grid;place-items:center;
     font-family:var(--disp);font-weight:700;font-size:1.02rem;color:#fff;
     background-image:linear-gradient(152deg,rgba(255,255,255,.3),rgba(255,255,255,0) 46%,rgba(0,0,0,.2))}
-  .dt-head .nm{min-width:0}
-  .dt-head h3{margin:0 0 2px;font-size:1.05rem;overflow:hidden;text-overflow:ellipsis}
-  .dt-head .sub{font-size:.78rem;color:var(--mut)}
   .dt-chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 4px}
   .dt-chip{font-size:.735rem;font-weight:500;padding:4px 9px;border-radius:999px;
     background:var(--paper-2);color:var(--ink-2);border:1px solid var(--line);white-space:nowrap}
   .dt-chip.live{background:rgba(34,165,101,.13);border-color:transparent;color:#187a4b}
   :root[data-theme="dark"] .dt-chip.live{color:#3ecb84}
-  .dt-sec{border-top:1px solid var(--line);margin-top:14px;padding-top:12px}
-  .dt-sec h4{margin:0 0 8px;font-size:.76rem;font-weight:600;letter-spacing:.02em;
-    text-transform:uppercase;color:var(--mut)}
-  .dt-kv{display:flex;align-items:baseline;justify-content:space-between;gap:12px;
-    font-size:.84rem;padding:3px 0;color:var(--ink-2)}
-  .dt-kv b{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
   .dt-note{font-size:.79rem;color:var(--mut);line-height:1.5;margin:6px 0 0}
-  .dt-files{margin-top:8px;max-height:168px;overflow-y:auto;border:1px solid var(--line);
-    border-radius:10px;background:var(--paper-2);padding:6px}
-  .dt-file{display:flex;justify-content:space-between;gap:10px;font-size:.76rem;
-    padding:3px 6px;border-radius:6px;color:var(--ink-2)}
-  .dt-file span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-  .dt-file i{font-style:normal;color:var(--mut);flex:none;font-variant-numeric:tabular-nums}
   .dt-git{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
   .dt-git .grow{flex:1;min-width:0}
   .dt-repo{font-size:.85rem;color:var(--accent);text-decoration:none;word-break:break-all}

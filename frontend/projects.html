@@ -882,7 +882,16 @@
     pmenu.style.top = Math.max(8, top) + "px";
   }
 
-  function closeDlg() { pdlg.classList.remove("open"); pdlg.innerHTML = ""; }
+  var dlgReturn = null;
+  function closeDlg() {
+    pdlg.classList.remove("open");
+    pdlg.innerHTML = "";
+    /* Back where it came from. Without this the caret lands at the top of
+       the document and a keyboard user has to tab the whole page again to
+       get back to the card they were on. */
+    if (dlgReturn && dlgReturn.isConnected && dlgReturn.focus) dlgReturn.focus();
+    dlgReturn = null;
+  }
 
   /* ---- details, and pushing the source somewhere it survives us --------
      Reached from the card menu rather than from the card itself: tapping a
@@ -907,12 +916,35 @@
   }
 
   function showDetails(p) {
-    pdlg.innerHTML = '<div class="box wide" role="dialog" aria-modal="true" aria-label="Project details">'
-      + '<div class="dt-head"><span class="dt-tile" style="background-color:' + tileColor(p.slug) + '">'
-      + esc(String(p.title || "A").charAt(0).toUpperCase()) + '</span>'
-      + '<span class="nm"><h3>' + esc(p.title || "Untitled") + '</h3>'
-      + '<span class="sub">Loading\u2026</span></span></div></div>';
+    /* The shell it is about to become, with the header already filled in
+       from the card we were opened from — the title and the tile are known
+       without asking anyone, so there is no reason to draw them as bars. */
+    pdlg.innerHTML = '<div class="pd" role="dialog" aria-modal="true" aria-label="Project details" tabindex="-1">'
+      + '<header class="pd-head">'
+        + '<span class="dt-tile" style="background-color:' + tileColor(p.slug) + '">'
+        + esc(String(p.title || "A").charAt(0).toUpperCase()) + '</span>'
+        + '<span class="pd-id"><h3>' + esc(p.title || "Untitled") + '</h3>'
+        + '<span class="pd-slug">/' + esc(p.slug) + '</span></span>'
+        + '<button type="button" class="pd-x" aria-label="Close">'
+        + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>'
+      + '</header>'
+      + '<div class="pd-body"><div class="pd-skel">'
+        + '<span class="sq w40"></span><span class="sq w70"></span>'
+        + '<span class="sq blk"></span><span class="sq w55"></span>'
+        + '<span class="sq blk"></span></div></div>'
+      + '<footer class="pd-foot">'
+        + '<button type="button" class="btn-g cancel">Close</button>'
+        + '<a class="btn-d" href="/agent/' + esc(p.slug) + '">Open in builder</a>'
+      + '</footer></div>';
+    pdlg.querySelector(".cancel").addEventListener("click", closeDlg);
+    pdlg.querySelector(".pd-x").addEventListener("click", closeDlg);
     pdlg.classList.add("open");
+    /* Remembered before focus moves, so closing hands it back to the menu
+       item that opened this rather than dumping the caret at the top of
+       the document. */
+    dlgReturn = document.activeElement;
+    var shell = pdlg.querySelector(".pd");
+    if (shell) shell.focus();
 
     Promise.all([
       fetch("/api/projects/" + encodeURIComponent(p.slug) + "/details", { credentials: "same-origin" })
@@ -922,34 +954,137 @@
         .catch(function () { return null; })
     ]).then(function (out) { renderDetails(p, out[0], out[1]); })
       .catch(function () {
-        pdlg.innerHTML = '<div class="box" role="dialog" aria-modal="true">'
-          + '<h3>Details</h3><p>Could not load this project\u2019s details.</p>'
-          + '<div class="acts"><button type="button" class="btn-g cancel">Close</button></div></div>';
+        pdlg.innerHTML = '<div class="pd" role="dialog" aria-modal="true" tabindex="-1">'
+          + '<header class="pd-head"><span class="pd-id"><h3>Details</h3></span>'
+          + '<button type="button" class="pd-x" aria-label="Close">'
+          + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button></header>'
+          + '<div class="pd-body"><p class="dt-note">Could not load this project\u2019s details. '
+          + 'The project itself is fine \u2014 this panel could not reach the server.</p></div>'
+          + '<footer class="pd-foot"><button type="button" class="btn-g cancel">Close</button></footer></div>';
         pdlg.querySelector(".cancel").addEventListener("click", closeDlg);
+        pdlg.querySelector(".pd-x").addEventListener("click", closeDlg);
       });
   }
 
-  function renderDetails(p, d, gh) {
-    var chips = [];
-    chips.push('<span class="dt-chip' + (d.deployed ? " live" : "") + '">'
-      + (d.deployed ? "Live" : d.published ? "Published" : "Not deployed") + '</span>');
-    if (d.buildType) chips.push('<span class="dt-chip">' + esc(d.buildType) + '</span>');
-    (d.tech || []).forEach(function (tk) {
-      chips.push('<span class="dt-chip">' + esc(tk.name) + (tk.version ? " " + esc(String(tk.version).replace(/^[\^~]/, "")) : "") + '</span>');
+  /* ---- the project details dialog -------------------------------------
+     Three regions and ONE scroller. It used to be a single 580px column
+     with max-height:86vh and overflow-y:auto, containing a file list with
+     its own 168px scroller — two scrollbars a few pixels apart, and the
+     actions at the bottom of the scrolled content where you had to reach
+     them by scrolling past the files. The header and the footer are fixed
+     now and only the middle moves. */
+
+  /* Language from the files themselves, not from the dependency list.
+     d.tech is what the manifest declares, which is a different question —
+     a project can depend on typescript and be written in none of it. */
+  var LANGS = {
+    ts: "TypeScript", tsx: "TypeScript", js: "JavaScript", jsx: "JavaScript",
+    py: "Python", rb: "Ruby", go: "Go", rs: "Rust", php: "PHP", java: "Java",
+    html: "HTML", css: "CSS", scss: "SCSS", svelte: "Svelte", vue: "Vue"
+  };
+  function dtLanguage(files) {
+    var n = {}, best = null;
+    (files || []).forEach(function (f) {
+      var m = /\.([a-z0-9]+)$/i.exec(f.path || "");
+      if (!m) return;
+      var lang = LANGS[m[1].toLowerCase()];
+      if (!lang) return;
+      n[lang] = (n[lang] || 0) + 1;
+      if (!best || n[lang] > n[best]) best = lang;
     });
-    if (!(d.tech || []).length) chips.push('<span class="dt-chip">No dependencies detected</span>');
+    return best;
+  }
 
-    var files = (d.files || []).slice(0, 200).map(function (f) {
-      return '<div class="dt-file"><span>' + esc(f.path) + '</span><i>' + dtBytes(f.bytes) + '</i></div>';
-    }).join("") || '<div class="dt-file"><span>No files yet</span></div>';
+  /* A file's kind, for its icon colour. Deliberately a small set: a legend
+     of twenty colours is not a legend. */
+  function dtKind(name) {
+    var m = /\.([a-z0-9]+)$/i.exec(name || "");
+    var e = m ? m[1].toLowerCase() : "";
+    if (e === "ts" || e === "tsx") return "ts";
+    if (e === "js" || e === "jsx" || e === "mjs" || e === "cjs") return "js";
+    if (e === "css" || e === "scss" || e === "less") return "css";
+    if (e === "html" || e === "htm" || e === "svelte" || e === "vue") return "html";
+    if (e === "json" || e === "lock" || e === "yml" || e === "yaml" || e === "toml") return "cfg";
+    if (e === "md" || e === "txt") return "doc";
+    if (e === "png" || e === "jpg" || e === "jpeg" || e === "gif" || e === "svg" || e === "webp" || e === "ico") return "img";
+    return "";
+  }
 
-    /* Every state says what to do next rather than only what is wrong.
-       "Not connected" with no route to connecting is the kind of dead end
-       that makes a feature look broken when it is merely unconfigured. */
+  var DT_IC = {
+    file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>',
+    folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+    chev: '<svg class="dt-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>',
+    git: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.9 1.53 2.36 1.09 2.94.83.09-.65.35-1.09.63-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.02a9.6 9.6 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.38.2 2.4.1 2.65.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.69-4.57 4.94.36.31.68.92.68 1.85v2.74c0 .26.18.58.69.48A10 10 0 0 0 12 2z"/></svg>',
+    close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>'
+  };
+
+  /* Flat paths into a tree, then <details>/<summary> per folder — native
+     disclosure, so expanding is keyboard-operable and survives without a
+     line of state. Only the first level is open: a project with forty
+     components should not open as forty rows. */
+  function dtTree(files) {
+    var root = { dirs: {}, files: [] };
+    files.forEach(function (f) {
+      var parts = String(f.path || "").split("/");
+      var leaf = parts.pop();
+      var at = root;
+      parts.forEach(function (seg) {
+        if (!at.dirs[seg]) at.dirs[seg] = { dirs: {}, files: [] };
+        at = at.dirs[seg];
+      });
+      at.files.push({ name: leaf, bytes: f.bytes, path: f.path });
+    });
+
+    function row(node, depth, open) {
+      var out = "";
+      Object.keys(node.dirs).sort().forEach(function (name) {
+        var kid = node.dirs[name];
+        var count = (function tally(n) {
+          var c = n.files.length;
+          Object.keys(n.dirs).forEach(function (k) { c += tally(n.dirs[k]); });
+          return c;
+        })(kid);
+        out += '<details class="dt-dir"' + (open ? " open" : "") + '>'
+          + '<summary style="--d:' + depth + '">' + DT_IC.chev
+          + '<i class="dt-ico dir">' + DT_IC.folder + '</i>'
+          + '<span class="dt-name">' + esc(name) + '</span>'
+          + '<em>' + count + '</em></summary>'
+          + row(kid, depth + 1, false) + '</details>';
+      });
+      node.files.sort(function (a, b) { return a.name < b.name ? -1 : 1; }).forEach(function (f) {
+        out += '<div class="dt-row" style="--d:' + depth + '" title="' + esc(f.path) + '">'
+          + '<i class="dt-ico ' + dtKind(f.name) + '">' + DT_IC.file + '</i>'
+          + '<span class="dt-name">' + esc(f.name) + '</span>'
+          + '<em>' + dtBytes(f.bytes) + '</em></div>';
+      });
+      return out;
+    }
+    return row(root, 0, true);
+  }
+
+  function renderDetails(p, d, gh) {
+    var all = d.files || [];
+    /* The same 200 the old list capped at. The endpoint can hand back a
+       tree of any size and this is a summary, not a file manager. */
+    var shown = all.slice(0, 200);
+    var lang = dtLanguage(all);
+
+    var meta = [(d.deployed ? "Live" : d.published ? "Published" : "Not deployed")];
+    if (d.buildType) meta.push(esc(d.buildType));
+    if (lang) meta.push(esc(lang));
+
+    var tech = (d.tech || []).map(function (tk) {
+      return '<span class="dt-chip">' + esc(tk.name)
+        + (tk.version ? " " + esc(String(tk.version).replace(/^[\^~]/, "")) : "") + '</span>';
+    }).join("");
+
+    /* Every state says what is true and what, if anything, can be done —
+       never implying a connection the backend cannot make. */
     var git;
     if (!gh || !gh.configured) {
-      git = '<p class="dt-note">Git is not set up on this server yet, so there is nowhere to push. '
-          + 'An operator registers a GitHub app to enable it.</p>';
+      git = '<div class="dt-empty">' + DT_IC.git
+          + '<b>GitHub integration unavailable</b>'
+          + '<span>Repository connections are not configured for this workspace.</span></div>';
     } else if (!gh.connected) {
       git = '<p class="dt-note">Connect your GitHub account and Souqi can create a repository for this '
           + 'project and commit its source to it \u2014 the repo is yours, on your account.</p>'
@@ -959,36 +1094,61 @@
           + esc(d.github.htmlUrl || "#") + '">' + esc(d.github.fullName) + '</a>'
           + (d.github.private ? ' <span class="dt-chip">private</span>' : "") + '</span>'
           + '<button type="button" class="btn" id="dtPush">Push again</button></div>'
-          + '<div class="dt-kv"><span>Last push</span><b>' + dtWhen(d.github.lastPushedAt) + '</b></div>';
+          + '<div class="dt-fact"><span>Last push</span><b>' + dtWhen(d.github.lastPushedAt) + '</b></div>';
     } else {
       git = '<p class="dt-note">Signed in as ' + esc(gh.login || "your account")
           + '. This creates a new private repository and commits every file in the project to it.</p>'
           + '<div class="dt-git"><button type="button" class="btn" id="dtPush">Push to GitHub</button></div>';
     }
 
-    pdlg.innerHTML = '<div class="box wide" role="dialog" aria-modal="true" aria-label="Project details">'
-      + '<div class="dt-head"><span class="dt-tile" style="background-color:' + tileColor(d.slug) + '">'
-      + esc(String(d.title || "A").charAt(0).toUpperCase()) + '</span>'
-      + '<span class="nm"><h3>' + esc(d.title || "Untitled") + '</h3>'
-      + '<span class="sub">/' + esc(d.slug) + '</span></span></div>'
-      + '<div class="dt-chips">' + chips.join("") + '</div>'
-      + (d.prompt ? '<p class="dt-note">\u201c' + esc(String(d.prompt).slice(0, 220)) + '\u201d</p>' : "")
-      + '<div class="dt-sec"><h4>Source</h4>'
-        + '<div class="dt-kv"><span>Files</span><b>' + d.fileCount + '</b></div>'
-        + '<div class="dt-kv"><span>Total size</span><b>' + dtBytes(d.totalBytes) + '</b></div>'
-        + '<div class="dt-kv"><span>Revisions</span><b>' + d.revisions + '</b></div>'
-        + '<div class="dt-kv"><span>Created</span><b>' + dtWhen(d.createdAt) + '</b></div>'
-        + '<div class="dt-kv"><span>Last edited</span><b>' + dtWhen(d.updatedAt) + '</b></div>'
-        // Said plainly. A pruned chain means the list below is a partial
-        // tree, and a push from it would be a partial push.
-        + (d.historyComplete ? "" : '<p class="dt-note">Part of this project\u2019s edit history has been pruned, so the file list may be incomplete.</p>')
-        + '<div class="dt-files">' + files + '</div></div>'
-      + '<div class="dt-sec"><h4>Git</h4>' + git + '<div id="dtMsg"></div></div>'
-      + '<div class="acts" style="margin-top:16px">'
+    pdlg.innerHTML = '<div class="pd" role="dialog" aria-modal="true" aria-labelledby="pdTitle" tabindex="-1">'
+
+      + '<header class="pd-head">'
+        + '<span class="dt-tile" style="background-color:' + tileColor(d.slug) + '">'
+        + esc(String(d.title || "A").charAt(0).toUpperCase()) + '</span>'
+        + '<span class="pd-id"><h3 id="pdTitle">' + esc(d.title || "Untitled") + '</h3>'
+        + '<span class="pd-slug">/' + esc(d.slug) + '</span>'
+        + '<span class="pd-meta">' + meta.join('<i>\u00b7</i>') + '</span></span>'
+        + '<button type="button" class="pd-x" aria-label="Close">' + DT_IC.close + '</button>'
+      + '</header>'
+
+      + '<div class="pd-body">'
+        + (d.prompt ? '<p class="pd-prompt">\u201c' + esc(String(d.prompt).slice(0, 220)) + '\u201d</p>' : "")
+
+        + '<section class="pd-sec"><h4>Overview</h4><div class="pd-facts">'
+          + '<div class="dt-fact"><span>Files</span><b>' + d.fileCount + '</b></div>'
+          + '<div class="dt-fact"><span>Total size</span><b>' + dtBytes(d.totalBytes) + '</b></div>'
+          + '<div class="dt-fact"><span>Revisions</span><b>' + d.revisions + '</b></div>'
+          + '<div class="dt-fact"><span>Created</span><b>' + dtWhen(d.createdAt) + '</b></div>'
+          + '<div class="dt-fact"><span>Last edited</span><b>' + dtWhen(d.updatedAt) + '</b></div>'
+        + '</div></section>'
+
+        + (tech ? '<section class="pd-sec"><h4>Stack</h4><div class="dt-chips">' + tech + '</div></section>' : "")
+
+        + '<section class="pd-sec"><h4>Source</h4>'
+          + (d.historyComplete ? "" : '<p class="dt-note">Part of this project\u2019s edit history has been pruned, so the file list may be incomplete.</p>')
+          + (shown.length
+              ? '<div class="pd-tree">' + dtTree(shown) + '</div>'
+                + (all.length > shown.length
+                    ? '<p class="dt-note">Showing the first ' + shown.length + ' of ' + all.length + ' files.</p>' : "")
+              : '<div class="dt-empty">' + DT_IC.folder + '<b>No files yet</b>'
+                + '<span>Build something and its source appears here.</span></div>')
+        + '</section>'
+
+        + '<section class="pd-sec"><h4>Git</h4>' + git + '<div id="dtMsg"></div></section>'
+      + '</div>'
+
+      + '<footer class="pd-foot">'
         + '<button type="button" class="btn-g cancel">Close</button>'
-        + '<a class="btn-d" href="/agent/' + esc(d.slug) + '">Open in builder</a></div></div>';
+        + '<a class="btn-d" href="/agent/' + esc(d.slug) + '">Open in builder</a>'
+      + '</footer></div>';
 
     pdlg.querySelector(".cancel").addEventListener("click", closeDlg);
+    pdlg.querySelector(".pd-x").addEventListener("click", closeDlg);
+    /* Focus moves into the dialog so Escape and Tab belong to it; closeDlg
+       hands it back to whatever opened it. */
+    var box = pdlg.querySelector(".pd");
+    if (box) box.focus();
 
     var push = document.getElementById("dtPush");
     if (push) push.addEventListener("click", function () {
