@@ -166,71 +166,75 @@
    them, so the same geometry now wins on all four. Same specificity, later
    source — the per-page copies below are dead weight, not overrides. */
 @media (min-width:901px){
-  /* The condition is "the panel is wide", not "the panel is open" — pointing
-     at a shut rail peeks it open to the full 238px without ever setting .on.
-     Keying this on .on alone left the peeked panel with the SHUT geometry:
-     the header kept padding-left:0 and the logo centred itself in 238px, so
-     it drifted to x=145 on projects and deployments, then snapped back to 44
-     the moment you clicked. Peek and open are the same picture now. */
+  /* ONE POSITION FOR THE LOGO, IN EVERY STATE.
+
+     It sits 8px from the panel's left edge whether the rail is shut, peeked
+     or open — which is where it already lands when it is centred in a 44px
+     rail, so the shut state is the number the other two follow.
+
+     The header used to reserve a 44px strip on the left for the button. That
+     was right while the button lived at left:7, and stopped being right the
+     moment the button moved to the panel's far edge: the strip became an
+     empty gap that pushed the logo to x=44 when the panel was wide and let
+     it sit at 8 when it was not. Reserving room for something that is no
+     longer there is what was left of the logo moving.
+
+     The condition is "the panel is wide", not "the panel is open", because
+     pointing at a shut rail peeks it to the full 238px without ever setting
+     .on — and a peeked panel is the same picture as an open one. */
+  .ag-hist-head{ padding-left:8px; }
   .ag-history.on .ag-hist-mark,
   .ag-history:hover .ag-hist-mark,
-  .ag-history.hover-open .ag-hist-mark{ order:0; margin-left:0; margin-right:0; }
+  .ag-history.hover-open .ag-hist-mark{ order:0; margin:0; }
   .ag-history.on .ag-hist-search,
   .ag-history:hover .ag-hist-search,
   .ag-history.hover-open .ag-hist-search{ order:2; margin-left:auto; margin-right:38px; }
 
-  /* The button does not animate its own position. It shares .ag-pv-toggle-btn
-     with the preview control, whose `transition: all` was written for a
-     border and a background — and swept `left` in with them. So the panel
-     snapped open and the button spent 185ms crawling 89, 165, 188, 195, 198
-     across it, arriving after everything else had settled. That lag is the
-     whole of "the sidebar button is still tweaking". Colour still eases. */
-  #agDeskSidebarToggle{
-    transition-property: background-color, border-color, color, box-shadow, opacity !important;
+  /* Shut, the rail IS the logo's square: no padding, and the auto margins
+     centre it at the same 8. It stays visible — hiding it left the corner
+     empty on a rail whose whole job is to be recognisable at 44px. */
+  .ag-history:not(.on):not(:hover):not(.hover-open) .ag-hist-head{ padding-left:0 !important; }
+  .ag-history:not(.on):not(:hover):not(.hover-open) .ag-hist-mark{
+    display:grid !important; margin:0 auto !important;
   }
 
-  /* The button does not animate its own position. It shares .ag-pv-toggle-btn
-     with the preview control, whose `transition: all` was written for a
-     border and a background — and swept `left` in with them. So the panel
-     snapped open and the button spent 185ms crawling 89, 165, 188, 195, 198
-     across it, arriving after everything else had settled. That lag is the
-     whole of "the sidebar button is still tweaking". Colour still eases. */
-  #agDeskSidebarToggle{
-    transition-property: background-color, border-color, color, box-shadow, opacity !important;
-  }
+  /* The button belongs to the wide panel and only to it. There is nowhere in
+     a 44px rail to put it that is not on top of the logo, which is what it
+     was doing at left:7 — a button drawn over a mark. Shut, the rail is the
+     logo; point at it and the panel peeks wide, and the button is there at
+     its right edge to be clicked.
 
-  /* Present whenever the rail is shut, because it is the only way to open
-     it again. security.css hid it outright in this state, which left the
-     page with a closed sidebar and no control that reopens one — the rail
-     pages that get this right merely fade it to opacity 0 until the rail is
-     hovered, and that still leaves a button to find. */
-  /* The PANEL says where the button goes, not the button's own class. Those
-     two are meant to be toggled together and on three of the four pages they
-     shipped disagreeing — the markup carried `on` while the aside did not, so
-     the button drew itself in the open position beside a 44px rail. It was
-     invisible while both positions were left:7 and became a button floating
-     in the content area the moment they stopped being. The markup is fixed
-     too; this makes it impossible to matter. */
-  #agDeskSidebarToggle{ left:7px !important; }
-  /* Written through the sidebar rather than as a bare id so it can outrank
-     security.css's `#agDeskSidebarToggle:not(.on){display:none}`, which is
-     one class heavier than an id on its own. That rule is why closing the
-     sidebar on /security left no control that could reopen it. */
+     Faded out rather than display:none, which is the difference between a
+     control you cannot see and a control that is not there. If a peek ever
+     fails to fire, an invisible-but-present button is still in the document
+     at the rail's corner; a removed one leaves a shut sidebar that nothing
+     can reopen, which is the bug this same block fixes on /security.
+
+     Written through the sidebar rather than as a bare id so it outranks
+     security.css's `#agDeskSidebarToggle:not(.on){display:none}`, and read
+     off the PANEL's state rather than the button's own class, which three of
+     the four pages shipped disagreeing with the aside. */
   .ag-history ~ #agDeskSidebarToggle,
-  .ag-history ~ * #agDeskSidebarToggle{ display:inline-flex !important; }
+  .ag-history ~ * #agDeskSidebarToggle{
+    display:inline-flex !important; opacity:0; pointer-events:none;
+  }
   .ag-history.on ~ #agDeskSidebarToggle,
   .ag-history.on ~ * #agDeskSidebarToggle,
   .ag-history:hover ~ #agDeskSidebarToggle,
   .ag-history:hover ~ * #agDeskSidebarToggle,
   .ag-history.hover-open ~ #agDeskSidebarToggle,
-  .ag-history.hover-open ~ * #agDeskSidebarToggle{ left:calc(var(--sb-w) - 40px) !important; }
+  .ag-history.hover-open ~ * #agDeskSidebarToggle{
+    opacity:1; pointer-events:auto; left:calc(var(--sb-w) - 40px) !important;
+  }
 
-  .ag-hist-head{ padding-left:44px; }
-  /* Only while it is actually 44px wide. Scoped off :hover for the same
-     reason as the block above: a peeked panel is a wide panel and wants the
-     reserved strip, not the rail's zero. */
-  .ag-history:not(.on):not(:hover):not(.hover-open) .ag-hist-head{ padding-left:0 !important; }
-  .ag-history:not(.on):not(:hover):not(.hover-open) .ag-hist-mark{ display:none; }
+  /* The button does not animate its own position. It shares .ag-pv-toggle-btn
+     with the preview control, whose `transition: all` was written for a
+     border and a background — and swept `left` in with them, so it spent
+     185ms crawling 89, 165, 188, 195, 198 across a panel that had already
+     snapped open. Colour still eases. */
+  #agDeskSidebarToggle{
+    transition-property: background-color, border-color, color, box-shadow, opacity !important;
+  }
 }
 
 /* AND THE SAME ON THE PHONE, WHERE THE TRAVEL WAS WORST.
