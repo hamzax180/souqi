@@ -18,8 +18,8 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=8.8">
-<link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.7">
+<link rel="stylesheet" href="/styles/pages/code.css?v=9.0">
+<link rel="stylesheet" href="/styles/components/rail-motion.css?v=4.0">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
 /* ══════════════════════════════════════════════════════════════
@@ -945,7 +945,7 @@
            this project's own source already fills, which is the other thing
            that runs out — and the one that explains a turn going vague on a
            big project. Hidden until there is a project to measure. -->
-      <div class="u-row" id="agCtxRow" hidden>
+      <div class="u-row" id="agCtxRow">
         <span class="u-lab"><span class="u-name">Context window</span><span class="u-meta"><span class="u-reset" id="agCtxUsed"></span><b id="agCtxPct">—</b></span></span>
         <span class="u-bar"><i id="agCtxBar"></i></span>
       </div>
@@ -7379,11 +7379,19 @@
        through usageBar's money formatting — but it draws the same bar
        against the same rules, because it is the same kind of statement:
        this much of a fixed thing is gone. */
+    /* Two endpoints call this and only one of them knows about context:
+       /api/account/me carries the money and no `context` at all. It used to
+       run the branch below anyway, read a window of 0 and HIDE the row —
+       so the card painted two meters, and the third dropped in a moment
+       later when /api/codeagent/usage answered. The card grew after it had
+       already been read. Same guard as the budget one above, for the same
+       reason: a payload that does not answer a question must not be taken
+       as answering it with zero. */
     const ctx = d.context;
-    const ctxRow = $("agCtxRow");
+    const ctxRow = ctx ? $("agCtxRow") : null;
     if (ctxRow) {
-      const win = ctx && Number(ctx.windowTokens) || 0;
-      const used = ctx && Number(ctx.usedTokens) || 0;
+      const win = Number(ctx.windowTokens) || 0;
+      const used = Number(ctx.usedTokens) || 0;
       /* Shown from the first empty chat onwards. It used to appear only once
          a project existed, which meant the one moment someone might wonder
          what "context" is — before anything has been built — was the moment

@@ -3676,7 +3676,7 @@
   .ag-meter i{display:block;height:100%;border-radius:999px;background:#3b82f6;transition:width .4s var(--ease)}
   .ag-meter i.warn{background:var(--warn)}
   .ag-meter i.hot{background:var(--danger)}
-  .ag-upgrade{display:flex;align-items:center;justify-content:center;gap:7px;margin-top:8px;padding:9px 12px;
+  .ag-upgrade{display:flex;align-items:center;justify-content:center;gap:7px;margin-top:6px;padding:8px 12px;
     border:0;border-radius:9px;background:#0077ff;color:#fff;font-size:.9rem;font-weight:600;
     cursor:pointer;width:100%;box-sizing:border-box;text-decoration:none;transition:.15s}
   .ag-upgrade:hover{background:#0062cc}
@@ -4584,11 +4584,15 @@
      At rest the card is plain --card. The wash is the HOVER state and only
      the hover state; painted on permanently it stops being a response to
      anything and just makes the rail two-tone. */
-  /* Room for three meters, not two. It carried the two money limits at a
-     size that suited them; with the context window beside them the card was
-     three bars crushed into the height of two. The heading above it was
-     removed in the same change, so this costs nothing in total height. */
-  .ag-usage{display:flex;flex-direction:column;gap:12px;padding:14px 14px;border-radius:14px;
+  /* Three meters fit, at the size three meters need rather than the size
+     two were given. Growing the card to take the context window spent 166px
+     of a 238px rail on a thing nobody opens the builder to read, and the
+     Recent list above it is what paid — the foot is fixed height and the
+     list is what flexes. Tighter padding and tighter gaps give the chat
+     history about a row and a half back without shrinking any text or
+     thinning the bars, which are the two things that would cost legibility
+     rather than just air. */
+  .ag-usage{display:flex;flex-direction:column;gap:8px;padding:9px 11px;border-radius:12px;
     border:1px solid var(--line);background:var(--card);box-shadow:var(--sh-subtle);
     transition:background var(--dur-snappy,.12s) ease,border-color var(--dur-snappy,.12s) ease,
                box-shadow var(--dur-snappy,.12s) ease}
@@ -4621,7 +4625,7 @@
     display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
   .ag-usage .u-up:hover{text-decoration:underline}
   .ag-usage .u-up svg{width:12px;height:12px}
-  .u-row{display:flex;flex-direction:column;gap:6px}
+  .u-row{display:flex;flex-direction:column;gap:4px}
   .u-lab{display:flex;align-items:baseline;justify-content:space-between;gap:8px;
     font-size:.76rem;color:var(--ink-2)}
   .u-lab b{font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums}
