@@ -543,9 +543,23 @@
 
   /* 1280px of site into whatever width the card currently is. Recomputed on
      resize because the grid reflows between one, two and three columns. */
+  /* COVER, not fit-to-width. The frame is a fixed 1280x800, and scaling
+     by w/1280 alone fills the width and lets the height fall where it
+     may. On the 16:9 desktop thumbnail that is the same number either
+     way, so it looked right for a long time — but the phone layout turns
+     the card on its side and gives the preview a 64px SQUARE, where
+     w/1280 renders it 64 wide and 40 tall and leaves a quarter of the
+     tile as empty background under the site.
+
+     Same max() scaleLivePreview uses on the detail view, so a preview is
+     cropped rather than letterboxed wherever it appears. Origin stays at
+     0 0: the top-left of a page is its header, which is the part that
+     makes a thumbnail recognisable. */
   function pvScale(el, f) {
-    var w = el.clientWidth;
-    if (w) f.style.transform = "scale(" + (w / 1280) + ")";
+    var w = el.clientWidth, h = el.clientHeight;
+    if (!w) return;
+    var s = h ? Math.max(w / 1280, h / 800) : w / 1280;
+    f.style.transform = "scale(" + s + ")";
   }
   addEventListener("resize", function () {
     document.querySelectorAll(".pv iframe").forEach(function (f) { pvScale(f.parentNode, f); });
