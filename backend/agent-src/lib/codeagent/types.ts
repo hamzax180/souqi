@@ -24,6 +24,10 @@ export type StopReason =
   | "completed"
   | "awaiting_question"
   | "awaiting_approval"
+  /* A plan run that reached a plan. Not "completed": nothing was built,
+     and filing it as completed would put a finished turn on screen for a
+     turn whose whole point is that the user has not decided yet. */
+  | "plan_presented"
   | "cancelled"
   | "turn_limit"
   | "budget_limit"
@@ -47,6 +51,7 @@ export type ToolName =
   | "check_project"
   | "run_command"
   | "ask_user_question"
+  | "present_plan"
   | "complete_task";
 
 /** OpenAI-shaped function schema — the form DYNAMIC_TOOLS_SCHEMA already
@@ -84,6 +89,34 @@ export interface ToolEffects {
     options: Array<{ label: string; description: string }>;
     multiSelect: boolean;
   }>;
+  /** Set by present_plan. The runner ends the turn and the user approves. */
+  planPresented?: PresentedPlan;
+}
+
+/** What a plan run produces, and what the approval is bound to.
+
+    Richer than the one-shot planner's schema on purpose: that one had to
+    fit in a 700-token completion, so it could only ever say what to build
+    in the abstract. This is written by a run that has READ the project, so
+    it can name the files it will touch and the code it intends to reuse —
+    which is the difference between a plan and a wish. */
+export interface PresentedPlan {
+  title: string;
+  /** Why this change, and what it is for. */
+  context: string;
+  /** The recommended approach only. Not a survey of alternatives. */
+  approach: string;
+  steps: Array<{ title: string; detail: string }>;
+  /** Paths this will create or change, with why each one. */
+  files: Array<{ path: string; change: string; reason: string }>;
+  /** Existing code the plan intends to reuse, with where it lives. */
+  reuse: string[];
+  /** Decisions taken that the request did not specify, phrased to correct. */
+  assumptions: string[];
+  /** What could go wrong, said before it does. */
+  risks: string[];
+  /** How the change is checked end to end once built. */
+  verification: string[];
 }
 
 /** What dispatch() always returns. It never throws and never returns

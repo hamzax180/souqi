@@ -5635,6 +5635,54 @@ app.post("/api/codeagent/runs/:id/answer", async (req, res) => {
   res.status(202).json({ resumed: true, runId: req.params.id });
 });
 
+/**
+ * POST /api/codeagent/runs/:id/approve
+ *
+ * Sign off the plan a plan run produced, and get back the token that lets
+ * the build run execute it.
+ *
+ * The token is issued HERE rather than sent out with the plan, because it
+ * is a statement this server makes about four things — who asked, which
+ * project, which plan text, and which revision the plan was written
+ * against — and none of those are the client's to assert. The client's
+ * half is unchanged from the old confirm card: it posts the turn again
+ * with the token attached, and agentState.resolve turns an approved plan
+ * into a build.
+ */
+app.post("/api/codeagent/runs/:id/approve", async (req, res) => {
+  try {
+    const owner = appOwnerOf(req, res);
+    const run = await runStore.getRun(req.params.id, owner);
+    if (!run) return res.status(404).json({ error: "run not found" });
+
+    /* The plan as the run recorded it, not as the client hands it back.
+       Signing whatever arrived in the request body would make the token
+       a statement about text the user could have edited on the way. */
+    const events = await runStore.getEvents(req.params.id, 0);
+    let plan = null;
+    for (const e of events || []) {
+      if (e && e.type === "plan" && e.data && e.data.plan) plan = e.data.plan;
+    }
+    if (!plan) return res.status(409).json({ error: "this run has no plan to approve" });
+
+    let project = null;
+    if (run.projectId) { try { project = await projects.get(run.projectId); } catch (e) {} }
+
+    res.json({
+      approvalToken: agentState.issueApproval({
+        sessionKey: agentState.sessionKeyOf(owner),
+        projectId: project ? project.id : "",
+        planVersion: agentState.planVersionOf(plan),
+        revisionId: (project && project.headRevision) || "none"
+      }),
+      prompt: run.prompt || "",
+      projectId: project ? project.id : null
+    });
+  } catch (e) {
+    res.status(500).json({ error: "could not approve that plan" });
+  }
+});
+
 app.post("/api/codeagent/runs/:id/cancel", async (req, res) => {
   const owner = appOwnerOf(req, res);
   const ok = await runStore.cancelRun(req.params.id, owner, req.body && req.body.reason);

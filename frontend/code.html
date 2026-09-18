@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=7.8">
+<link rel="stylesheet" href="/styles/pages/code.css?v=7.9">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -4266,6 +4266,124 @@
   /* ---------- build confirmation card — Claude style ----------
      Shown before a fresh build. "Looks good → Build it" re-runs
      with confirmed:true, "Edit request" hands the prompt back. */
+  /* THE PLAN A RUN PRODUCED, in full.
+
+     Deliberately more than the old card showed. That one listed phases,
+     screens and a tech stack — the same four headings whatever was asked,
+     because the planner behind it had never read the project and had
+     nothing specific to say. This one is written by a run that read the
+     files, so it can show the files it will touch and the code it means
+     to reuse, and those are the two sections worth reading before you
+     press the button.
+
+     Sections that are empty are not rendered. A plan with no risks should
+     show no risk heading rather than a heading with nothing under it. */
+  function showRunPlan(plan, runId) {
+    if (!plan) return;
+    const card = el("ag-plan2");
+    const sec = [];
+
+    const list = (items, cls) => '<ul class="pl2-list' + (cls ? " " + cls : "") + '">'
+      + items.map((x) => '<li>' + x + '</li>').join("") + '</ul>';
+
+    sec.push('<div class="pl2-head">'
+      + '<span class="pl2-kicker">Plan</span>'
+      + '<h3 class="pl2-title">' + esc(plan.title || "The plan") + '</h3>'
+      + (plan.context ? '<p class="pl2-context">' + esc(plan.context) + '</p>' : "")
+      + '</div>');
+
+    if (plan.approach) {
+      sec.push('<div class="pl2-sec"><h4>Approach</h4><p class="pl2-approach">'
+        + esc(plan.approach) + '</p></div>');
+    }
+
+    const steps = plan.steps || [];
+    if (steps.length) {
+      sec.push('<div class="pl2-sec"><h4>Steps</h4><ol class="pl2-steps">'
+        + steps.map((st, i) =>
+            '<li><span class="pl2-n">' + (i + 1) + '</span><div>'
+            + '<b>' + esc(st.title || "") + '</b>'
+            + (st.detail ? '<span>' + esc(st.detail) + '</span>' : "")
+            + '</div></li>').join("")
+        + '</ol></div>');
+    }
+
+    const files = plan.files || [];
+    if (files.length) {
+      const created = files.filter((x) => x.change === "create").length;
+      sec.push('<div class="pl2-sec"><h4>Files <span class="pl2-count">'
+        + files.length + " · " + created + " new" + '</span></h4>'
+        + '<ul class="pl2-files">'
+        + files.map((x) =>
+            '<li><span class="pl2-tag ' + (x.change === "create" ? "is-new" : "is-edit") + '">'
+            + (x.change === "create" ? "new" : "edit") + '</span>'
+            + '<code>' + esc(x.path || "") + '</code>'
+            + (x.reason ? '<span class="pl2-why">' + esc(x.reason) + '</span>' : "")
+            + '</li>').join("")
+        + '</ul></div>');
+    }
+
+    if ((plan.reuse || []).length) {
+      sec.push('<div class="pl2-sec"><h4>Building on what is already there</h4>'
+        + list(plan.reuse.map(esc), "pl2-reuse") + '</div>');
+    }
+    if ((plan.assumptions || []).length) {
+      sec.push('<div class="pl2-sec"><h4>Assumptions <span class="pl2-count">correct me</span></h4>'
+        + list(plan.assumptions.map(esc)) + '</div>');
+    }
+    if ((plan.risks || []).length) {
+      sec.push('<div class="pl2-sec"><h4>Worth knowing</h4>' + list(plan.risks.map(esc)) + '</div>');
+    }
+    if ((plan.verification || []).length) {
+      sec.push('<div class="pl2-sec"><h4>How we will know it works</h4>'
+        + list(plan.verification.map(esc)) + '</div>');
+    }
+
+    sec.push('<div class="pl2-actions">'
+      + '<button type="button" class="pl2-go">Build it</button>'
+      + '<button type="button" class="pl2-edit">Change something</button>'
+      + '</div>');
+
+    card.innerHTML = sec.join("");
+    logHost().appendChild(card);
+    toBottom();
+
+    card.querySelector(".pl2-edit").addEventListener("click", function () {
+      /* Not a rejection — the plan stays on screen and the composer takes
+         what they want changed. Deleting it would throw away the reading
+         they just did. */
+      const box = $("agInput");
+      if (box) { box.focus(); }
+      say("Tell me what to change about the plan and I’ll rework it.");
+    });
+
+    card.querySelector(".pl2-go").addEventListener("click", async function () {
+      const go = card.querySelector(".pl2-go");
+      if (go.disabled) return;
+      go.disabled = true;
+      const was = go.textContent;
+      go.textContent = "Starting…";
+      try {
+        /* The server signs the plan it recorded, not the plan sitting in
+           this DOM — so an approval cannot be made to cover text that was
+           changed on the way. */
+        const r = await fetch("/api/codeagent/runs/" + encodeURIComponent(runId) + "/approve", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          credentials: "same-origin", body: "{}"
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || !d.approvalToken) throw new Error(d.error || "that plan could not be approved");
+        card.classList.add("is-approved");
+        go.textContent = "Building…";
+        runTurn(d.prompt || "", { confirmed: true, approvalToken: d.approvalToken });
+      } catch (e) {
+        go.disabled = false;
+        go.textContent = was;
+        say(esc(String((e && e.message) || "that plan could not be approved")));
+      }
+    });
+  }
+
   function showPlan(payload) {
     const raw = payload.plan || {};
     const plan = Object.assign({}, raw);
@@ -4707,8 +4825,13 @@
       let streamRes = null;
       let isDynamicRun = false;
 
-      // Plan mode before confirmation runs fast assess/plan card via /api/codeagent/build
-      const isPlanConfirmation = agentMode === "plan" && !(opts && opts.confirmed);
+      /* Plan mode used to divert to /api/codeagent/build for a fast plan
+         card. That path called a single JSON completion that never read a
+         file, so it could answer in ten seconds and could not say what it
+         would change. Plan mode is a run like any other now: it explores
+         with read-only tools, asks with real options, and ends by calling
+         present_plan, which arrives here as a "plan" event. */
+      const isPlanConfirmation = false;
 
       /* Before the request, not after the answer. This is the only part
          of the wait the user can see, and the plan call is the slow one. */
@@ -4841,7 +4964,7 @@
         ? resumingEventReader(runId, streamRes, currentAbortController ? currentAbortController.signal : undefined, streamCursor)
         : streamRes.body.getReader();
       const decoder = new TextDecoder();
-      let buf = "", errorMsg = "", clarifyReply = null, clarifyAction = "chat", clarifyOptions = null, chitchat = null, gate = null, publishRequested = false, confirmPlan = null, clarifyPlan = null;
+      let buf = "", errorMsg = "", clarifyReply = null, clarifyAction = "chat", clarifyOptions = null, chitchat = null, gate = null, publishRequested = false, confirmPlan = null, clarifyPlan = null, plannedRun = null;
       result = null;
       lastReceivedFiles = null;
       let lastSeq = 0;
@@ -5027,6 +5150,7 @@
              other question-ish events do — those end the turn, this one
              pauses it and the same stream carries on afterwards. */
           else if (em[1] === "question") showAgentQuestion(payload, runId);
+          else if (em[1] === "plan") plannedRun = { plan: payload.plan, runId: runId };
           else if (em[1] === "confirm") confirmPlan = payload;
           else if (em[1] === "clarify") clarifyPlan = payload;
           else if (em[1] === "chitchat") { chitchat = payload.reply; runSettled = true; }
@@ -5106,6 +5230,16 @@
         finalizeThinking();
         resetBootScreen();
         showClarifyQuestions(clarifyPlan);
+        return;
+      }
+      /* A plan run ends here rather than in a result. Same shape as a
+         question: the turn is over, the panel settles, and what happens
+         next is the user's. */
+      if (plannedRun && plannedRun.plan) {
+        if (thinkPanel) thinkPanel.done();
+        finalizeThinking();
+        resetBootScreen();
+        showRunPlan(plannedRun.plan, plannedRun.runId);
         return;
       }
       if (confirmPlan) { showPlan(confirmPlan); return; }

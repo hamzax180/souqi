@@ -50,7 +50,7 @@ check("a read-only mode offers exactly read_file, search_code, list_files", () =
    guessing and writing the guess into a plan the user then approves. */
 check("plan mode may ask a question, and a mode answering one may not ask back", () => {
   assert.deepStrictEqual(st.offers("plan"),
-    ["read_file", "search_code", "list_files", "ask_user_question"]);
+    ["read_file", "search_code", "list_files", "ask_user_question", "present_plan"]);
   assert.strictEqual(st.permits("plan", "ask_user_question"), true);
   assert.strictEqual(st.permits("awaiting_question", "ask_user_question"), false);
   assert.strictEqual(st.permits("act", "ask_user_question"), true);
@@ -64,8 +64,14 @@ check("asking is still refused where it is not offered", () => {
   assert.strictEqual(st.permits("awaiting_approval", "ask_user_question"), false);
 });
 
-check("act offers all seven, and chat offers none", () => {
-  assert.deepStrictEqual(st.offers("act"), registry.names());
+/* present_plan is the one tool act does NOT get, and that is the shape of
+   the two modes: plan ends by proposing, act ends by having done it. A
+   build that could present a plan would be offering to decide something
+   the user already decided when they approved one. */
+check("act offers everything except the tool for proposing, and chat offers none", () => {
+  assert.deepStrictEqual(st.offers("act"),
+    registry.names().filter((n) => n !== "present_plan"));
+  assert.strictEqual(st.offers("act").indexOf("present_plan"), -1);
   assert.deepStrictEqual(st.offers("chat"), []);
 });
 
@@ -126,19 +132,27 @@ check("an approved plan acts without re-asking whether it is a question", () => 
   assert.strictEqual(r.mode, "act");
 });
 
-check("an unapproved plan holds when enforcement is on", () => {
+/* The flag used to be the only thing standing between an unapproved plan
+   and a build, because planning happened before the run and the run itself
+   went straight to act. It cannot mean that any more: an unapproved plan
+   run PLANS, whether the flag is set or not, and the build is a second run
+   carrying the approval. Refusing here instead would refuse plan mode on
+   the one setting meant to make it stricter. */
+check("an unapproved plan plans, and the flag cannot turn that into a refusal", () => {
   process.env.CODEAGENT_REQUIRE_PLAN_APPROVAL = "1";
   try {
-    assert.strictEqual(st.resolve({ mode: "plan", approval: { ok: false } }).mode, "awaiting_approval");
+    assert.strictEqual(st.resolve({ mode: "plan", approval: { ok: false } }).mode, "plan");
   } finally { delete process.env.CODEAGENT_REQUIRE_PLAN_APPROVAL; }
 });
 
-/* Shipped off, because the client does not echo a token yet and
-   enforcing on day one would refuse every plan-mode build. */
-check("an unapproved plan proceeds while enforcement is off, and says so", () => {
+/* The two halves of plan mode, asserted together so neither can drift:
+   without approval it plans, with approval it builds. */
+check("an unapproved plan plans rather than building, and says so", () => {
   const r = st.resolve({ mode: "plan", approval: { ok: false } });
-  assert.strictEqual(r.mode, "act");
-  assert.match(r.reason, /not enforced/);
+  assert.strictEqual(r.mode, "plan");
+  assert.match(r.reason, /approval/);
+  // The half that did not change: approving is still what starts the build.
+  assert.strictEqual(st.resolve({ mode: "plan", approval: { ok: true } }).mode, "act");
 });
 
 console.log("\n── what an approval binds ───────────────");

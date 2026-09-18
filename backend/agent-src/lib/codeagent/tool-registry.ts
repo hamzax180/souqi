@@ -158,6 +158,72 @@ const SCHEMAS: ToolSchema[] = [
   {
     type: "function",
     function: {
+      name: "present_plan",
+      description:
+        "Present the finished plan for the user to approve, and end the turn. This is the ONLY way a " +
+        "plan turn ends well. Call it when you have read enough of the project to name the files you " +
+        "will touch and the existing code you will reuse, and when every question whose answer would " +
+        "change the plan has been asked. Do not call it to report progress, and do not describe a plan " +
+        "in prose instead of calling it — prose cannot be approved, so nothing will be built.",
+      parameters: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "2-6 words naming what this builds or changes." },
+          context: { type: "string", description: "Why this change: the need it answers and the outcome intended. 1-3 sentences." },
+          approach: { type: "string", description: "The approach you recommend, and why this one. 2-4 sentences. Recommend ONE; do not survey alternatives." },
+          steps: {
+            type: "array",
+            description: "3-8 steps in the order they will be done.",
+            items: {
+              type: "object",
+              properties: {
+                title: { type: "string", description: "The step, in 3-8 words." },
+                detail: { type: "string", description: "What actually happens in this step, concretely. 1-2 sentences." }
+              },
+              required: ["title", "detail"]
+            }
+          },
+          files: {
+            type: "array",
+            description: "Every file this will create or change. Use the real paths you saw while reading the project.",
+            items: {
+              type: "object",
+              properties: {
+                path: { type: "string", description: "The path, e.g. src/components/Feed.tsx" },
+                change: { type: "string", enum: ["create", "edit"], description: "Whether this file is new or edited." },
+                reason: { type: "string", description: "What changes in it and why. One short sentence." }
+              },
+              required: ["path", "change", "reason"]
+            }
+          },
+          reuse: {
+            type: "array",
+            description: "Existing components, hooks or helpers you will build on, each with its path. Empty if genuinely nothing applies.",
+            items: { type: "string" }
+          },
+          assumptions: {
+            type: "array",
+            description: "0-4 decisions you took that the request did not specify, each phrased so the user can correct it.",
+            items: { type: "string" }
+          },
+          risks: {
+            type: "array",
+            description: "0-3 things that could go wrong or break, said plainly before they do.",
+            items: { type: "string" }
+          },
+          verification: {
+            type: "array",
+            description: "2-4 checks that prove it works once built, in terms of what to look at in the running app.",
+            items: { type: "string" }
+          }
+        },
+        required: ["title", "context", "approach", "steps", "files"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
       name: "ask_user_question",
       description:
         "Ask the user to decide something you cannot decide for them, and stop until they answer. " +
@@ -463,6 +529,62 @@ const TOOLS: ToolEntry[] = [
         ok: true,
         content: "Queued: " + command,
         effects: { commandRequested: { command, reason: str(args.reason).slice(0, 200) } }
+      };
+    }
+  },
+  {
+    name: "present_plan",
+    /* Writes nothing. Like ask_user_question its whole effect is on the
+       RUN: it ends the turn with something the user can approve, rather
+       than with files. */
+    readOnly: true,
+    schema: schemaOf("present_plan"),
+    run(args) {
+      const list = (v: any, n: number, cap: number): string[] =>
+        (Array.isArray(v) ? v : []).slice(0, n).map((x: any) => str(x).slice(0, cap)).filter(Boolean);
+
+      const steps = (Array.isArray(args.steps) ? args.steps : []).slice(0, 8).map((x: any) => ({
+        title: str(x && x.title).slice(0, 80),
+        detail: str(x && x.detail).slice(0, 400)
+      })).filter((x: { title: string }) => x.title);
+
+      const files = (Array.isArray(args.files) ? args.files : []).slice(0, 40).map((x: any) => ({
+        path: str(x && x.path).slice(0, 200),
+        change: str(x && x.change) === "create" ? "create" : "edit",
+        reason: str(x && x.reason).slice(0, 240)
+      })).filter((x: { path: string }) => x.path);
+
+      /* A plan with no steps or no files is the failure this tool exists
+         to prevent: it reads as a plan and approves into a build that has
+         been told nothing. Refused in words the model can act on. */
+      if (!steps.length) {
+        return { ok: false, content: "Error: present_plan needs at least one step. A plan with no steps cannot be built from." };
+      }
+      if (!files.length) {
+        return {
+          ok: false,
+          content: "Error: present_plan needs the files it will touch. Read the project with list_files " +
+            "and read_file first, then name the real paths — a plan that cannot say which files it changes " +
+            "has not been worked out yet."
+        };
+      }
+
+      const plan = {
+        title: str(args.title).slice(0, 80) || "The plan",
+        context: str(args.context).slice(0, 800),
+        approach: str(args.approach).slice(0, 1200),
+        steps,
+        files,
+        reuse: list(args.reuse, 10, 200),
+        assumptions: list(args.assumptions, 4, 240),
+        risks: list(args.risks, 3, 240),
+        verification: list(args.verification, 4, 240)
+      };
+
+      return {
+        ok: true,
+        content: "Presented the plan. The turn ends here and the user decides whether to build it.",
+        effects: { planPresented: plan }
       };
     }
   },

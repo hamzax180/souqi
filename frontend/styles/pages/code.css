@@ -788,6 +788,58 @@
   /* Undo sits beside "View paths", so it needs its own left margin —
      margin-inline-start:auto on both would push them apart to opposite
      ends of the heading instead of grouping them at the right. */
+  /* ═══════ THE PLAN A RUN PRODUCED ═══════
+     Read before a decision, not glanced at: this is the one card where
+     someone is expected to stop and actually read. So it is wider than a
+     message, sectioned, and the two sections that carry the weight —
+     which files, and what is being reused — are the ones set in code
+     type, because those are the parts a person checks against what they
+     know about their own project. */
+  .ag-plan2{border:1px solid var(--line);background:var(--card);border-radius:16px;
+    padding:18px 18px 14px;margin:10px 0 14px;max-width:100%}
+  .pl2-head{margin-bottom:14px}
+  .ag-plan2 .pl2-kicker{display:inline-block;font-size:.68rem;font-weight:700;letter-spacing:.09em;
+    text-transform:uppercase;color:var(--accent);margin-bottom:6px}
+  .ag-plan2 .pl2-title{margin:0 0 6px;font-size:1.12rem;font-weight:700;color:var(--ink);line-height:1.25}
+  .pl2-context{margin:0;color:var(--ink-2);font-size:.9rem;line-height:1.55}
+  .pl2-sec{border-top:1px solid var(--line);padding-top:12px;margin-top:12px}
+  .pl2-sec h4{margin:0 0 8px;font-size:.78rem;font-weight:700;letter-spacing:.04em;
+    text-transform:uppercase;color:var(--ink-2);display:flex;align-items:center;gap:8px}
+  .pl2-count{font-weight:500;text-transform:none;letter-spacing:0;opacity:.7;font-size:.75rem}
+  .pl2-approach{margin:0;font-size:.92rem;line-height:1.6;color:var(--ink)}
+  .pl2-steps{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+  .pl2-steps li{display:flex;gap:10px;align-items:flex-start}
+  .pl2-n{flex:none;width:20px;height:20px;border-radius:50%;background:var(--paper-2);
+    color:var(--ink-2);font-size:.72rem;font-weight:700;display:grid;place-items:center;margin-top:1px}
+  .pl2-steps b{display:block;font-size:.9rem;font-weight:600;color:var(--ink)}
+  .pl2-steps span{display:block;font-size:.86rem;line-height:1.5;color:var(--ink-2);margin-top:2px}
+  .pl2-files{list-style:none;margin:0;padding:0;display:grid;gap:7px}
+  .pl2-files li{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+  .pl2-tag{flex:none;font-size:.64rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;
+    padding:2px 6px;border-radius:5px}
+  .pl2-tag.is-new{background:rgba(34,165,101,.14);color:#22a565}
+  .pl2-tag.is-edit{background:rgba(26,166,223,.14);color:var(--accent)}
+  .pl2-files code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem;color:var(--ink)}
+  .pl2-why{font-size:.84rem;color:var(--ink-2);flex:1 1 100%;padding-left:2px}
+  .pl2-list{margin:0;padding-left:18px;display:grid;gap:5px}
+  .pl2-list li{font-size:.88rem;line-height:1.5;color:var(--ink-2)}
+  .pl2-list.pl2-reuse li{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.82rem}
+  .pl2-actions{display:flex;gap:9px;align-items:center;margin-top:16px;flex-wrap:wrap}
+  .pl2-go{border:0;background:var(--accent);color:#fff;border-radius:10px;padding:9px 18px;
+    font:inherit;font-size:.9rem;font-weight:600;cursor:pointer;transition:background .18s}
+  .pl2-go:hover{background:var(--accent-2)}
+  .pl2-go:disabled{opacity:.6;cursor:default}
+  .pl2-edit{border:1px solid var(--line);background:var(--paper);color:var(--ink-2);border-radius:10px;
+    padding:9px 14px;font:inherit;font-size:.88rem;cursor:pointer;transition:.18s}
+  .pl2-edit:hover{background:var(--paper-2);color:var(--ink)}
+  /* Approved: it stays on screen as the record of what was agreed, and
+     stops offering a decision that has been taken. */
+  .ag-plan2.is-approved .pl2-edit{display:none}
+  .ag-plan2.is-approved{border-color:rgba(34,165,101,.4)}
+  @media (max-width:640px){
+    .ag-plan2{padding:14px 14px 12px;border-radius:14px}
+    .pl2-actions .pl2-go,.pl2-actions .pl2-edit{flex:1 1 auto;text-align:center}
+  }
   .ag-card-undo{margin-inline-start:8px}
   .ag-card-undo:disabled{cursor:default;opacity:.7}
   .ag-card-undo.done{color:var(--ink-2);border-color:var(--line);opacity:.75}

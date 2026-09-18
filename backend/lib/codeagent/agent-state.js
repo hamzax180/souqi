@@ -101,7 +101,11 @@ exports.ALL_TOOLS = ALL_TOOLS;
    not get to ask one back — that is a loop. */
 const OFFERS = {
     chat: [],
-    plan: READ_ONLY_TOOLS.concat(["ask_user_question"]),
+    /* present_plan is how a plan turn ENDS, and it is the reason plan mode
+       can now take as long as it needs. Without a defined ending the model
+       either wrote a plan into prose that nothing could approve, or reached
+       for complete_task and finished a turn that had produced nothing. */
+    plan: READ_ONLY_TOOLS.concat(["ask_user_question", "present_plan"]),
     awaiting_question: READ_ONLY_TOOLS.slice(),
     awaiting_approval: READ_ONLY_TOOLS.slice(),
     act: ALL_TOOLS.slice()
@@ -168,12 +172,18 @@ function resolve(input) {
     if (o.mode === "plan") {
         if (approved)
             return { mode: "act", reason: "the user approved this plan" };
-        if (requiresApproval())
-            return { mode: "awaiting_approval", reason: "this plan has not been approved" };
-        /* Enforcement off: proceed, but the run document records that it
-           proceeded unapproved, so the logs can answer "how often would
-           this have refused?" before anyone turns the flag on. */
-        return { mode: "act", reason: "unapproved, and approval is not enforced yet" };
+        /* AN UNAPPROVED PLAN RUN PLANS. It used to return act — because the
+           plan itself was made somewhere else entirely, by a single 700-token
+           JSON call on the way in, and by the time a run existed the planning
+           was over. That planner never read a file; it was handed the list of
+           PATHS and asked to imagine the rest, which is why plan mode answered
+           in ten seconds and why its questions could only be plain sentences.
+    
+           Now the run is the plan: read-only tools to explore, ask_user_question
+           to settle what the code cannot answer, present_plan to end. Approval
+           still gates the build, and an approved plan still resolves to act
+           above — that half is unchanged. */
+        return { mode: "plan", reason: "planning, and the build waits for approval" };
     }
     if (o.isQuestion)
         return { mode: "awaiting_question", reason: "the prompt reads as a question" };

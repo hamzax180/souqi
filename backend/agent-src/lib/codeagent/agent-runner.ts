@@ -497,7 +497,13 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
   let messages: client.ChatMessage[] = [
     {
       role: "system",
-      content: systemPromptFor(run.mode) +
+      /* The RESOLVED mode, not the requested one. An approved plan run
+         still carries mode "plan" on the run document — that is how the
+         approval is matched — but it resolves to act, and handing it the
+         planning instructions would tell the build it may not write a
+         file. The tools already come from state.mode a few lines down;
+         this is the same rule applied to the prompt. */
+      content: systemPromptFor(state.mode === "plan" ? "plan" : run.mode) +
         "\n\nDYNAMIC AGENT EXECUTION (Effort: " + effort.label + "):\n" +
         (effort.id === "fast"
           ? "You are in Fast mode: solve the task cleanly in as few tool calls as possible. Write the essential files directly.\n"
@@ -1029,6 +1035,21 @@ export async function executeRun(runId: string, opts: ExecuteRunOpts = {}): Prom
           toolResults[toolResults.length - 1] = {
             role: "tool", tool_call_id: tc.id,
             content: "Error: this run is already waiting on a question. Answer that one first."
+          };
+        }
+        if (effects.planPresented) {
+          /* The plan ends the turn the way a question does, and for the
+             same reason: what happens next is the user's, not the
+             model's. Recorded as an event before returning so a reopened
+             chat replays the plan it was shown rather than an empty turn
+             that stopped for no visible reason. */
+          await runStore.appendEvent(runId, "plan", { plan: effects.planPresented });
+          await runStore.recordStep(runId, { turn, toolCalls, toolResults, costUsd: aiRes.costUsd || 0 });
+          return {
+            ok: true, stopReason: "plan_presented" as StopReason,
+            plan: effects.planPresented,
+            summary: effects.planPresented.title,
+            files: currentFiles, costUsd: totalCostUsd, tokens: totalTokens
           };
         }
         if (effects.completed) {
