@@ -5661,7 +5661,12 @@ app.post("/api/codeagent/runs/:id/approve", async (req, res) => {
     const events = await runStore.getEvents(req.params.id, 0);
     let plan = null;
     for (const e of events || []) {
-      if (e && e.type === "plan" && e.data && e.data.plan) plan = e.data.plan;
+      /* payload, which is what appendEvent writes and getEvents returns.
+         Reading e.data here found nothing, so every approval answered "this
+         run has no plan" for a run whose plan was sitting in the very
+         document being read. */
+      const body = (e && (e.payload || e.data)) || null;
+      if (e && e.type === "plan" && body && body.plan) plan = body.plan;
     }
     if (!plan) return res.status(409).json({ error: "this run has no plan to approve" });
 
