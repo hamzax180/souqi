@@ -19,7 +19,7 @@
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
 <link rel="stylesheet" href="/styles/pages/code.css?v=9.1">
-<link rel="stylesheet" href="/styles/components/rail-motion.css?v=5.5">
+<link rel="stylesheet" href="/styles/components/rail-motion.css?v=5.6">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
 /* ══════════════════════════════════════════════════════════════
@@ -444,8 +444,8 @@
    you — so it looks like a decision to take, not a form to fill in. */
 .ag-ask {
   background: var(--surface, #fff);
-  border: 1px solid var(--line, rgba(0,0,0,.12));
-  border-radius: 12px;
+  border: 1px solid var(--plan-line, rgba(0,0,0,.12));
+  border-radius: 16px;
   /* Narrower than the message column. A decision card that runs the full
      width reads as a form; held in, it reads as a thing to answer. */
   max-width: 560px;
@@ -455,88 +455,122 @@
   animation: sqFadeUp .22s var(--ease-snappy) both;
 }
 .ag-ask.done { opacity: .65; box-shadow: none; }
-.ask-head { display: flex; gap: 9px; align-items: flex-start; padding: 12px 14px 8px; }
-.ask-icon {
-  width: 22px; height: 22px; flex: 0 0 22px; border-radius: 7px;
-  display: grid; place-items: center;
-  background: color-mix(in oklch, var(--accent, #1aa6df) 14%, transparent);
-  color: var(--accent, #1aa6df);
-}
-.ask-icon svg { width: 13px; height: 13px; }
-.ask-kicker { font-size: .86rem; font-weight: 650; color: var(--ink, #111); }
-.ask-sub { margin: 1px 0 0; font-size: .76rem; line-height: 1.4; color: var(--ink2, #888); }
 
-.ask-q { padding: 3px 14px 0; }
-.ask-q + .ask-q { margin-top: 11px; border-top: 1px solid var(--line, rgba(0,0,0,.08)); padding-top: 11px; }
-.ask-q-head { display: flex; align-items: center; gap: 7px; margin-bottom: 7px; flex-wrap: wrap; }
+/* THE HEADER IS THE QUESTION, not a label about the question.
+   It used to be an icon, a kicker reading "One decision for you" and a
+   line of apology underneath — three rows of chrome before the thing
+   being asked, which was then repeated a fourth time below. The question
+   is the only sentence here worth full weight. */
+.ask-head { display: flex; align-items: flex-start; gap: 10px; padding: 15px 16px 11px; }
+.ask-title { flex: 1; min-width: 0; font-size: .9rem; font-weight: 650; line-height: 1.4; color: var(--ink, #111); }
+.ask-tools { display: flex; gap: 2px; flex: none; margin-top: -3px; }
+.ask-tool {
+  width: 26px; height: 26px; flex: none; display: grid; place-items: center;
+  border: 0; border-radius: 7px; background: none; cursor: pointer;
+  color: var(--ink2, #888); font: inherit;
+  transition: background .15s ease, color .15s ease;
+}
+.ask-tool:hover { background: var(--surface2, rgba(0,0,0,.05)); color: var(--ink, #111); }
+.ask-tool svg { width: 15px; height: 15px; }
+.ask-chev { transition: transform .18s var(--ease-snappy, ease); }
+.ag-ask.collapsed .ask-body, .ag-ask.collapsed .ask-actions { display: none; }
+.ag-ask.collapsed .ask-head { padding-bottom: 14px; }
+.ag-ask.collapsed .ask-chev { transform: rotate(-90deg); }
+
+.ask-q { padding: 0 12px; }
+/* A card carrying more than one question needs a heading per question —
+   the card header can only ever be one of them. A single question has
+   already been said at the top, so it does not repeat here. */
+.ask-q + .ask-q { margin-top: 15px; }
+.ask-q-head { display: flex; align-items: center; gap: 7px; padding: 0 4px 8px; flex-wrap: wrap; }
 .ask-chip {
   font-size: .68rem; font-weight: 650; letter-spacing: .02em; text-transform: uppercase;
   padding: 2px 8px; border-radius: 999px;
   background: color-mix(in oklch, var(--accent, #1aa6df) 12%, transparent);
   color: var(--accent, #1aa6df);
 }
-.ask-q-text { font-size: .88rem; font-weight: 600; color: var(--ink, #111); }
+.ask-q-text { font-size: .86rem; font-weight: 600; color: var(--ink, #111); }
 .ask-multi { font-size: .72rem; color: var(--ink2, #888); }
 
-.ask-opts { display: flex; flex-direction: column; gap: 5px; }
+.ask-opts { display: flex; flex-direction: column; gap: 7px; }
+/* A filled row on its own ground, not an outlined box. Outlines at this
+   size stack into a ladder of rectangles; a soft fill reads as one list
+   of things you can press. */
 .ask-opt {
-  display: flex; gap: 9px; align-items: flex-start; width: 100%;
-  text-align: left; cursor: pointer;
-  padding: 8px 10px; border-radius: 9px;
-  border: 1px solid var(--line, rgba(0,0,0,.12));
-  background: var(--surface, #fff);
-  transition: border-color var(--dur-chill, .2s), background var(--dur-chill, .2s);
+  display: flex; gap: 12px; align-items: flex-start; width: 100%;
+  text-align: left; cursor: pointer; font: inherit;
+  padding: 11px 13px; border-radius: 12px;
+  border: 1px solid transparent;
+  background: var(--surface2, #f6f5f4);
+  transition: background .15s ease, border-color .15s ease;
 }
-.ask-opt:hover { border-color: color-mix(in oklch, var(--accent, #1aa6df) 45%, transparent); }
-.ask-opt.on {
-  border-color: var(--accent, #1aa6df);
-  background: color-mix(in oklch, var(--accent, #1aa6df) 7%, transparent);
-}
-.ask-tick {
-  width: 16px; height: 16px; flex: 0 0 16px; margin-top: 1px; border-radius: 5px;
-  border: 1.5px solid var(--line, rgba(0,0,0,.25));
+.ask-opt:hover { border-color: var(--plan-line, rgba(0,0,0,.12)); }
+.ask-opt.on { border-color: var(--accent, #1aa6df); background: color-mix(in oklch, var(--accent, #1aa6df) 8%, var(--surface2, #f6f5f4)); }
+.ask-opt:disabled { cursor: default; }
+.ask-opt-main { flex: 1; min-width: 0; }
+.ask-opt-label { display: block; font-size: .85rem; font-weight: 600; line-height: 1.35; color: var(--ink, #111); }
+.ask-opt-desc { margin: 2px 0 0; font-size: .78rem; line-height: 1.45; color: var(--ink2, #888); }
+/* THE MARK IS ON THE RIGHT, and it is a radio unless the question takes
+   more than one answer — the shape is the only thing telling you whether
+   picking a second choice replaces the first. */
+.ask-mark {
+  width: 18px; height: 18px; flex: 0 0 18px; margin-top: 1px;
+  border-radius: 50%;
+  border: 1.5px solid var(--plan-line, rgba(0,0,0,.25));
   display: grid; place-items: center; color: #fff;
+  transition: background .15s ease, border-color .15s ease;
 }
-.ask-opt.on .ask-tick { background: var(--accent, #1aa6df); border-color: var(--accent, #1aa6df); }
-.ask-tick svg { width: 10px; height: 10px; opacity: 0; }
-.ask-opt.on .ask-tick svg { opacity: 1; }
-.ask-opt-label { font-size: .82rem; font-weight: 600; color: var(--ink, #111); }
-.ask-opt-desc { margin: 1px 0 0; font-size: .75rem; line-height: 1.4; color: var(--ink2, #888); }
+.ask-q[data-multi="1"] .ask-mark { border-radius: 6px; }
+.ask-opt.on .ask-mark { background: var(--accent, #1aa6df); border-color: var(--accent, #1aa6df); }
+.ask-mark svg { width: 11px; height: 11px; opacity: 0; }
+.ask-opt.on .ask-mark svg { opacity: 1; }
 
-.ask-other { margin-top: 5px; }
+/* Other is an option like the others, and its input lives inside the same
+   block — so choosing it and answering it are one gesture in one place. */
+.ask-other { margin-top: 7px; border-radius: 12px; background: var(--surface2, #f6f5f4); overflow: hidden; border: 1px solid transparent; transition: border-color .15s ease; }
+.ask-other.on { border-color: var(--accent, #1aa6df); }
+.ask-other .ask-opt { background: none; border-radius: 0; border: 0; }
+.ask-other .ask-opt.on { background: none; }
+.ask-inwrap { padding: 0 13px 12px; }
 .ask-input {
   width: 100%; box-sizing: border-box;
-  padding: 7px 10px; border-radius: 9px; font: inherit; font-size: .8rem;
-  min-height: 34px;
-  border: 1px solid var(--line, rgba(0,0,0,.12));
+  padding: 9px 11px; border-radius: 9px; font: inherit; font-size: .82rem;
+  min-height: 36px;
+  border: 1px solid var(--plan-line, rgba(0,0,0,.12));
   background: var(--surface, #fff); color: var(--ink, #111);
   resize: vertical;
 }
 .ask-input:focus { outline: none; border-color: var(--accent, #1aa6df); }
 
-/* THE ACTION SITS WHERE AN ACTION SITS: bottom right, with the status of
-   the form to its left. It was first in the markup and therefore first in
-   the row, which put Send on the LEFT and "All answered" trailing after it
-   — the reverse of every dialog anyone has used. Ordered rather than
-   re-ordered in the DOM, so the button stays the first thing the keyboard
-   reaches. */
+/* Skip then Submit, bottom right, in that order — the destructive-ish
+   choice first and the one you want under the thumb last. */
 .ask-actions {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 14px 12px; border-top: 1px solid var(--line, rgba(0,0,0,.07));
-  margin-top: 11px;
+  display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+  padding: 13px 16px 15px;
 }
+.ask-hint { margin-right: auto; font-size: .73rem; color: var(--ink2, #888); }
+.ask-skip {
+  padding: 7px 15px; border-radius: 9px; cursor: pointer;
+  font: inherit; font-size: .82rem; font-weight: 600;
+  border: 1px solid var(--plan-line, rgba(0,0,0,.12));
+  background: var(--surface, #fff); color: var(--ink, #111);
+  transition: background .15s ease, border-color .15s ease;
+}
+.ask-skip:hover { background: var(--surface2, #f6f5f4); }
 .ask-send {
-  order: 2; margin-left: auto;
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 6px 13px; border: none; border-radius: 8px; cursor: pointer;
-  font: inherit; font-size: .8rem; font-weight: 640;
+  padding: 7px 16px; border: none; border-radius: 9px; cursor: pointer;
+  font: inherit; font-size: .82rem; font-weight: 640;
   background: var(--accent, #1aa6df); color: var(--on-accent, #fff);
-  transition: filter .16s ease, opacity .16s ease;
+  transition: filter .16s ease, background .16s ease;
 }
 .ask-send:hover { filter: brightness(1.08); }
-.ask-send:disabled { opacity: .4; cursor: not-allowed; filter: none; }
-.ask-send svg { width: 12px; height: 12px; }
-.ask-hint { order: 1; font-size: .73rem; color: var(--ink2, #888); }
+/* Filled grey, not the accent at 40%. A faded blue button still reads as
+   the blue button and invites the click it is going to refuse. */
+.ask-send:disabled {
+  background: color-mix(in oklch, var(--ink2, #888) 38%, var(--surface2, #f6f5f4));
+  color: var(--surface, #fff); cursor: not-allowed; filter: none;
+}
 .ask-chose { font-size: .8rem; color: var(--ink2, #888); padding: 8px 18px 14px; display: block; }
 
 /* ---------- the agent's terminal ----------
@@ -4175,36 +4209,56 @@
      Answers post to /runs/:id/answer, not into the composer. The old
      clarify flow concatenated the answer onto the original prompt and
      re-ran the turn, which threw away everything the run had done. */
+  /* One glyph for both shapes. The mark is a circle for a single answer
+     and a rounded square for a multi-select — CSS decides which from the
+     question's data-multi, so the markup does not have to branch. */
+  const MARK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+
   function showAgentQuestion(payload, runId) {
     const questions = (payload && payload.questions) || [];
     if (!questions.length || !runId) return;
 
     const card = el("ag-ask");
     const many = questions.length > 1;
+    /* The title IS the question when there is only one. Repeating it in a
+       heading above the copy of itself was the card's worst habit. */
+    const title = many
+      ? (questions.length + " decisions for you")
+      : (questions[0] && questions[0].question) || "One decision for you";
     let html = '<div class="ask-head">'
-      + '<div class="ask-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/><circle cx="12" cy="12" r="10"/></svg></div>'
-      + '<div><span class="ask-kicker">' + (many ? "A few decisions for you" : "One decision for you") + '</span>'
-      + '<p class="ask-sub">I’ve paused here — these are yours to make, not mine to guess.</p></div>'
-      + '</div>';
+      + '<span class="ask-title">' + esc(title) + '</span>'
+      + '<span class="ask-tools">'
+      + '<button type="button" class="ask-tool ask-collapse" title="Collapse" aria-label="Collapse">'
+      + '<svg class="ask-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>'
+      /* Closing cannot just hide it. The run is parked on the server
+         waiting for this answer, so the X has to SAY something — it
+         skips, exactly like the button below it. A card that vanished
+         without answering left the run hanging until the lease expired. */
+      + '<button type="button" class="ask-tool ask-x" title="Skip these questions" aria-label="Skip">'
+      + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>'
+      + '</span></div><div class="ask-body">';
 
     questions.forEach(function(q, qi) {
       const qid = q.id || ("q" + (qi + 1));
-      html += '<div class="ask-q" data-qid="' + esc(qid) + '" data-multi="' + (q.multiSelect ? "1" : "0") + '">'
-        + '<div class="ask-q-head">'
-        + (q.header ? '<span class="ask-chip">' + esc(q.header) + '</span>' : "")
-        + '<span class="ask-q-text">' + esc(q.question) + '</span>'
-        + (q.multiSelect ? '<span class="ask-multi">pick any</span>' : "")
-        + '</div>';
+      html += '<div class="ask-q" data-qid="' + esc(qid) + '" data-multi="' + (q.multiSelect ? "1" : "0") + '">';
+      /* Suppressed for a single question: the header already said it. */
+      if (many || q.header || q.multiSelect) {
+        html += '<div class="ask-q-head">'
+          + (q.header ? '<span class="ask-chip">' + esc(q.header) + '</span>' : "")
+          + (many ? '<span class="ask-q-text">' + esc(q.question) + '</span>' : "")
+          + (q.multiSelect ? '<span class="ask-multi">pick any</span>' : "")
+          + '</div>';
+      }
 
       const opts = q.options || [];
       if (opts.length) {
         html += '<div class="ask-opts">';
         opts.forEach(function(o, oi) {
           html += '<button type="button" class="ask-opt" data-label="' + esc(o.label) + '" data-oi="' + oi + '">'
-            + '<span class="ask-tick"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></span>'
-            + '<span><span class="ask-opt-label">' + esc(o.label) + '</span>'
+            + '<span class="ask-opt-main"><span class="ask-opt-label">' + esc(o.label) + '</span>'
             + (o.description ? '<p class="ask-opt-desc">' + esc(o.description) + '</p>' : "")
-            + '</span></button>';
+            + '</span>'
+            + '<span class="ask-mark">' + MARK_SVG + '</span></button>';
         });
         html += '</div>';
       }
@@ -4212,14 +4266,21 @@
       /* Always offered, and never one of the model's options. The tool
          is told not to add an "other" choice precisely because the user
          has one here whatever it proposed. */
-      html += '<div class="ask-other"><textarea class="ask-input" rows="' + (opts.length ? 1 : 2) + '" '
-        + 'placeholder="' + (opts.length ? "Something else…" : "Type your answer…") + '"></textarea></div>'
-        + '</div>';
+      html += '<div class="ask-other">'
+        + (opts.length
+            ? '<button type="button" class="ask-opt" data-other="1" data-label="Other">'
+              + '<span class="ask-opt-main"><span class="ask-opt-label">Other</span></span>'
+              + '<span class="ask-mark">' + MARK_SVG + '</span></button>'
+            : "")
+        + '<div class="ask-inwrap"><textarea class="ask-input" rows="' + (opts.length ? 1 : 2) + '" '
+        + 'placeholder="' + (opts.length ? "Type your own answer here" : "Type your answer…") + '"></textarea></div>'
+        + '</div></div>';
     });
 
-    html += '<div class="ask-actions">'
-      + '<button type="button" class="ask-send" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>Send</button>'
-      + '<span class="ask-hint">Answer every question to continue</span>'
+    html += '</div><div class="ask-actions">'
+      + '<span class="ask-hint"></span>'
+      + '<button type="button" class="ask-skip">Skip</button>'
+      + '<button type="button" class="ask-send" disabled>Submit</button>'
       + '</div>';
 
     card.innerHTML = html;
@@ -4227,28 +4288,42 @@
     toBottom();
 
     const sendBtn = card.querySelector(".ask-send");
+    const skipBtn = card.querySelector(".ask-skip");
     const hint = card.querySelector(".ask-hint");
     const qEls = Array.prototype.slice.call(card.querySelectorAll(".ask-q"));
 
     function answerOf(qEl) {
       const typed = (qEl.querySelector(".ask-input").value || "").trim();
-      const picked = Array.prototype.slice.call(qEl.querySelectorAll(".ask-opt.on"))
+      const otherEl = qEl.querySelector('.ask-opt[data-other="1"]');
+      const otherOn = otherEl ? otherEl.classList.contains("on") : !!typed;
+      const picked = Array.prototype.slice.call(qEl.querySelectorAll('.ask-opt.on:not([data-other="1"])'))
         .map(function(b) { return b.getAttribute("data-label"); });
-      // Typed text wins: it is the more specific thing the user said.
-      if (typed) return picked.length ? picked.join(", ") + " — " + typed : typed;
+      /* Other contributes only what was typed under it, and contributes
+         NOTHING while that box is empty — which is what keeps Submit grey
+         until the choice someone picked actually says something. */
+      if (otherOn) return picked.length ? (typed ? picked.join(", ") + " — " + typed : picked.join(", ")) : typed;
       return picked.join(", ");
     }
 
     function refresh() {
-      const ready = qEls.every(function(qEl) { return !!answerOf(qEl); });
-      sendBtn.disabled = !ready;
-      hint.textContent = ready
-        ? (qEls.length > 1 ? "All answered" : "Ready")
-        : "Answer every question to continue";
+      qEls.forEach(function(qEl) {
+        const otherEl = qEl.querySelector('.ask-opt[data-other="1"]');
+        const wrap = qEl.querySelector(".ask-other");
+        if (wrap) wrap.classList.toggle("on", !!(otherEl && otherEl.classList.contains("on")));
+      });
+      sendBtn.disabled = !qEls.every(function(qEl) { return !!answerOf(qEl); });
+      /* Blank unless something went wrong. The old copy narrated the form
+         back at you on every keystroke — "Ready", "All answered" — which
+         is a caption for a state the button already shows. */
+      hint.textContent = "";
     }
 
     card.addEventListener("click", function(ev) {
-      const btn = ev.target.closest ? ev.target.closest(".ask-opt") : null;
+      const t = ev.target;
+      if (!t || !t.closest) return;
+      if (t.closest(".ask-collapse")) { card.classList.toggle("collapsed"); return; }
+      if (t.closest(".ask-x")) { skip(); return; }
+      const btn = t.closest(".ask-opt");
       if (!btn || card.classList.contains("done")) return;
       const qEl = btn.closest(".ask-q");
       if (qEl.getAttribute("data-multi") === "1") {
@@ -4257,10 +4332,23 @@
         Array.prototype.slice.call(qEl.querySelectorAll(".ask-opt"))
           .forEach(function(b) { b.classList.toggle("on", b === btn); });
       }
+      if (btn.getAttribute("data-other") === "1" && btn.classList.contains("on")) {
+        const inp = qEl.querySelector(".ask-input"); if (inp) inp.focus();
+      }
       refresh();
     });
     card.addEventListener("input", function(ev) {
-      if (ev.target && ev.target.classList.contains("ask-input")) refresh();
+      if (!ev.target || !ev.target.classList.contains("ask-input")) return;
+      const qEl = ev.target.closest(".ask-q");
+      const otherEl = qEl && qEl.querySelector('.ask-opt[data-other="1"]');
+      /* Typing IS choosing Other. Asking someone to press the row first
+         and then type is two gestures for one intention. */
+      if (otherEl && (ev.target.value || "").trim() && !otherEl.classList.contains("on")) {
+        if (qEl.getAttribute("data-multi") === "1") otherEl.classList.add("on");
+        else Array.prototype.slice.call(qEl.querySelectorAll(".ask-opt"))
+          .forEach(function(b) { b.classList.toggle("on", b === otherEl); });
+      }
+      refresh();
     });
 
     function settle(label) {
@@ -4270,15 +4358,13 @@
       card.querySelector(".ask-actions").outerHTML = '<span class="ask-chose">' + esc(label) + '</span>';
     }
 
-    sendBtn.addEventListener("click", async function() {
-      if (sendBtn.disabled) return;
-      const answers = {};
-      qEls.forEach(function(qEl, i) {
-        const q = questions[i] || {};
-        answers[q.question || qEl.getAttribute("data-qid")] = answerOf(qEl);
-      });
-
+    /* One path for Submit and Skip. Skipping is not closing the card —
+       the run is parked on the server waiting for this POST, so a skip
+       has to answer something. It hands the decision back rather than
+       leaving the run to sit until its lease expires. */
+    async function post(answers, label) {
       sendBtn.disabled = true;
+      if (skipBtn) skipBtn.disabled = true;
       try {
         const res = await fetch("/api/codeagent/runs/" + encodeURIComponent(runId) + "/answer", {
           method: "POST",
@@ -4287,7 +4373,7 @@
           body: JSON.stringify({ questionId: payload.id, answers: answers })
         });
         if (res.status === 202) {
-          settle("✓ Answered — carrying on");
+          settle(label);
           /* The run resumes on the server and keeps streaming on the
              events subscription that is already open, so there is
              nothing to restart here. */
@@ -4301,9 +4387,34 @@
           : (body.error || "That answer did not go through"));
       } catch (e) {
         sendBtn.disabled = false;
+        if (skipBtn) skipBtn.disabled = false;
         hint.textContent = "Could not reach the server — try again";
       }
+    }
+
+    function collect(fallback) {
+      const answers = {};
+      qEls.forEach(function(qEl, i) {
+        const q = questions[i] || {};
+        const a = answerOf(qEl);
+        answers[q.question || qEl.getAttribute("data-qid")] = fallback && !a ? fallback : a;
+      });
+      return answers;
+    }
+
+    function skip() {
+      if (card.classList.contains("done")) return;
+      /* A sentence, not an empty string: this text goes straight into the
+         model's next prompt, and "" there reads as a question it failed to
+         ask rather than one it was told to decide for itself. */
+      post(collect("No preference — use your best judgement."), "Skipped — carrying on");
+    }
+
+    sendBtn.addEventListener("click", function() {
+      if (sendBtn.disabled) return;
+      post(collect(null), "✓ Answered — carrying on");
     });
+    if (skipBtn) skipBtn.addEventListener("click", skip);
 
     refresh();
     setTimeout(function() {
