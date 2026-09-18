@@ -146,3 +146,62 @@
   justify-content: center; gap: 0;
 }
 .ag-history:not(.on) .sk-row b{ display: none; }
+
+/* THE HEADER STOPS REARRANGING ITSELF WHEN THE PANEL OPENS.
+
+   Shut, the logo sat at the left of the 44px rail and the toggle was drawn
+   on top of it at left:7. Open, the logo was ordered to the far right and
+   the toggle stayed left — so both of them swapped ends on every toggle,
+   which is what "nothing is in a fixed position" was describing.
+
+   One place for each: the logo is order 0 and therefore leftmost in both
+   states, the header reserves the 44px strip the fixed toggle occupies,
+   and the toggle moves to the panel's right edge once there is a panel to
+   have an edge. Shut, there is no header to reserve anything, so the strip
+   goes and the logo yields the square to the button rather than sliding
+   36px sideways.
+
+   All four rail pages had drifted copies of this block in their own sheet
+   and only code.css carried the fix. This sheet loads after every one of
+   them, so the same geometry now wins on all four. Same specificity, later
+   source — the per-page copies below are dead weight, not overrides. */
+@media (min-width:901px){
+  .ag-history.on .ag-hist-mark,
+  .ag-history:hover .ag-hist-mark,
+  .ag-history.hover-open .ag-hist-mark{ order:0; margin-left:0; }
+  .ag-history.on .ag-hist-search,
+  .ag-history:hover .ag-hist-search,
+  .ag-history.hover-open .ag-hist-search{ order:2; margin-left:auto; margin-right:38px; }
+
+  /* Present whenever the rail is shut, because it is the only way to open
+     it again. security.css hid it outright in this state, which left the
+     page with a closed sidebar and no control that reopens one — the rail
+     pages that get this right merely fade it to opacity 0 until the rail is
+     hovered, and that still leaves a button to find. */
+  #agDeskSidebarToggle:not(.on){ display:inline-flex !important; left:7px !important; }
+  #agDeskSidebarToggle.on{ left:calc(var(--sb-w) - 40px) !important; }
+
+  .ag-hist-head{ padding-left:44px; }
+  /* !important because security.css pushes 8px here on a shut-and-hovered
+     rail, which is the one state this block exists to hold still. */
+  .ag-history:not(.on) .ag-hist-head{ padding-left:0 !important; }
+  .ag-history:not(.on):not(:hover):not(.hover-open) .ag-hist-mark{ display:none; }
+}
+
+/* AND THE SAME ON THE PHONE, WHERE THE TRAVEL WAS WORST.
+
+   The drawer is an overlay 240px wide, so a toggle at left:7 would be drawn
+   straight onto the logo — which is why the phone sheets shoved the logo to
+   the far right instead, a 193px journey on every open.
+
+   The edge is free here for the same reason it is on desktop, so the button
+   goes to it and the logo does not move at all: 8px from the left shut, 8px
+   from the left open. The 8 is not arbitrary — it is where the mark already
+   sits when it is centred in a 44px rail, so holding that number is what
+   makes the two states the same picture. */
+@media (max-width:900px){
+  .ag-history.on .ag-hist-head{ padding-left:8px !important; }
+  .ag-history.on .ag-hist-mark{ order:0 !important; margin:0 !important; }
+  .ag-history.on .ag-hist-search{ order:2 !important; margin-left:auto !important; margin-right:44px !important; }
+  #agDeskSidebarToggle.on{ left:calc(min(240px, 80vw) - 40px) !important; }
+}
