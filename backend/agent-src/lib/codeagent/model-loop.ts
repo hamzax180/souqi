@@ -1495,10 +1495,23 @@ const NON_CODE_PROMPT_RESERVE = 40000;
    short and every word is intent; an agent "result" body is mostly a
    recap of work the model can already see in the code it was just
    given. */
-const MAX_HISTORY_TURNS = 12;
-const MAX_HISTORY_CHARS = 6000;
-const MAX_HISTORY_TURN_CHARS = 700;
-const MAX_HISTORY_AGENT_TURN_CHARS = 300;
+/* WHAT THE AGENT REMEMBERS OF THE CONVERSATION.
+
+   These were sized for a small window and never revisited after the
+   window turned out to be 400,000 tokens. The effect was 6,000 characters
+   of chat — about 2,000 tokens, half a percent of what the model can
+   hold — with every message the person wrote chopped at 700 characters
+   and every reply of its own at 300. On a long conversation it genuinely
+   did not know what had been said, and a detailed request was cut off
+   mid-sentence before it ever reached the model.
+
+   Ten times the room, which is still under 6% of the window and leaves
+   the code context — the thing that actually competes for space, and
+   which codeBudgetChars subtracts this from — effectively untouched. */
+const MAX_HISTORY_TURNS = 30;
+const MAX_HISTORY_CHARS = 60000;
+const MAX_HISTORY_TURN_CHARS = 4000;
+const MAX_HISTORY_AGENT_TURN_CHARS = 1500;
 
 /* ---- codebase context ---------------------------------------------
    The follow-up prompt carries the project's source so the model can

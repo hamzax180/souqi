@@ -1987,10 +1987,30 @@ app.get("/api/codeagent/usage", async (req, res, next) => {
           let cchars = 0;
           for (const k of Object.keys(cfiles)) cchars += String(cfiles[k] || "").length + k.length;
           const perToken = aiClient.CHARS_PER_TOKEN || 3;
+
+          /* EVERYTHING THAT GOES IN THE WINDOW, not just the code.
+
+             The first version counted the project's files alone — the
+             biggest part, but not what most people mean by "context".
+             They mean how much of the conversation the agent is still
+             carrying. It counts all three parts of a turn's prompt now,
+             and names them, because a percentage is only useful if you
+             can see which part is filling it. */
+          const loop = require("./lib/codeagent/model-loop");
+          let chatChars = 0;
+          try {
+            const hist = loop.buildHistory(await projects.listTurns(cp.id, null));
+            for (const hm of hist || []) chatChars += String((hm && hm.content) || "").length;
+          } catch (e) { /* a project with no turns yet reads as no chat */ }
+          const systemTokens = aiClient.estimateTokens(
+            [{ role: "system", content: loop.systemPromptFor("auto") }], undefined);
+          const codeTokens = Math.round(cchars / perToken);
+          const chatTokens = Math.round(chatChars / perToken);
           context = {
-            usedTokens: Math.round(cchars / perToken),
+            usedTokens: systemTokens + codeTokens + chatTokens,
             windowTokens: aiClient.windowFor("json"),
-            files: Object.keys(cfiles).length
+            files: Object.keys(cfiles).length,
+            codeTokens, chatTokens, systemTokens
           };
         }
       } catch (e) { /* the meter is observability; the rest must still answer */ }

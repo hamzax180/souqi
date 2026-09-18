@@ -7393,8 +7393,18 @@
         // "142.3k / 400k", the way the limit above it reads as a share.
         if (usedEl) {
           usedEl.textContent = tokText(used) + " / " + tokText(win);
-          usedEl.title = used.toLocaleString() + " of " + win.toLocaleString() + " tokens" +
-            (ctx.files ? " · " + ctx.files + " file" + (ctx.files === 1 ? "" : "s") : "");
+          /* Broken down on hover. A single percentage cannot tell you
+             whether the window is full of your conversation or of the app's
+             own source, and those two have completely different answers —
+             one is "start a new chat", the other is not. */
+          const bits = [used.toLocaleString() + " of " + win.toLocaleString() + " tokens"];
+          if (ctx.codeTokens != null) {
+            bits.push("code " + tokText(ctx.codeTokens) +
+              (ctx.files ? " (" + ctx.files + " file" + (ctx.files === 1 ? "" : "s") + ")" : ""));
+          }
+          if (ctx.chatTokens != null) bits.push("chat " + tokText(ctx.chatTokens));
+          if (ctx.systemTokens != null) bits.push("instructions " + tokText(ctx.systemTokens));
+          usedEl.title = bits.join(" · ");
         }
       }
     }
