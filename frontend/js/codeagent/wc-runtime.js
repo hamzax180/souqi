@@ -439,11 +439,15 @@ class WCRuntime {
       if (!/^[^/]+.html$/.test(key)) continue;
       if (typeof files[key] !== "string") continue;
       if (files[key].indexOf(NO_CHROME_MARK) >= 0) continue;
+      /* \n, not a real newline. These two strings were written with the
+         line break typed inside the quotes, which is a SyntaxError — and
+         the cost of it was not this function, it was the whole file: the
+         module never parsed, so WCRuntime, __inlineModules and
+         __parseBuildErrors were all undefined on every page load, and the
+         preview fell through to a fallback that then failed on its own. */
       files[key] = files[key].indexOf("</head>") >= 0
-        ? files[key].replace("</head>", "    " + noChromeStyle + "
-  </head>")
-        : files[key].replace(/<head([^>]*)>/i, "<head$1>
-    " + noChromeStyle);
+        ? files[key].replace("</head>", "    " + noChromeStyle + "\n  </head>")
+        : files[key].replace(/<head([^>]*)>/i, "<head$1>\n    " + noChromeStyle);
     }
 
     /* The build's typeface, which has to be fetched by the document itself —

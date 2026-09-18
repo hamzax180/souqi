@@ -1259,7 +1259,7 @@
 </div>
 
 <script type="module">
-  import { WCRuntime } from '/js/codeagent/wc-runtime.js?v=1.1';
+  import { WCRuntime } from '/js/codeagent/wc-runtime.js?v=1.2';
   import { parseBuildErrors } from '/js/codeagent/build-parser-client.js';
   import { inlineModules } from '/js/codeagent/inline-modules.js';
 
@@ -5741,8 +5741,14 @@
         // The module script has not loaded yet. Render the entry alone
         // rather than nothing, and say so — this is the old behaviour,
         // kept only as a floor.
+        // [\s\S], not [\s\s]. The second one is the whitespace class twice
+        // over, so this matched only an import with nothing but blanks
+        // between the keyword and `from` — which no import has. Every
+        // `import React from "react"` survived the strip and landed in a
+        // plain <script>, and the preview said "Cannot use import statement
+        // outside a module" instead of rendering.
         appCode = (fileContents["src/App.tsx"] || "")
-          .replace(/import\s+[\s\s]*?from\s+['"][^'"]*['"];?/g, "")
+          .replace(/import\s+[\s\S]*?from\s+['"][^'"]*['"];?/g, "")
           .replace(/import\s+['"][^'"]*['"];?/g, "")
           .replace(/export\s+default\s+(function|class)\s+/, "$1 ")
           .replace(/export\s+default\s+[A-Za-z_$][\w$]*;?/, "")
