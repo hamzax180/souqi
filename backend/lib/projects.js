@@ -221,6 +221,11 @@ async function get(projectId) {
  * strictly more identity, never less. Getting this wrong means a logged-in
  * owner can no longer find their own unclaimed project by its own slug.
  */
+/* Deliberately WIDER than owns(). resolveProject() uses this to find a
+   project the caller may well not own, precisely so owns() can answer 403
+   "not your project" rather than a 404 that denies it exists. Narrowing this
+   to match owns() turns all 28 of those call sites into 404s — project-test
+   asserts the 403 by name. listFilter() below is the narrow one. */
 function ownerFilter(owner) {
   const or = [];
   if (owner && owner.userId) or.push({ ownerUserId: owner.userId });
@@ -228,8 +233,37 @@ function ownerFilter(owner) {
   if (!or.length) return { id: "__no_owner__" };   // matches nothing
   return or.length === 1 ? or[0] : { $or: or };
 }
+
+/* What a LIST may show, which is not the same question.
+
+   claimAnon() sets ownerUserId and deliberately leaves ownerAnonId in place —
+   it is the key it matched on. owns() reads that as "the account owns this
+   now, the cookie does not". The list did not: it matched the anon id whether
+   or not the project had been claimed, so a visitor holding the anon cookie
+   of a since-claimed browser — the same person after their session lapsed —
+   got a full list of their apps and a 403 from every single thing they
+   clicked. Listing what you cannot open is the worst of both: it leaks the
+   titles and the addresses AND refuses the work.
+
+   { ownerUserId: null } matches the field being null and the field being
+   absent, which is what an unclaimed project looks like in both the shapes
+   this store has written over its life. */
+function listFilter(owner) {
+  const or = [];
+  if (owner && owner.userId) or.push({ ownerUserId: owner.userId });
+  if (owner && owner.anonId) or.push({ ownerAnonId: owner.anonId, ownerUserId: null });
+  if (!or.length) return { id: "__no_owner__" };
+  return or.length === 1 ? or[0] : { $or: or };
+}
 function ownerMatches(p, owner) {
   return !!((owner.userId && p.ownerUserId === owner.userId) || (owner.anonId && p.ownerAnonId === owner.anonId));
+}
+/* The no-Mongo twin of listFilter, kept beside its wide sibling so the two
+   cannot drift: the tests run on this path and would otherwise prove a rule
+   the Mongo path does not follow. */
+function listMatches(p, owner) {
+  if (owner.userId && p.ownerUserId === owner.userId) return true;
+  return !!(owner.anonId && p.ownerAnonId === owner.anonId && !p.ownerUserId);
 }
 
 async function findBySlug(slug, owner) {
@@ -283,11 +317,11 @@ async function uniquePublicSlug(title) {
 
 async function list(owner, limit) {
   const n = Math.min(limit || 30, 100);
-  const q = ownerFilter(owner);
+  const q = listFilter(owner);
   const c = col("projects");
   if (c) return c.find(q, { projection: { _id: 0 } }).sort({ updatedAt: -1 }).limit(n).toArray();
   return [...mem.projects.values()]
-    .filter((p) => ownerMatches(p, owner))
+    .filter((p) => listMatches(p, owner))
     .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
     .slice(0, n);
 }
