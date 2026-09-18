@@ -3284,15 +3284,86 @@
       if (phaseEl.textContent !== text) phaseEl.textContent = text;
     }
 
+    /* A LINE EVERY TWENTY SECONDS WHILE THE MODEL IS AWAY.
+       -----------------------------------------------------------------
+       Measured on run_cQlPzHBLwAyB4Q: 197 seconds, 80.8k tokens, and 191
+       of them in three silences of 80s, 65s and 46s — one model call
+       each, with no narration at all. The panel had nothing to print and
+       printed nothing, which is honest and unreadable.
+
+       So it says what it KNOWS every twenty seconds, and nothing it does
+       not. Elapsed is measured, the file count is counted, the last
+       phase is the last event the server actually sent. There is no
+       invented "Reviewing the components…" here: a fabricated step is
+       worse than a silent panel, because you cannot tell it from a real
+       one.
+
+       ONE ROW that rewrites itself, not a new row each time — nine
+       stacked progress lines would bury the real steps above them. It is
+       removed the instant anything real arrives. */
+    let tickRow = null, tickAt = 0, tickN = 0;
+
+    function clearTick() {
+      if (!tickRow) return;
+      const r = tickRow;
+      tickRow = null;
+      if (r.parentNode) r.parentNode.removeChild(r);
+    }
+
+    /* Its own element, not addRow's. That set() takes a token ARRAY and
+       renders it through renderTokens; handing it a sentence would put
+       the sentence through the wrong renderer. This row is one string
+       that gets rewritten, so it owns itself. */
+    function showTick(text) {
+      if (!tickRow) {
+        tickRow = el("th2-step busy th2-tick", '<span class="th2-step-text"></span>');
+        stepsEl.appendChild(tickRow);
+      }
+      tickRow.firstChild.textContent = text;
+    }
+
+    function tickText() {
+      const secs = Math.round((Date.now() - t0) / 1000);
+      const spent = secs < 60 ? secs + "s" : Math.floor(secs / 60) + "m " + (secs % 60) + "s";
+      const lines = [];
+      lines.push("Still working — " + spent + " so far");
+      if (filesTouched > 0) {
+        lines.push(filesTouched + (filesTouched === 1 ? " file" : " files") + " changed so far");
+      }
+      // The last thing the SERVER said, quoted back rather than guessed at.
+      if (phase && phase !== "Thinking…") lines.push("Last step: " + phase);
+      lines.push("Waiting on the model — a long turn can run several minutes");
+      return lines[tickN % lines.length];
+    }
+
     const clockTimer = setInterval(function () {
       if (stopped) {
         clearInterval(clockTimer);
         if (qTimer) { clearInterval(qTimer); qTimer = null; }
+        clearTick();
         return;
       }
       const s = Math.round((Date.now() - t0) / 1000);
       timeEl.textContent = s < 60 ? s + "s" : Math.floor(s / 60) + "m " + (s % 60) + "s";
       paintPhase();
+
+      /* Only while the server has genuinely gone quiet, and never while
+         queued — a run that has not started is not working, and saying
+         so would be the exact confusion the queue line exists to end. */
+      const quietFor = Date.now() - phaseAt;
+      if (queued || quietFor < 15000) { clearTick(); return; }
+      if (!tickRow) {
+        tickN = 0;
+        showTick(tickText());
+        tickAt = Date.now();
+        toBottom();
+        return;
+      }
+      if (Date.now() - tickAt >= 20000) {
+        tickN += 1;
+        showTick(tickText());
+        tickAt = Date.now();
+      }
     }, 500);
 
     const handle = {
@@ -3310,6 +3381,7 @@
            Whatever else is true, requirements were not still being
            analysed while files were being read. */
         dropPreamble();
+        clearTick();
         const sub = addRow(label, cls);
         return {
           // Not queued: this is the row correcting itself as it learns,
@@ -3336,6 +3408,7 @@
       say(text) {
         if (stopped || !text) return;
         setQueued(false);
+        clearTick();
         if (!saidEl || saidEl !== stepsEl.lastChild) {
           saidEl = document.createElement("div");
           saidEl.className = "th2-said";
@@ -3390,6 +3463,12 @@
         flushSettles();
         stopped = true;
         clearInterval(clockTimer);
+        /* Here, not only in the timer's own stopped branch — done()
+           clears the interval, so that branch never runs again and the
+           progress line survived the turn. It ended a finished panel with
+           "Waiting on the model", which had stopped being true the moment
+           this function was called. */
+        clearTick();
         wrap.classList.add("done");
         const st = wrap.querySelector(".th2-status");
         if (st) st.classList.add("is-done");
