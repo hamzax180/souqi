@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=7.6">
+<link rel="stylesheet" href="/styles/pages/code.css?v=7.7">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -6525,6 +6525,10 @@
       // Set project context so chat works with this project
       projectId = data.project.id;
       projectSlug = data.project.slug;
+      /* The tab the customer's app opens in is named after their app, not
+         after the builder. Set here rather than at boot because the
+         container starts before the page knows what is being built. */
+      if (window.__wc) window.__wc.setAppName(data.project.title || "");
       try { history.replaceState(null, "", "/agent/" + projectSlug); } catch (e) {}
       refreshPublishState();
 
@@ -7040,6 +7044,10 @@
       if (!res.ok) throw new Error("gone");
       const data = await res.json();
       projectId = data.project.id; projectSlug = data.project.slug;
+      /* The tab the customer's app opens in is named after their app, not
+         after the builder. Set here rather than at boot because the
+         container starts before the page knows what is being built. */
+      if (window.__wc) window.__wc.setAppName(data.project.title || "");
       chats = data.chats || [];
       renderChatsControl();
       refreshPublishState();   // opening an existing project: it may already be live

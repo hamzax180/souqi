@@ -3295,7 +3295,7 @@
     .ag-pv-devices{top:58px}
     /* Centred over the STAGE, which is inset by the icon rail — the same
        22px correction the stage comment below explains for the mockup. */
-    body.preview-mode .ag-pv-devices{left:calc(50% + 22px)}
+    body.preview-mode .ag-pv-devices{left:50%}
     /* One scroll on mobile (.ag's), not a nested one — but overflow:visible
        alone was not enough. .ag-log kept flex:1 + min-height:0, so its BOX
        stayed short while its content spilled out and painted straight over
@@ -3324,7 +3324,7 @@
        Everything else — the ratio, and fitting the axis that is NOT
        driving — is already right up there, so these only drop the cap. */
     .ag-pv-frame.mobile {
-      height: min(100cqh, calc((100cqw - 8px) * 19.5 / 9)) !important;
+      height: min(100cqh, calc((100cqw - 4px) * 19.5 / 9)) !important;
       max-height: none;
       width: auto;
       max-width: none;
@@ -3360,9 +3360,25 @@
        position:fixed over its left 44px, so centring inside the stage
        parked the phone half a rail to the left of the space anyone can
        actually see. Measured: frame centre 390, visible centre 412. */
+    /* THE RAIL IS NOT ON SCREEN IN PREVIEW MODE, SO NOTHING IS INSET FOR IT.
+
+       This used to read margin-left:44px / width:calc(100% - 44px), to
+       centre the device in the band BESIDE the fixed icon rail. That was
+       the right sum for the wrong picture: it leaves a 44px strip of dead
+       background down the left of a full-screen device view, and the phone
+       reads as pushed to the right — which is what it is. Preview mode is
+       one device and a "Back to chat" button; the rail is navigation for
+       the screen you just left, and it is hidden below.
+
+       The top padding went with it. It was 52px to clear the device picker,
+       and the picker is display:none under 650px — so on a phone it was
+       52px held for a control that is not there, on top of the pane's own
+       52px band. The frame is height-bound at this width, so that padding
+       was the whole of why the phone was small. */
+    body.preview-mode .ag-history{display:none !important}
     body.preview-mode .ag-pv-stage{height:calc(100dvh - 52px) !important;min-height:0 !important;max-height:none !important;
-      padding:52px 0 12px !important;overflow:hidden !important;
-      margin-left:44px !important;width:calc(100% - 44px) !important}
+      padding:8px 0 10px !important;overflow:hidden !important;
+      margin-left:0 !important;width:100% !important}
 
     /* No frame overrides here any more, and that is the fix.
 
