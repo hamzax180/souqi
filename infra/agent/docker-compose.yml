@@ -34,6 +34,27 @@ services:
       dockerfile: infra/agent/Dockerfile
     restart: unless-stopped
 
+    # ── HOW MANY OF THESE THERE ARE ────────────────────────────────
+    # One was a global queue. The loop claims a run and AWAITS it, so a
+    # single container built one app at a time for the whole platform:
+    # a ten-minute build held everybody. Measured on 2026-09-18 — a run
+    # created 00:35:30 was claimed at 00:42:20, one second after the
+    # unrelated build ahead of it finished.
+    #
+    # The ceiling is NOT this number. Verification is an HTTP call to
+    # the deploy plane, which admits AGENT_SANDBOX_CONTAINERS checks at
+    # once and answers "all N build sandboxes are busy" beyond that —
+    # an infra:true refusal the runner feeds to the model as "sandbox
+    # unavailable", spending a repair round on a queue. So these two
+    # numbers are set together and this one never exceeds that one.
+    # Two, because the deploy plane admits two concurrent checks
+    # (AGENT_SANDBOX_CONTAINERS, default 2). Raising this means raising
+    # that first, and that one is subtracted from MAX_CONTAINERS — so a
+    # third sandbox costs a deployment slot on a host already at its
+    # admission ceiling. Two numbers, one decision, in that order.
+    deploy:
+      replicas: ${AGENT_WORKERS:-2}
+
     environment:
       # --- the platform database -------------------------------------
       # The one credential that makes this stack a decision rather than
