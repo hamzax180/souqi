@@ -971,21 +971,43 @@
        four wrapped rows cost about 160px of it, which on a 812px screen
        is most of the first card. */
     .toolbar{gap:8px;margin-bottom:14px}
-    .search{flex:1 1 100%;width:100%}
-    /* flex-basis 0, not auto. On auto the strip demands its full content
-       width - 419px of selects on a 295px line - so it could never share a
-       row and the toggle wrapped onto a third one. A zero basis lets it
-       take what is left after the toggle and scroll inside that. */
-    .filters{display:flex;gap:8px;flex:1 1 0;min-width:0;
-      overflow-x:auto;scrollbar-width:none;-ms-overflow-style:none;
-      -webkit-overflow-scrolling:touch}
-    .filters::-webkit-scrollbar{display:none}
-    /* flex:none or they get squeezed to their text instead of scrolling. */
-    .fsel{flex:none;font-size:.82rem;padding:8px 10px;border-radius:9px}
-    /* The spacer's whole job was to push the toggle right on a wide
-       screen; on one line with a scroller it would eat the strip. */
+    /* STILL TWO ROWS, BUT THE FILTERS GET A WHOLE ONE.
+
+       They used to share the second row with the view toggle and scroll
+       sideways inside what was left: 419px of selects in 212px. That is a
+       normal phone pattern and it was chosen deliberately, but what it
+       produced was "Any artifac" sliced off mid-word against the toggle,
+       the third filter off-screen entirely, and nothing on screen saying
+       there was anything to scroll to. A control cut in half does not
+       read as scrollable, it reads as broken.
+
+       So the toggle moves up beside the search, which has width to
+       spare, and the filters take the full 295px on their own line. Same
+       two rows, same height, all three filters visible at once. Done
+       with order, so the markup the desktop layout depends on is
+       untouched. */
+    .search{order:1;flex:1 1 0;width:auto;min-width:0}
+    .viewtog{order:2;flex:none}
+    .filters{order:3;display:flex;gap:8px;flex:1 1 100%;width:100%;min-width:0}
+    /* Share the line evenly and truncate rather than overflow. A select
+       may ellipsize its own text; what it must not do is push its
+       neighbours off the screen.
+
+       appearance:none because the NATIVE ARROW is the reason this did
+       not fit even after the row was widened. The browser reserves room
+       for it inside the box, invisibly to any measurement of padding, so
+       93px of select held about 55px of text and every label still came
+       out as "Any st...". A drawn caret costs 9px and the width it frees
+       is the difference between a truncated label and a readable one. */
+    .fsel{flex:1 1 0;min-width:0;font-size:.82rem;border-radius:9px;
+      text-overflow:ellipsis;
+      appearance:none;-webkit-appearance:none;-moz-appearance:none;
+      padding:8px 20px 8px 9px;
+      background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238a8f91' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+      background-repeat:no-repeat;background-position:right 7px center;background-size:9px 9px}
+    /* The spacer pushed the toggle right on a wide screen; here the
+       search already does that. */
     .toolbar .sp{display:none}
-    .viewtog{flex:none}
     .viewtog button{width:32px;height:32px}
   }
 
