@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=8.4">
+<link rel="stylesheet" href="/styles/pages/code.css?v=8.5">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=3.6">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -2958,9 +2958,20 @@
       loading = true;
       const body = wrap.querySelector(".th2-steps");
       body.textContent = "";
-      /* A plain row, not .busy: .th2.done kills the sweep on busy text, so
-         on a settled panel that class buys nothing but a misleading name. */
-      body.appendChild(el("th2-step", '<span class="th2-step-text">Loading steps…</span>'));
+      /* THE SAME SKELETON THE REST OF THE APP LOADS WITH.
+
+         It said "Loading steps…" in a step row — a sentence where every
+         other waiting surface in the product shows shimmering placeholder
+         rows: the chat list in the rail, the transcript on reopen, the
+         project cards. Words where shapes were expected read as a
+         different kind of wait, and a slow one.
+
+         Four rows because that is what .sk-row is written for — its width
+         varies by :nth-child, so they look like steps of differing length
+         rather than four identical bars. */
+      const skel = el("th2-skel");
+      for (let i = 0; i < 4; i++) skel.appendChild(el("sk-row", "<i></i><b></b>"));
+      body.appendChild(skel);
       let got = null;
       try { got = await fetchRunSteps(runId); } catch (e) { /* swallowed, as fillPastSteps does */ }
       loading = false;

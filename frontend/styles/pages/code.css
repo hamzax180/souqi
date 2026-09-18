@@ -4781,6 +4781,14 @@
   .sk-row:nth-child(2) b{width:58%}
   .sk-row:nth-child(3) b{width:66%}
   .sk-row:nth-child(4) b{width:47%}
+  /* The thoughts panel loads with the same rows, indented to sit where its
+     steps will sit so nothing shifts sideways when the real ones arrive.
+     The widths come from .sk-row's own :nth-child rules, which is why the
+     placeholders read as steps of different lengths rather than four
+     identical bars. */
+  .th2-skel{display:flex;flex-direction:column;gap:2px;padding:2px 0 4px}
+  .th2-skel .sk-row{padding:6px 2px}
+  .th2-skel .sk-row b{max-width:260px}
   .sk-row:nth-child(5) b{width:62%}
   @media (prefers-reduced-motion:reduce){ .sk-row::after{animation:none} }
 
