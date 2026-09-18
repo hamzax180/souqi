@@ -278,12 +278,18 @@
     }
 
     /* ---------------- Accounts / Stores / Traffic tabs ---------------- */
-    function ensureAccounts(cb){
-      if(state.accounts){ cb(state.accounts); return; }
+    function ensureAccounts(cb,force){
+      if(state.accounts && !force){ cb(state.accounts); return; }
       apiGet("/api/admin/accounts").then(function(r){ if(!r.ok) throw "http"; return r.json(); })
         .then(function(d){ state.accounts=d.accounts||[]; cb(state.accounts); }).catch(function(){ cb([]); });
     }
-    function loadAccounts(){ ensureAccounts(renderAccounts); }
+    /* Always refetch, the way loadApps already does. The cache used to be
+       the whole of it: state.accounts was filled once and never refilled,
+       so a person who signed up after this page opened did not exist as far
+       as admin was concerned - not on a tab switch, not on a retry, only on
+       a full reload. Cached rows still paint first so the tab stays instant;
+       the network answer replaces them a moment later. */
+    function loadAccounts(){ if(state.accounts) renderAccounts(); ensureAccounts(renderAccounts,true); }
 
     function renderAccounts(){
       var list=state.accounts||[]; var plans=(state.overview&&state.overview.plans)||["free","pro","business","max","team","enterprise"];
