@@ -31,6 +31,40 @@ const has = (dir, name) => fs.existsSync(path.join(dir, name));
 /**
  * @returns {{framework, buildCommand, startCommand, port, outputDir, declared}}
  */
+/* The build command for a static app, with the type gate taken off it.
+
+   Three cases, in order:
+
+     build:deploy            the scaffold ships one now — "vite build",
+                             the same bundle with no gate.
+     "tsc … && <rest>"       every project scaffolded BEFORE that, which
+                             is most of them and cannot be edited from
+                             here. Run <rest> and drop the tsc.
+     anything else           left exactly alone.
+
+   The second case is the one that matters in practice. A real deploy
+   failed on `Type 'string' is not assignable to type 'Severity'` — a
+   true statement about an app that runs correctly, and tsc exits 2, so
+   the image was never built. The project had no build:deploy because it
+   was created before the script existed, and nothing in the deploy path
+   can add one.
+
+   Only a leading `tsc` is stripped, and only when something follows it,
+   so a build script that does real work keeps doing it. --no-install so
+   npx can never reach the network for a vite that is not in the image:
+   if the binary is missing the build should fail, not silently fetch a
+   different version of it. */
+function staticBuildCommand(scripts) {
+  if (scripts["build:deploy"]) return "npm run build:deploy";
+  const build = String(scripts.build || "");
+  const gated = /^\s*(?:npx\s+)?tsc\b[^&|]*&&\s*(\S.*)$/.exec(build);
+  if (gated) {
+    const rest = gated[1].trim();
+    return /^(?:npx|npm|node|yarn|pnpm)\b/.test(rest) ? rest : "npx --no-install " + rest;
+  }
+  return "npm run build";
+}
+
 function detect(dir) {
   // 1. An explicit spec wins outright.
   const declared = readJson(dir, "deploy.json");
@@ -81,7 +115,7 @@ function detect(dir) {
            Falls back to `npm run build` for every project that has no
            build:deploy — anything scaffolded before this, and anything
            imported from outside. */
-        buildCommand: scripts["build:deploy"] ? "npm run build:deploy" : "npm run build",
+        buildCommand: staticBuildCommand(scripts),
         outputDir: deps["react-scripts"] ? "build" : "dist",
         port: 80
       });

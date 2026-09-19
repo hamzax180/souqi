@@ -215,6 +215,33 @@ async function main() {
     }));
     assert.strictEqual(detect.detect(dir).buildCommand, "npm run build");
   });
+  const viteWith = (scripts) => {
+    const fs = require("fs"), os = require("os"), path = require("path");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "det-"));
+    fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ dependencies: { vite: "5" }, scripts }));
+    return detect.detect(dir).buildCommand;
+  };
+  check("a project built before build:deploy existed still loses the gate", () => {
+    /* The one that actually happened. An app scaffolded before the script
+       existed deployed with "tsc --noEmit && vite build", tsc said
+       Type 'string' is not assignable to type 'Severity' — true, and
+       harmless at runtime — exited 2, and the image was never built.
+       Nothing in the deploy path can add a script to someone's project,
+       so the gate comes off here instead. */
+    assert.strictEqual(viteWith({ build: "tsc --noEmit && vite build" }), "npx --no-install vite build");
+    assert.strictEqual(viteWith({ build: "tsc -b && vite build" }), "npx --no-install vite build");
+    assert.strictEqual(viteWith({ build: "npx tsc --noEmit && vite build" }), "npx --no-install vite build");
+  });
+  check("whatever the build script does AFTER the typecheck is kept", () => {
+    assert.strictEqual(
+      viteWith({ build: "tsc --noEmit && vite build && node scripts/post.js" }),
+      "npx --no-install vite build && node scripts/post.js"
+    );
+  });
+  check("only tsc is stripped, not any command that starts with those letters", () => {
+    // tscpaths is a real tool and a real build step; it is not a type gate.
+    assert.strictEqual(viteWith({ build: "tscpaths -p tsconfig.json && vite build" }), "npm run build");
+  });
   check("a colon in the build command survives the Dockerfile writer", () => {
     // assertSafeCommand refuses newlines; it must not refuse `build:deploy`.
     const d = dockerfiles.generate({
