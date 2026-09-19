@@ -4951,6 +4951,32 @@ app.post("/api/codeagent/repair", codeAgentLimiter, async (req, res) => {
  * ever ran for one run, the second is a no-op instead of a second reply.
  */
 async function persistRunOutcome(run, project, attachedImages, outcome) {
+  /* Charged before anything else, and outside the !project guard.
+
+     spendGate reads what an owner has cost, and on this path nothing had
+     ever written that number — so the gate read $0 for everyone forever
+     and CODEAGENT_PLAN_BUDGET_USD was decoration. /api/codeagent/build
+     has always recorded its own spend; the route the browser actually
+     uses never did.
+
+     Before the guard because a run that produced no project still spent
+     the money. Failing quietly because a run that worked must not be
+     reported as failed over its own accounting. */
+  try {
+    const usd = Number(outcome && outcome.costUsd) || 0;
+    /* Rebuilt from the columns the run document actually has. It stores
+       ownerUserId / ownerAnonId — the shape run-store's own owns() reads
+       — and NOT the nested owner object the usage module wants, so
+       reaching for run.owner here silently recorded nothing at all. */
+    const spendOwner = (run && run.owner)
+      || ((run && (run.ownerUserId || run.ownerAnonId))
+        ? { userId: run.ownerUserId || null, anonId: run.ownerAnonId || null }
+        : null);
+    if (usd > 0 && spendOwner) await codeAgentUsage.recordSpend(spendOwner, usd);
+  } catch (e) {
+    console.warn("[codeagent] could not record spend for run", run && run.id, e && e.message);
+  }
+
   if (!project) return;
   const ms = Math.max(0, Date.now() - Date.parse(run.createdAt || "") || 0);
   try {
@@ -5403,6 +5429,82 @@ function getConversationalFallback(prompt, history) {
      paths cannot disagree about what the run was given. Bounded because
      it lives in the run document: the last dozen turns, truncated —
      buildHistory trims again on its own budget at the other end. */
+  /* THE ROUTE THAT ACTUALLY RUNS THE AGENT PAYS THE SAME TOLL AS THE ONE
+     THAT USED TO.
+
+     /api/codeagent/build carries the whole entitlement story: the
+     anonymous single build, the free monthly builds, the free edits, and
+     spendGate. This route carries none of it, and this route is the one
+     the browser posts to — /build is only reached as a fallback. So the
+     limits were written, documented, tested and unenforced: an anonymous
+     caller could spawn runs until the rate limiter noticed, and every one
+     of them was a DeepSeek bill.
+
+     The same counters and the same constants, deliberately, so the two
+     paths cannot drift into disagreeing about whether someone may build.
+
+     Refusing WITHOUT a runId is what makes this work with no change to
+     the browser: code.html treats a spawn that yields no runId as a
+     reason to fall through to /build, which re-checks the identical gate
+     and emits the authRequired / subscribeRequired frame the UI already
+     knows how to draw. The JSON body is for anything that is not the
+     browser. */
+  const quotaOwner = owner;
+  const quotaUser = codeAgentSessionUser(req);
+  const quotaAdmin = quotaUser && isAdminEmail(quotaUser.email);
+  const isFollowUpRun = !!project;
+
+  if (!quotaAdmin) {
+    const counts = await codeAgentUsage.monthCounts(quotaOwner);
+    const plan = await planOfRequest(req);
+
+    if (!isFollowUpRun) {
+      if (!quotaUser && counts.builds >= CODEAGENT_ANON_BUILDS) {
+        return res.status(401).json({
+          error: "auth_required",
+          message: "That's your free build. Sign in (it's free) to build more — your app is saved and comes with you.",
+          loginUrl: "/login", signupUrl: "/signup"
+        });
+      }
+      if (quotaUser && !isPaidPlan(plan) && counts.builds >= CODEAGENT_FREE_BUILDS) {
+        return res.status(402).json({
+          error: "subscribe_required",
+          message: "You've used your " + CODEAGENT_FREE_BUILDS + " builds this month. Subscribe to keep building.",
+          pricingUrl: "/pricing"
+        });
+      }
+    } else {
+      if (!quotaUser) {
+        return res.status(401).json({
+          error: "auth_required",
+          message: "Sign in (it's free) to keep editing this build.",
+          loginUrl: "/login", signupUrl: "/signup"
+        });
+      }
+      if (!isPaidPlan(plan) && counts.edits >= CODEAGENT_FREE_EDITS) {
+        return res.status(402).json({
+          error: "subscribe_required",
+          message: "You've used your " + CODEAGENT_FREE_EDITS + " edits this month. Subscribe to keep editing.",
+          pricingUrl: "/pricing"
+        });
+      }
+    }
+
+    /* And the money gate, which is the one that does not care what plan
+       says: it reads what this owner has actually cost. It could never
+       fire on this path before, because nothing on this path had ever
+       recorded a cent of spend against them. */
+    const gate = await spendGate(quotaOwner, plan);
+    if (!gate.ok) {
+      return res.status(402).json({
+        error: "spend_limit",
+        scope: gate.scope, resetAt: gate.resetAt || null,
+        message: gate.message,
+        pricingUrl: "/pricing"
+      });
+    }
+  }
+
   /* THE THREAD COMES FROM THE DATABASE ONCE THERE IS ONE.
 
      History used to be whatever the browser put in req.body.conversation,
@@ -5573,6 +5675,18 @@ function getConversationalFallback(prompt, history) {
   /* The SAME object the worker will rebuild from, not a second copy
      assembled from req.body — that divergence is what let images and
      history reach one executor and not the other. */
+  /* Counted when the run is real, not when the request arrived: a call
+     that fell over on validation above has not used anyone's allowance.
+     Same two counters /build increments, so a build started here and an
+     edit started there land in the same month's totals. */
+  if (!quotaAdmin) {
+    try {
+      await codeAgentUsage.recordAction(quotaOwner, isFollowUpRun ? "editCount" : "buildCount");
+    } catch (e) {
+      console.warn("[codeagent] could not record the action:", e && e.message);
+    }
+  }
+
   if (!handedOff) agentRunner.executeRun(run.id, Object.assign({}, runContext))
   .then((outcome) => persistRunOutcome(run, project, attachedImages, outcome))
   .catch(async (err) => {
