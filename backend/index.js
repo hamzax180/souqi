@@ -5386,9 +5386,44 @@ function getConversationalFallback(prompt, history) {
      paths cannot disagree about what the run was given. Bounded because
      it lives in the run document: the last dozen turns, truncated —
      buildHistory trims again on its own budget at the other end. */
+  /* THE THREAD COMES FROM THE DATABASE ONCE THERE IS ONE.
+
+     History used to be whatever the browser put in req.body.conversation,
+     and the browser only keeps `convo` — a page-session array whose own
+     comment says it is "the conversation before a project exists" and
+     which is cleared the moment a build lands. So every turn after the
+     first build, and every turn after a reload, reached the model with an
+     empty history. Asked what the first message in the chat was, the
+     agent answered honestly that there was nothing before the one line it
+     could see. /api/codeagent/build has read the turns from Mongo all
+     along (see listTurns there); this route never learned to.
+
+     Scoped to the chat, not the project, the same way /build scopes it: a
+     project can hold several conversations and they differ only in what
+     was said in them.
+
+     The client buffer is still the answer before a project exists, which
+     is exactly the case its comment describes. Last 40 turns because
+     buildHistory() budgets from the newest backwards anyway and will cut
+     it to MAX_HISTORY_TURNS; this only keeps the payload sane. */
+  let threadTurns = [];
+  if (project && project.id) {
+    try {
+      threadTurns = await projects.listTurns(project.id, String((req.body && req.body.chatId) || ""));
+    } catch (err) {
+      /* Failing open: a build with no memory is worse than a slow one, but
+         it is much better than no build at all. */
+      console.warn("[runs] could not read the thread:", err && err.message);
+      threadTurns = [];
+    }
+  }
+  const rawHistory = threadTurns.length
+    ? threadTurns
+    : (Array.isArray(req.body && req.body.conversation) ? req.body.conversation : []);
+
   const runContext = {
-    history: (Array.isArray(req.body && req.body.conversation) ? req.body.conversation : [])
-      .slice(-12)
+    history: rawHistory
+      .slice(-40)
       .map((t) => ({
         role: t && t.role === "agent" ? "agent" : "user",
         kind: (t && t.kind) || "text",
