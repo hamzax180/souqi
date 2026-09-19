@@ -511,6 +511,43 @@ const FULL_ROUTES = {
     assert.strictEqual(seen.join(""), res.message.content);
   });
 
+  await check("a reasoning model's thinking is reported while it thinks", async () => {
+    /* The symptom this exists for: on a reasoning model at high effort the
+       provider sends nothing but reasoning_content for minutes before the
+       first content delta. That was collected and deliberately withheld
+       from onDelta, so a five-minute turn showed an empty "Thinking"
+       header the whole way and could not be told apart from a hang. */
+    const thoughts = [];
+    const text = [];
+    client.init({
+      enabled: true, routes: FULL_ROUTES,
+      fetchImpl: sseFetch([
+        { choices: [{ delta: { reasoning_content: "The user wants a booking app. " } }] },
+        { choices: [{ delta: { reasoning_content: "Let me check the scaffold first." } }] },
+        { choices: [{ delta: { content: "Reading package.json." } }] },
+        { choices: [{ delta: {}, finish_reason: "stop" }] }
+      ])
+    });
+    const res = await client.chat({
+      route: "prose", messages: [{ role: "user", content: "hi" }], stream: true,
+      onDelta: (d) => {
+        if (d.reasoningDelta) thoughts.push(d.reasoningDelta);
+        if (d.textDelta) text.push(d.textDelta);
+      }
+    });
+    assert.strictEqual(res.ok, true);
+    assert.strictEqual(thoughts.length, 2, "reasoning was not reported as it arrived");
+    assert.strictEqual(thoughts.join(""), "The user wants a booking app. Let me check the scaffold first.");
+
+    /* Still a separate channel. The narration is what the turn is replayed
+       as; merging the trace into it would put the model's private working
+       into the transcript as if the agent had said it. */
+    assert.strictEqual(text.join(""), "Reading package.json.");
+    assert.strictEqual(res.message.content, "Reading package.json.");
+    assert.strictEqual(res.message.reasoning_content,
+      "The user wants a booking app. Let me check the scaffold first.");
+  });
+
   await check("tool calls split across frames are stitched back together", async () => {
     // How a real provider sends them: id and name first, then the
     // arguments in fragments, interleaved across two parallel calls.

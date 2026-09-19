@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=9.4">
+<link rel="stylesheet" href="/styles/pages/code.css?v=9.5">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=5.7">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -4823,6 +4823,24 @@
     const handles = {};
     let openedStream = null;
     let thinkPanel = null;
+
+    /* The tail of the thinking trace, as one readable clause.
+
+       A reasoning stream arrives mid-word and mid-sentence, so showing
+       the raw tail reads as garbage. Keep a small rolling buffer, cut on
+       the last sentence boundary in it, and fall back to the last 90
+       characters when the model has not finished a sentence in a while. */
+    let thoughtBuf = "";
+    function thoughtLine(chunk) {
+      thoughtBuf = (thoughtBuf + String(chunk || "")).slice(-600);
+      const cleaned = thoughtBuf.replace(/\s+/g, " ").trim();
+      if (!cleaned) return "";
+      const parts = cleaned.split(/(?<=[.!?])\s+/).filter(Boolean);
+      let line = parts.length > 1 ? parts[parts.length - 2] : parts[parts.length - 1];
+      if (!line) return "";
+      if (line.length > 90) line = "…" + line.slice(-89);
+      return line;
+    }
     let filesSeen = 0;
 
     /* A STEP IS A SENTENCE, NOT A COUNTER.
@@ -5389,6 +5407,21 @@
               thinkPanel.setPhase("Waiting for Souqi…");
               // Into the transcript, permanently — see .th2-said.
               thinkPanel.say(payload.text);
+            }
+            else if (em[1] === "reasoning_delta") {
+              /* The status line says what the model is thinking, instead
+                 of the word "Thinking". On a reasoning model at high
+                 effort the provider sends nothing but this for minutes,
+                 so the alternative is a header that has not changed since
+                 the turn began and is indistinguishable from a hang.
+
+                 Into the phase line and NOT into say(): say() appends to
+                 the transcript permanently, and a trace is tens of
+                 thousands of characters of the model talking to itself.
+                 This is the live line — last clause only, replaced as it
+                 comes, gone when the answer starts. */
+              const line = thoughtLine(payload.text);
+              if (line) thinkPanel.setPhase(line);
             }
             else if (em[1] === "tool_result") thinkPanel.setPhase("Thinking…");
             else if (em[1] === "context") thinkPanel.setPhase("Making room in context…");

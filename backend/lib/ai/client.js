@@ -486,10 +486,22 @@ async function readCompletionStream(res, onDelta, scope) {
       content.push(delta.content);
       tell({ textDelta: delta.content });
     }
-    // Kept so a reasoning model's own trace is not silently dropped, and
-    // NOT passed to onDelta: it is not for showing to anyone.
+    /* Reported now, under its own name.
+
+       This used to be collected and deliberately withheld — "not for
+       showing to anyone". On a reasoning model at high effort that is the
+       only thing the provider sends for minutes at a time: content deltas
+       do not start until the thinking is over. So the run emitted nothing,
+       and the UI sat on an empty "Thinking" header through a five-minute
+       turn with no way to tell it apart from a hang.
+
+       Kept separate from textDelta rather than merged into it. The
+       narration is the agent talking to the person and is what the turn is
+       replayed as; this is the model working, and the watcher spends it on
+       a different event so the two never end up in the same paragraph. */
     if (typeof delta.reasoning_content === "string" && delta.reasoning_content) {
       reasoning.push(delta.reasoning_content);
+      tell({ reasoningDelta: delta.reasoning_content });
     }
 
     for (const part of delta.tool_calls || []) {

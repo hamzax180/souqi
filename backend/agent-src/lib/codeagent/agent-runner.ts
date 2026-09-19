@@ -77,6 +77,17 @@ const STREAMING = process.env.CODEAGENT_STREAMING !== "0";
 /** How often a run is willing to write its own narration to the database. */
 const DELTA_FLUSH_MS = 600;
 
+/* The thinking trace is written on a slower clock and with a ceiling.
+
+   It is much bigger than the narration — a hard turn reasons for tens of
+   thousands of tokens — and every event here is persisted and replayed to
+   every browser that reconnects. A second between flushes still reads as
+   live, and the cap stops one pathological turn from writing a novel into
+   the run log. Past the cap the turn keeps thinking, it just stops
+   narrating it; the answer is unaffected. */
+const REASONING_FLUSH_MS = 1000;
+const REASONING_MAX_CHARS = 20000;
+
 /**
  * Turn a token stream into events worth storing.
  *
@@ -93,6 +104,9 @@ const DELTA_FLUSH_MS = 600;
 function streamWatcher(runId: string, turn: number) {
   let pending = "";
   let lastFlush = Date.now();
+  let thinking = "";
+  let lastThinkFlush = Date.now();
+  let thoughtChars = 0;
   let inFlight: Promise<any> = Promise.resolve();
 
   /* Serialised, and never awaited by the caller. appendEvent allocates a
@@ -111,19 +125,36 @@ function streamWatcher(runId: string, turn: number) {
     queue(() => runStore.appendEvent(runId, "assistant_delta", { turn, text: redact(text).text }));
   };
 
+  /* Redacted like the narration is. A trace is the least curated text a
+     run produces — it quotes files and tool output back to itself — so
+     it is the last place to make an exception for secrets. */
+  const flushThinking = () => {
+    if (!thinking) return;
+    const text = thinking;
+    thinking = "";
+    lastThinkFlush = Date.now();
+    queue(() => runStore.appendEvent(runId, "reasoning_delta", { turn, text: redact(text).text }));
+  };
+
   const watcher = (d: any) => {
     if (d && d.textDelta) {
       pending += d.textDelta;
       if (Date.now() - lastFlush >= DELTA_FLUSH_MS) flush();
     }
+    if (d && d.reasoningDelta && thoughtChars < REASONING_MAX_CHARS) {
+      thinking += d.reasoningDelta;
+      thoughtChars += d.reasoningDelta.length;
+      if (Date.now() - lastThinkFlush >= REASONING_FLUSH_MS) flushThinking();
+    }
     if (d && d.toolName) {
       flush();   // whatever was said before the tool belongs before it
+      flushThinking();
       queue(() => runStore.appendEvent(runId, "tool_intent", { turn, tool: d.toolName, index: d.index }));
     }
   };
   /* The caller settles this after the call returns, so the tail of the
      answer is not left sitting in `pending` until the next turn. */
-  watcher.done = async () => { flush(); await inFlight; };
+  watcher.done = async () => { flush(); flushThinking(); await inFlight; };
   return watcher;
 }
 
