@@ -2228,10 +2228,11 @@
        A browser without :has() drops this rule and keeps the wrapping
        behaviour it has today, which is the right way to lose. */
     .ag-brow:not(:has(> .ag-attach-row:not(:empty))){flex-wrap:nowrap}
-    /* The ring is last in the left group now, so the auto margin that
-       splits the row belongs to it rather than to +. */
-    .ag-attach{margin-inline-end:0}
-    .ag-usage-btn{margin-inline-end:auto}
+    /* + is alone on the left again — the ring moved over to lead the
+       effort/model cluster — so the auto margin that splits the row goes
+       back to it. .ag-brow-sp is display:none here, so this margin is the
+       only thing holding the two groups apart. */
+    .ag-attach{margin-inline-end:auto}
     .ag-attach,.ag-voice-btn,.ag-usage-btn{width:28px;height:28px}
     .ag-send{width:30px;height:30px}
     .ag-effort-pill{padding-inline:5px}

@@ -18,7 +18,7 @@
 <link rel="stylesheet" href="/styles/tokens.css?v=3.5">
 <link rel="stylesheet" href="/styles/base.css?v=3.5">
 <link rel="stylesheet" href="/styles/components/project-card.css?v=3.5">
-<link rel="stylesheet" href="/styles/pages/code.css?v=9.3">
+<link rel="stylesheet" href="/styles/pages/code.css?v=9.4">
 <link rel="stylesheet" href="/styles/components/rail-motion.css?v=5.6">
 <link rel="stylesheet" href="/styles/components/upgrade-modal.css?v=3.5">
 <style id="ag-plan-style">
@@ -1055,10 +1055,21 @@
           <button type="button" class="ag-attach" id="agAttach" aria-label="Attach a logo or image" title="Attach a logo or image">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
           </button>
-          <!-- Usage, where the spending happens. It sits on THIS side of
-               .ag-brow-sp deliberately: the row's own note in code.css says
-               it needs 264px and has 262 at 375px, so the right-hand
-               cluster has nothing to give. The arc is one --pct away from
+          <!-- multiple, and no SVG. The server refuses image/svg+xml because
+               the bucket is public-read, so an SVG there would run as a
+               document in the asset domain's origin; offering it in the
+               picker would only produce a rejection two steps later. -->
+          <input type="file" id="agAttachInput" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
+          <span class="ag-attach-row" id="agAttachRow"></span>
+
+          <span class="ag-brow-sp"></span>
+          <!-- Usage leads the right-hand cluster: limits, then effort,
+               then model. It was on the left of .ag-brow-sp originally,
+               because the row needed 264px and had 262 at 375 and the
+               right side had nothing to give. The row does not break any
+               more — it compresses — so which side the ring sits on costs
+               the same either way, and it belongs next to the two controls
+               that decide what gets spent. The arc is one --pct away from
                being a plain circle; see renderUsage. -->
           <button type="button" class="ag-usage-btn" id="agUsageBtn"
                   aria-haspopup="dialog" aria-expanded="false"
@@ -1068,14 +1079,6 @@
               <circle class="arc" cx="12" cy="12" r="9"></circle>
             </svg>
           </button>
-          <!-- multiple, and no SVG. The server refuses image/svg+xml because
-               the bucket is public-read, so an SVG there would run as a
-               document in the asset domain's origin; offering it in the
-               picker would only produce a rejection two steps later. -->
-          <input type="file" id="agAttachInput" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden>
-          <span class="ag-attach-row" id="agAttachRow"></span>
-
-          <span class="ag-brow-sp"></span>
           <div class="ag-effort-wrap" id="agEffortWrap">
             <span class="ag-effort-tip">Effort</span>
             <button type="button" class="ag-effort-pill" id="agEffortPill"
