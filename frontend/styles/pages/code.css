@@ -135,9 +135,35 @@
       display: none !important;
     }
   }
-  .ag-pv-toggle-btn:hover { border-color: #cbd5e1; background: var(--paper-2); color: var(--ink); }
+  /* --line-hover, not #cbd5e1. That was a light-theme slate sitting in a
+     rule with no theme guard, so in dark mode hovering the toggle drew a
+     pale border no other control on the page has. */
+  .ag-pv-toggle-btn:hover { border-color: var(--line-hover); background: var(--paper-2); color: var(--ink); }
   .ag-pv-toggle-btn.on {
     background: var(--card); color: var(--ink);
+  }
+  /* The preview toggle carries no chrome until you go for it.
+
+     It is fixed over the chat column, so at rest its card and border were
+     a second panel floating on top of the conversation for a control
+     nobody is using yet. Bare, it reads as what it is — a label in the
+     corner — and the box comes back under the pointer.
+
+     border-color rather than border, so the 1px stays in the box model
+     and the button does not move 1px when the outline appears. .on keeps
+     the chrome because that is not decoration there: it is how the button
+     says the preview is open. The fade is .ag-pv-toggle-btn's own
+     transition:all, which already covers all three properties. */
+  #agDeskPreviewToggle {
+    border-color: transparent;
+    background: transparent;
+    box-shadow: none;
+  }
+  #agDeskPreviewToggle:hover,
+  #agDeskPreviewToggle.on {
+    border-color: var(--line-hover);
+    background: var(--card);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, .03);
   }
   .ag-pv-toggle-btn .pane-right, .ag-pv-toggle-btn .pane-left {
     transition: fill 0.2s ease;
