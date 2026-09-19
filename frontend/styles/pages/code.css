@@ -3592,7 +3592,17 @@
   /* --- header: logo left, controls right --- */
   .ag-hist-head{display:flex;align-items:center;gap:8px;padding:10px 10px 12px 12px;width:100%;box-sizing:border-box}
   .ag-hist-mark{width:28px;height:28px;display:grid;place-items:center;flex:none}
-  .ag-hist-mark img{width:23px;height:23px;display:block;object-fit:contain;border-radius:5px}
+  /* The mark is a coloured glyph on transparency, so it needs a ground of
+     its own or it sits on whatever the rail happens to be.
+
+     One token, no dark override. --surface is already #ffffff in light and
+     #211e1b in dark, which is the white tile and the black tile the mark
+     was asked for. The override this replaces reached for --ink on the
+     reasoning that dark mode wants the dark end of the pair — but --ink is
+     the TEXT colour, #f5f9fc once the theme flips, so the dark tile came
+     out four shades whiter than the light one. */
+  .ag-hist-mark img{width:23px;height:23px;display:block;object-fit:contain;border-radius:5px;
+    background:var(--surface);padding:2px;box-sizing:border-box}
   /* Sits between the mark and the toggle, the way the reference does.
      margin-left:auto pushes it to the right end of the header; the right
      margin is the width the fixed toggle occupies at the very edge. */
