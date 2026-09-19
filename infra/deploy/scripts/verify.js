@@ -193,6 +193,35 @@ async function main() {
     }));
     assert.strictEqual(detect.detect(dir).framework, "static");
   });
+  check("a type error does not stop an app from shipping", () => {
+    /* The scaffold's `build` is "tsc --noEmit && vite build", so that the
+       agent gets type errors back while it is still working. Here that
+       same script is a gate: tsc exits 2 on any type error and the image
+       is never built — a finished, running app refused over a type.
+       build:deploy is the same bundle without the gate. */
+    const fs = require("fs"), os = require("os"), path = require("path");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "det-"));
+    fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({
+      dependencies: { vite: "5" },
+      scripts: { build: "tsc --noEmit && vite build", "build:deploy": "vite build" }
+    }));
+    assert.strictEqual(detect.detect(dir).buildCommand, "npm run build:deploy");
+  });
+  check("a project without build:deploy still builds the way it always did", () => {
+    const fs = require("fs"), os = require("os"), path = require("path");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "det-"));
+    fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({
+      dependencies: { vite: "5" }, scripts: { build: "vite build" }
+    }));
+    assert.strictEqual(detect.detect(dir).buildCommand, "npm run build");
+  });
+  check("a colon in the build command survives the Dockerfile writer", () => {
+    // assertSafeCommand refuses newlines; it must not refuse `build:deploy`.
+    const d = dockerfiles.generate({
+      framework: "static", buildCommand: "npm run build:deploy", outputDir: "dist", port: 80
+    });
+    assert.ok(d.dockerfile.includes("npm run build:deploy"), d.dockerfile);
+  });
   check("a static app is always served on the port nginx actually binds", () => {
     // 8080, not 80: nginx runs unprivileged in these containers and cannot
     // bind a low port without CAP_NET_BIND_SERVICE. A declared port would

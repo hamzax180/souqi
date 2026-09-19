@@ -61,7 +61,27 @@ function detect(dir) {
     if (staticish && scripts.build) {
       return normalise({
         framework: "static",
-        buildCommand: "npm run build",
+        /* build:deploy when the project has one, because `build` is not
+           only a build.
+
+           The scaffold defines `build` as "tsc --noEmit && vite build" —
+           deliberately, so the agent gets type errors back while it is
+           still working and can repair them. In here that same script is
+           a deploy gate: tsc exits 2 on any type error and the image never
+           gets built, so a finished app that runs perfectly is refused
+           over a type it could not name. Observed exactly that: `npm run
+           build` returned code 2 and the deploy reported nothing but the
+           number.
+
+           Types are checked during the RUN, which is where a person can
+           still do something about them. Shipping is not the place to fail
+           over them, and the bundle is identical either way: vite hands
+           .tsx to esbuild, which strips types without reading them.
+
+           Falls back to `npm run build` for every project that has no
+           build:deploy — anything scaffolded before this, and anything
+           imported from outside. */
+        buildCommand: scripts["build:deploy"] ? "npm run build:deploy" : "npm run build",
         outputDir: deps["react-scripts"] ? "build" : "dist",
         port: 80
       });
