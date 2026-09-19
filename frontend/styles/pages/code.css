@@ -3261,19 +3261,33 @@
     .ag.is-new .ag-hero {
       padding-top: 20px !important;
     }
-    /* The Sidebar / Preview buttons are position:fixed at the top, but the
-       chat column scrolls the full height of the screen underneath them —
-       so message text slid up and showed through the gap between the two
-       buttons, which read as broken. This paints a solid band in the same
-       paper colour across that strip (just under the buttons' own
-       z-index), and .ag reserves matching room so nothing starts beneath
-       it either. The band is pointer-events:none so it can't swallow taps
-       meant for the buttons. */
+    /* A fade, not a bar, and no reserved row.
+
+       The Sidebar / Preview buttons are position:fixed at the top and the
+       chat column scrolls the full height of the screen underneath them,
+       so message text used to slide up and show through the gap between
+       them, which read as broken. The answer was a solid 52px strip of
+       paper plus .ag{padding-top:52px} to keep content out from under it
+       — which fixed the collision by spending 52px of a phone screen on
+       an empty bar, permanently, and on the new-chat screen it clipped
+       the top of the greeting to do it.
+
+       The room comes back: no padding, so the column is 52px taller and
+       the hero is whole again. The collision is handled by a gradient
+       instead — text does not stop at a line, it dissolves before it
+       reaches the buttons, which is what the eye reads as depth rather
+       than as a broken edge. Taller than the old bar (64px) because a
+       fade needs distance to be a fade; transparent for its whole lower
+       half, so it costs nothing visually over an empty screen.
+
+       Still pointer-events:none, so it cannot swallow a tap meant for
+       either button. */
     .ag-main::before{
-      content:"";position:fixed;top:0;left:0;right:0;height:52px;
-      background:var(--paper);z-index:999998;pointer-events:none;
+      content:"";position:fixed;top:0;left:0;right:0;height:64px;
+      background:linear-gradient(to bottom,
+        var(--paper) 0%, var(--paper) 34%, rgba(0,0,0,0) 100%);
+      z-index:999998;pointer-events:none;
     }
-    .ag{padding-top:52px}
 
     /* Composer sits on the BOTTOM of the column once a conversation has
        started. .ag-log is flex:0 0 auto here (it has to size to its own
