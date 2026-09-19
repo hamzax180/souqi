@@ -2236,6 +2236,37 @@
     .ag-send{width:30px;height:30px}
     .ag-effort-pill{padding-inline:5px}
     .ag-model-pill{padding-inline:5px}
+    /* The effort pill is the one thing in the row that does not shrink.
+
+       Line 1588 makes both pills shrinkable, which is what keeps the row
+       on one line — but shrinking them is not equal work. The model pill
+       holds one word and ellipsises it legibly. The effort pill holds a
+       grid of all five labels stacked, sized to the widest ("Balanced",
+       56px), so the visible label is centred in a box the pill then clips
+       from the right: at 320 it lost 18.5px and read "Bal". A label that
+       silently renames your effort setting is worse than a narrow one.
+
+       So the model absorbs the squeeze alone. From 360px up that costs it
+       nothing measurable — both labels sit at their natural width with
+       "Balanced" selected. Below 360 see the block underneath. */
+    .ag-brow>.ag-effort-wrap{flex-shrink:0}
+  }
+
+  /* Under 360px the row cannot hold four buttons and two words.
+
+     With the effort pill pinned, 320px left the model pill 23px of the
+     90px the two of them had to share — "Auto" rendered as five pixels of
+     the A. Every gap and padding in the row was already tightened for the
+     usage ring; the only thing left that was worth 31px was the
+     microphone, and it is the one control here that the phone keyboard
+     already offers on its own. Hidden, not removed: it is display:none, so
+     the button and its handlers are untouched and it returns at 360.
+
+     Measured at 320 and at 359: both labels at their full natural width,
+     one row, send inside the box. */
+  @media (max-width:359.98px){
+    .ag-brow>.ag-voice-btn{display:none}
+    .ag-effort-pill,.ag-model-pill{padding-inline:4px}
   }
 
   .ag-empty{position:relative;padding:44px 20px 36px;color:var(--ink-2);text-align:center}
