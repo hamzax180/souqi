@@ -2197,21 +2197,37 @@
      one control the row exists for stays where the eye last left it. */
   @media (max-width:640px){
     .ag-box{padding-inline:10px}
-    /* 3px, not 4, and the pills give up 2px a side — 13px between them, to
-       pay for a 28px ring and the gap it arrived with.
-
-       The row had 1.2px LESS than it needed the moment the ring landed:
-       260.6 wanted against 259.4 offered at 360px. It still measured one
-       clean row at 375 and at 640, so the regression was invisible at every
-       width except the one an Android phone actually is. And .ag-brow wraps,
-       which means the pills' flex-shrink never gets a turn — wrapping is
-       resolved before shrinking — so 1.2px bought a whole second line,
-       36px of row become 68px. flex-wrap cannot simply go away here:
-       .ag-attach-row is flex:0 0 100% and depends on it to claim a line of
-       its own once a file is attached. So the row buys width instead.
-       11.8px of slack at 360 now. */
+    /* 3px, not 4, and the pills give up 2px a side. Under the rule below
+       that width is not spent on fitting the row — it is spent on pill
+       text, which is what gets squeezed once the row stops breaking. */
     .ag-brow{gap:3px;justify-content:flex-end}
     .ag-brow-sp{display:none}
+    /* The row stops breaking, and the pills finally shrink.
+
+       The claim above this media query — that the pills compress so the
+       row does not have to — was never true, because .ag-brow wraps and
+       flex resolves line-breaking BEFORE flex-shrink. A shrinkable item on
+       an overflowing line does not get the chance to shrink; it gets moved
+       to the next line. So the row broke and the item it dropped was
+       always the send button, the one control the row exists for, left
+       hanging under the microphone. 320px did it on its own; the usage
+       ring brought the same failure up to 360px; and picking any model
+       whose name is longer than "Auto" did it at 375.
+
+       nowrap is what the comment always described, and the :has() guard is
+       why it can finally be switched on: .ag-attach-row is flex:0 0 100%
+       and needs a line of its own, but only once something is attached to
+       it, and it is empty the rest of the time. Wrapping comes back for
+       exactly that case.
+
+       Measured at 320: the row goes 67px to 36px, send returns to the
+       line 11px inside the box, and the two pills give up 19px and 16px
+       to ellipsis. At 360 and above nothing is clipped at all — the
+       compression only engages where the alternative was a broken row.
+
+       A browser without :has() drops this rule and keeps the wrapping
+       behaviour it has today, which is the right way to lose. */
+    .ag-brow:not(:has(> .ag-attach-row:not(:empty))){flex-wrap:nowrap}
     /* The ring is last in the left group now, so the auto margin that
        splits the row belongs to it rather than to +. */
     .ag-attach{margin-inline-end:0}
