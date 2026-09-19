@@ -151,11 +151,18 @@
    attempt at it sat inside a max-width:900px block — so it fixed the phone
    and left the desktop rail exactly as it was. A shut rail is 44px at
    every width, and this is what a shut rail looks like. */
-.ag-history:not(.on) .sk-row{
+/* Below 901px the real row CENTRES its dot and drops its label outright
+   (code.css: .ag-chat-item span{display:none}), so it stands 20px tall with
+   the dot on the rail's centre line. The skeleton matches that here, and is
+   overridden at 901+ where the real row changes shape — see the block by
+   .ag-chat-item further down. Getting this wrong is invisible in a
+   screenshot and obvious in motion: the dots step sideways when the list
+   finishes loading. */
+.ag-history:not(.on):not(:hover):not(.hover-open) .sk-row{
   width: 32px; margin: 0 auto; padding: 7px 0;
   justify-content: center; gap: 0;
 }
-.ag-history:not(.on) .sk-row b{ display: none; }
+.ag-history:not(.on):not(:hover):not(.hover-open) .sk-row b{ display: none; }
 
 /* THE HEADER STOPS REARRANGING ITSELF WHEN THE PANEL OPENS.
 
@@ -449,8 +456,22 @@
   .ag-history:not(.on):not(:hover):not(.hover-open) .ag-hist-user{
     align-items: flex-start !important; padding-left: 6px !important;
   }
+  /* The skeleton takes .ag-chat-item's box here, value for value, because
+     at this width the real row stops centring: it keeps its label in the
+     layout at opacity 0 and left-aligns on padding-left:9px, so it stands
+     29.2px tall with the dot at x=18. The skeleton was still the 20px
+     centred row from below 901 — a 6px nudge had been added to paper over
+     the gap — so every dot stepped sideways AND up the moment real rows
+     landed. That is the loading animation looking broken: not the sweep,
+     the geometry under it.
+
+     min-height is that label's line box spelled out: 14px of padding plus
+     12px of text at 1.27. It has to track .ag-chat-item on the four pages
+     carrying this rail; if that row's font changes, this is the number
+     that tells you the skeleton stopped matching it. */
   .ag-history:not(.on):not(:hover):not(.hover-open) .sk-row{
-    margin-left: 6px !important; margin-right: 0 !important;
+    margin: 0 !important; padding: 7px 0 7px 9px !important;
+    justify-content: flex-start !important; min-height: 29.2px !important;
   }
   /* The width is back, and the reason code.css dropped it for 100% is gone
      with the centring: a 32px row that starts at the list's own left edge
@@ -512,17 +533,41 @@
   }
   /* `display:block` rather than `revert`, and at the page sheets' own
      specificity rather than below it: this is the value all five compute to
-     in the open panel, read off /agent at 1280, so keeping it in the rail
-     renders the same box the panel will show — and the rail's vertical
-     rhythm finally matches the panel's too. The chats heading alone is 27px
-     the shut column was not reserving, which is why the first chat dot sat
-     at y=339 shut against 356 open. */
+     in the open panel, read off /agent at 1280, so an element that is about
+     to fade in has a box to fade in from rather than popping. */
   .ag-history:not(.on):not(:hover):not(.hover-open) .ag-hist-search,
   .ag-history:not(.on):not(:hover):not(.hover-open) .ag-chats-ttl,
   .ag-history:not(.on):not(:hover):not(.hover-open) .ag-chats-empty,
   .ag-history:not(.on):not(:hover):not(.hover-open) .ag-ws .chev,
   .ag-history:not(.on):not(:hover):not(.hover-open) .ag-chat-item span{
     display: block !important; opacity: 0 !important; pointer-events: none !important;
+  }
+  /* — except the heading, which keeps the box and gives back the height.
+
+     The rule above used to reserve all 27px of "Recent" in the shut rail,
+     deliberately, so the first dot sat at the same y open and shut. That
+     bought an alignment nobody can see — the two states are never on
+     screen together — and paid for it with 27px of empty column above the
+     dots, permanently, in the one layout where vertical room is the whole
+     constraint. The dots now start at y=327 instead of y=354.
+
+     Height and padding rather than display:none, so the heading still has
+     a box to transition, and both animate over the same --sb-dur the panel
+     widens in: opening glides the list down instead of snapping it. */
+  .ag-history:not(.on):not(:hover):not(.hover-open) .ag-chats-ttl{
+    max-height: 0 !important; padding-top: 0 !important; padding-bottom: 0 !important;
+    overflow: hidden !important;
+  }
+  /* max-height, not height, and 60px is simply a ceiling the heading will
+     never reach — 26.8px is what it measures. `height:0` to `height:auto`
+     is not a transition the browser can run: it jumps, and the chat list
+     lurches 27px while the panel is still widening. Two real endpoints
+     make it a glide over the same --sb-dur the width uses. */
+  .ag-history .ag-chats-ttl{
+    max-height: 60px;
+    transition: opacity calc(var(--sb-dur) * .55) var(--sb-ease) calc(var(--sb-dur) * .45),
+                max-height var(--sb-dur) var(--sb-ease),
+                padding var(--sb-dur) var(--sb-ease) !important;
   }
   .ag-history:is(.on, :hover, .hover-open) .ag-hist-foot{
     animation: agRailIn calc(var(--sb-dur) * .55) var(--sb-ease) calc(var(--sb-dur) * .45) both;
