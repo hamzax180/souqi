@@ -44,6 +44,73 @@ const hasRedis = Boolean(redisUrl && redisToken);
    passed a prefix, so all of them were "rl". */
 let seq = 0;
 
+/* WHOSE ADDRESS THIS IS.
+
+   Every limiter in the app keys on the caller's IP, and for a long time
+   none of them did. Express only reads X-Forwarded-For when `trust proxy`
+   is set, and it is set nowhere — so `req.ip` was the socket peer, and on
+   both deployments the socket peer is a proxy. Measured on the dev server:
+   three POSTs carrying three different client addresses took the SAME
+   bucket, 119 -> 118 -> 117. On Vercel that is one counter for the whole
+   internet: 20 project creations per 15 minutes shared by every visitor,
+   and a login limit that a second visitor can exhaust for everybody.
+
+   Fixed here rather than with `app.set("trust proxy")` on purpose. That
+   switch also rewrites req.protocol and req.secure for every route and
+   every cookie decision in the app; this needs one thing, so it changes
+   one thing.
+
+   The order matters, and so does what is NOT trusted:
+
+   - x-vercel-forwarded-for is set by Vercel's edge, which overwrites any
+     copy the client sends. It is the one header here that cannot be
+     forged, so it wins.
+   - Otherwise the LAST entry of x-forwarded-for, not the first. Both
+     deployments put exactly one proxy in front of the app — Vercel's edge
+     and, on the VPS, the Caddy in infra/deploy/docker-compose.yml — and
+     each APPENDS the peer it actually saw. Anything a client puts in that
+     header lands to the left of it and is ignored. Reading the first
+     entry, which is the usual way this is written, would hand every
+     caller a free `X-Forwarded-For: <anything>` bypass.
+   - TRUST_PROXY_HOPS=0 turns that off for a deployment that exposes the
+     app directly, where the header is attacker-controlled and req.ip is
+     the honest answer.
+
+   Returning "" is deliberate when nothing identifies the caller: an empty
+   key is still a key, so those callers share one bucket rather than each
+   getting an unlimited private one. */
+function normalizeIp(raw) {
+  let v = String(raw || "").trim();
+  if (!v) return "";
+  if (v[0] === "[") {                    // [::1]:53124
+    const end = v.indexOf("]");
+    if (end > 0) v = v.slice(1, end);
+  } else if (v.slice(0, 7) === "::ffff:") {
+    v = v.slice(7);                      // ::ffff:203.0.113.7 is 203.0.113.7
+  } else if (v.indexOf(":") > -1 && v.indexOf(":") === v.lastIndexOf(":")) {
+    v = v.slice(0, v.indexOf(":"));      // 203.0.113.7:53124 — one colon means a port
+  }
+  return v.toLowerCase();
+}
+
+function clientIp(req) {
+  const headers = (req && req.headers) || {};
+
+  const vercel = String(headers["x-vercel-forwarded-for"] || "").split(",")[0];
+  if (vercel.trim()) return normalizeIp(vercel);
+
+  const hops = process.env.TRUST_PROXY_HOPS === undefined
+    ? 1
+    : Number(process.env.TRUST_PROXY_HOPS);
+  if (hops > 0) {
+    const chain = String(headers["x-forwarded-for"] || "")
+      .split(",").map((x) => x.trim()).filter(Boolean);
+    if (chain.length) return normalizeIp(chain[Math.max(0, chain.length - hops)]);
+  }
+
+  return normalizeIp((req && req.ip) || (req && req.socket && req.socket.remoteAddress) || "");
+}
+
 /* One index, created once, so the rows clean themselves up. expireAfter
    Seconds:0 means "delete when the date in this field passes", which is
    exactly a fixed window's reset time. */
@@ -68,7 +135,7 @@ function rateLimit({ windowMs, max, key, prefix }) {
   if (timer.unref) timer.unref();
 
   return async function (req, res, next) {
-    const rawKey = String((key ? key(req) : (req.ip || "ip")));
+    const rawKey = String((key ? key(req) : (clientIp(req) || "ip")));
     const now = Date.now();
 
     if (hasRedis) {
@@ -176,5 +243,5 @@ function rateLimit({ windowMs, max, key, prefix }) {
   };
 }
 
-module.exports = { rateLimit };
+module.exports = { rateLimit, clientIp };
 

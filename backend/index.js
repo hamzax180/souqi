@@ -34,7 +34,7 @@ const { validateBody } = require("./lib/validate");
 const { loginSchema, orderSchema, inquirySchema, microClaimSchema, signupSchema } = require("./lib/schemas");
 const { initIdempotency, withIdempotency } = require("./lib/idempotency");
 const securityHeaders = require("./middleware/securityHeaders");
-const { rateLimit } = require("./middleware/rateLimit");
+const { rateLimit, clientIp } = require("./middleware/rateLimit");
 const { encryptSecret, decryptSecret } = require("./lib/crypto");
 const aiProviders = require("./lib/ai/providers");
 const aiClient = require("./lib/ai/client");
@@ -227,16 +227,16 @@ app.use(requestLog);
    of attempts impractical. */
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, max: 30, prefix: "rl-login-acct",
-  key: (req) => (req.ip || "") + ":" + String((req.body && req.body.email) || "").toLowerCase()
+  key: (req) => clientIp(req) + ":" + String((req.body && req.body.email) || "").toLowerCase()
 });
 const loginIpLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, max: 120, prefix: "rl-login-ip",
-  key: (req) => req.ip || ""
+  key: (req) => clientIp(req)
 });
-const orderLimiter = rateLimit({ windowMs: 60 * 1000, max: 60, key: (req) => (req.ip || "") + ":" + req.params.wsId });
-const inquiryLimiter = rateLimit({ windowMs: 60 * 1000, max: 30, key: (req) => (req.ip || "") + ":" + req.params.wsId });
+const orderLimiter = rateLimit({ windowMs: 60 * 1000, max: 60, key: (req) => clientIp(req) + ":" + req.params.wsId });
+const inquiryLimiter = rateLimit({ windowMs: 60 * 1000, max: 30, key: (req) => clientIp(req) + ":" + req.params.wsId });
 const aiLimiter = rateLimit({ windowMs: 60 * 1000, max: 30 });
-const visitLimiter = rateLimit({ windowMs: 60 * 1000, max: 120, key: (req) => req.ip || "" });
+const visitLimiter = rateLimit({ windowMs: 60 * 1000, max: 120, key: (req) => clientIp(req) });
 
 /* ---- a custom domain is that project's site, and nothing else ----
 
@@ -1727,10 +1727,10 @@ blobs.init({ getMasterDb, getBlobDb: () => getSiblingDb("blobs") });
 uploads.init({ getMasterDb, onPersist: (keys) => blobs.persist(keys) });
 anon.init({ JWT_SECRET });
 
-const projectLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, key: (req) => req.ip || "" });
+const projectLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, key: (req) => clientIp(req) });
 // Micro-claim creates a real account — a tighter budget than the build
 // endpoints, since abuse here means spamming workspace/user rows, not just CPU.
-const microClaimLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 8, key: (req) => req.ip || "" });
+const microClaimLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 8, key: (req) => clientIp(req) });
 
 /**
  * Run the whole pipeline for a prompt. Shared by create and follow-up, and by
@@ -2792,12 +2792,12 @@ blobs.ensureIndexes().catch(() => {});
 
    A prefix because the shared counter is namespaced per limiter now, and
    naming it is better than taking whatever number it is assigned. */
-const codeAgentLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 40, prefix: "rl-codeagent", key: (req) => req.ip || "" });
+const codeAgentLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 40, prefix: "rl-codeagent", key: (req) => clientIp(req) });
 
 /* Its own bucket rather than sharing the build limiter. Attaching six photos
    to one message is six signing calls and six completions — normal use that
    would eat a build allowance meant for something far more expensive. */
-const uploadLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 120, prefix: "rl-upload", key: (req) => req.ip || "" });
+const uploadLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 120, prefix: "rl-upload", key: (req) => clientIp(req) });
 
 /* appOwnerOf and isAdminEmail are declared further down and hoisted, so the
    references here are live by the time a request arrives. */
@@ -3783,7 +3783,7 @@ app.delete("/api/integrations/stripe", async (req, res, next) => {
    the writing routes are limited. */
 const billingLimiter = rateLimit({
   windowMs: 60 * 1000, max: 10,
-  key: (req) => (req.ip || "") + ":billing"
+  key: (req) => clientIp(req) + ":billing"
 });
 
 /* Prices change about once a year and the checkout page asks for all of
@@ -4487,7 +4487,7 @@ async function ownerStripeAccount(project) {
 // attacker actually reaches. Tight limit, per IP and per app.
 const checkoutLimiter = rateLimit({
   windowMs: 60 * 1000, max: 20,
-  key: (req) => (req.ip || "") + ":" + (req.params.projectId || "")
+  key: (req) => clientIp(req) + ":" + (req.params.projectId || "")
 });
 
 /**
@@ -7144,7 +7144,7 @@ const deployplane = require("./lib/deployplane");
 
 /* Deploys are expensive — each one builds a Docker image. Rate limited
    harder than a read, and per-IP like the other codeagent limiters. */
-const deployLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, key: (req) => req.ip || "" });
+const deployLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, key: (req) => clientIp(req) });
 
 /**
  * Resolve a Souqi project the caller owns, or answer for us.
