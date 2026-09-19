@@ -200,6 +200,17 @@ function estimateTokens(messages, tools) {
  * @param {Function} [overrides.recordSpend] (route, usd) => void — plug in the audit collection later; defaults to in-memory
  * @param {object} [overrides.routes]        { prose: {baseUrl,model,key}, json: {...} } — overrides env for tests
  */
+/* Last shared total read out of the store, and when.
+
+   budgetExceeded runs on every single call, so it cannot pay a database
+   round trip each time. It reads through this, refreshed at most once a
+   SHARED_TTL_MS — a few seconds of staleness against a monthly budget is
+   a rounding error, and the write path below keeps it moving in between
+   so the number never sits still while money is being spent. */
+let sharedTotal = null;
+let sharedAt = 0;
+const SHARED_TTL_MS = 10000;
+
 function init(overrides) {
   const o = overrides || {};
   const env = process.env;
@@ -208,6 +219,8 @@ function init(overrides) {
     budgetUsd: Number((o.budgetUsd !== null && o.budgetUsd !== undefined) ? o.budgetUsd : (env.AI_MONTHLY_BUDGET_USD || 0)),
     fetchImpl: o.fetchImpl || globalThis.fetch,
     recordSpendHook: o.recordSpend || null,
+    /* Shared, durable spend. See the note on budgetExceeded. */
+    spendStore: o.spendStore || null,
     routes: {
       prose: (o.routes && o.routes.prose) || routeFromEnv(env, "AI_PROSE"),
       json: (o.routes && o.routes.json) || routeFromEnv(env, "AI_JSON"),
@@ -217,6 +230,13 @@ function init(overrides) {
   };
   for (const r of Object.keys(CONFIG.routes)) breakers[r] = { failCount: 0, openUntil: 0 };
   spend = {};
+  /* The shared total belongs to the store that was just replaced, so it
+     goes with it. Leaving it behind meant a reconfigured client answered
+     from the previous store's numbers until the cache aged out — which
+     is exactly how the "a second process sees the first one's spend"
+     test first passed against a stale total instead of a real read. */
+  sharedTotal = null;
+  sharedAt = 0;
   return CONFIG;
 }
 
@@ -324,18 +344,63 @@ function recordSpend(route, usd) {
   spend[k] = spend[k] || {};
   spend[k][route] = (spend[k][route] || 0) + usd;
   if (CONFIG.recordSpendHook) { try { CONFIG.recordSpendHook(route, usd); } catch (e) { /* observability must never break the call */ } }
+  if (CONFIG.spendStore && usd > 0) {
+    /* Moved immediately rather than waiting for the next refresh, so a
+       burst inside one TTL window still counts against the budget. */
+    if (sharedTotal !== null) sharedTotal += usd;
+    try {
+      const p = CONFIG.spendStore.add(k, route, usd);
+      if (p && p.catch) p.catch(() => { /* metering must never break the call */ });
+    } catch (e) { /* same */ }
+  }
 }
 function monthSpend(route) {
   const k = monthKey();
   return (spend[k] && spend[k][route]) || 0;
 }
+/* THE BUDGET HAS TO BE COUNTED SOMEWHERE BOTH PROCESSES CAN SEE.
+
+   This used to sum the in-memory `spend` map, and nothing ever plugged
+   the recordSpend hook in — the docstring on init still called it
+   "plug in the audit collection later". So the monthly cap was counted
+   per process, in a Map that dies with the lambda. Production is Vercel:
+   many instances at once, recycled constantly, each starting again at
+   zero. AI_MONTHLY_BUDGET_USD was a number in the environment and
+   nothing else.
+
+   This is the same failure middleware/rateLimit.js documents at length
+   and already fixed for request limits, and the fix is the same shape:
+   a store the whole deployment shares, with the in-memory map left
+   underneath it for local runs and for the moments the store is down.
+
+   Unavailable store falls back to THIS process's own total rather than
+   to zero. A budget breaker that opens the floodgates the moment its
+   database blinks is worse than one that is briefly too strict, and
+   unlike a rate limiter the thing on the other side of it is money. */
 function budgetExceeded(route) {
   if (!CONFIG.budgetUsd || CONFIG.budgetUsd <= 0) return false;
   // Budget is a whole-adapter guard (docs/AI-PROVIDER-PLAN.md §6 "monthly
   // budget hit"), not per-route — one runaway route shouldn't get a full
   // budget's worth of headroom just because another route stayed quiet.
-  const total = Object.keys(CONFIG.routes).reduce((sum, r) => sum + monthSpend(r), 0);
+  const local = Object.keys(CONFIG.routes).reduce((sum, r) => sum + monthSpend(r), 0);
+  const total = (CONFIG.spendStore && sharedTotal !== null) ? Math.max(sharedTotal, local) : local;
   return total >= CONFIG.budgetUsd;
+}
+
+/* Pulled on a timer by chat(), never awaited by the caller on the hot
+   path. Returns the shared total so a caller can prime it at boot. */
+async function refreshSharedSpend(force) {
+  if (!CONFIG || !CONFIG.spendStore) return null;
+  if (!force && sharedTotal !== null && Date.now() - sharedAt < SHARED_TTL_MS) return sharedTotal;
+  try {
+    const t = await CONFIG.spendStore.total(monthKey());
+    if (typeof t === "number" && isFinite(t) && t >= 0) { sharedTotal = t; sharedAt = Date.now(); }
+  } catch (e) {
+    /* Leave the last known total in place. Dropping to null here would
+       silently reopen the budget until the next successful read. */
+    sharedAt = Date.now();
+  }
+  return sharedTotal;
 }
 
 function estimateCost(route, usage) {
@@ -656,6 +721,10 @@ async function chat(req) {
   if (breakerOpen(route)) {
     return { ok: false, breakerOpen: true, reason: "circuit breaker open for \"" + route + "\" until " + new Date(breakers[route].openUntil).toISOString() };
   }
+  /* Refreshed here because chat() is the only place the answer matters,
+     and it is already async. Cached for SHARED_TTL_MS, so this is a
+     database read a few times a minute, not one per call. */
+  await refreshSharedSpend(false);
   if (budgetExceeded(route)) {
     return { ok: false, budgetExceeded: true, reason: "monthly AI budget of $" + CONFIG.budgetUsd + " reached" };
   }
@@ -850,4 +919,4 @@ function routeConfigured(route) {
 }
 
 module.exports = { init, chat, routeConfigured, monthSpend, budgetExceeded,
-  windowFor, estimateTokens, CHARS_PER_TOKEN, _debugState };
+  refreshSharedSpend, windowFor, estimateTokens, CHARS_PER_TOKEN, _debugState };

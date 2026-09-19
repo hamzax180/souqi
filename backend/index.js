@@ -38,6 +38,7 @@ const { rateLimit, clientIp } = require("./middleware/rateLimit");
 const { encryptSecret, decryptSecret } = require("./lib/crypto");
 const aiProviders = require("./lib/ai/providers");
 const aiClient = require("./lib/ai/client");
+const aiSpendStore = require("./lib/ai/spend-store");
 const scaffoldFiles = require("./lib/codeagent/scaffold-files");
 const theme = require("./lib/codeagent/theme");
 /* Scaffold files the BROWSER's build container does not mount for itself and
@@ -2763,6 +2764,22 @@ const diffstat = require("./lib/codeagent/diffstat");
 const codeMemory = require("./lib/codeagent/memory");
 const codeAgentUsage = require("./lib/codeagent/usage");
 codeAgentUsage.init({ getMasterDb });
+
+/* The platform's monthly AI budget, counted somewhere shared.
+
+   lib/ai/client.js self-configures from env on first use with the
+   recordSpend hook left null — so AI_MONTHLY_BUDGET_USD was summed in a
+   per-process Map that resets on every cold start. Production is Vercel:
+   many instances, recycled constantly, each counting from zero. The cap
+   was a number in the environment and nothing else.
+
+   Wiring the store here, before the first chat() can run, is what makes
+   it a cap. init() is called explicitly rather than left to the lazy
+   path, because the lazy path is exactly what produced a client with no
+   store. See lib/ai/spend-store.js. */
+aiSpendStore.init({ getMasterDb });
+aiClient.init({ spendStore: aiSpendStore });
+
 const runStore = require("./lib/codeagent/run-store");
 const agentRunner = require("./lib/codeagent/agent-runner");
 const agentState = require("./lib/codeagent/agent-state");
