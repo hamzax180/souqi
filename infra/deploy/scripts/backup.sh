@@ -199,7 +199,23 @@ do_restore_userdb() {
 }
 
 install_cron() {
-  local job="15 3 * * * cd ${HERE} && /usr/bin/env bash scripts/backup.sh >> /var/log/souqi-backup.log 2>&1"
+  # THE LOG GOES SOMEWHERE THIS USER CAN WRITE.
+  #
+  # This line used to redirect to /var/log/souqi-backup.log. /var/log is
+  # root:syslog drwxrwxr-x and the job runs as the deploy user, so the
+  # SHELL failed the redirect before backup.sh was ever executed. The
+  # cron was installed, cron was running, the script was present and
+  # executable, and no backup ran for fifteen days — silently, because
+  # the thing that failed was the logging.
+  #
+  # Found by noticing the newest dump in $BACKUP_DIR was two weeks old on
+  # a box whose crontab looked correct. Nothing else would have said so.
+  #
+  # $BACKUP_DIR is created and chmod 700'd by this script and owned by
+  # the user the job runs as, which makes it the one directory here that
+  # is guaranteed writable at 03:15.
+  local logfile="${BACKUP_DIR}/backup.log"
+  local job="15 3 * * * cd ${HERE} && mkdir -p ${BACKUP_DIR} && /usr/bin/env bash scripts/backup.sh >> ${logfile} 2>&1"
   # Idempotent: strip any previous line for this script before adding.
   #
   # `|| true` is load-bearing, not defensive noise. grep exits 1 when it
@@ -211,7 +227,7 @@ install_cron() {
   ( { crontab -l 2>/dev/null || true; } | grep -v "scripts/backup.sh" || true ; echo "$job" ) | crontab -
   say "Installed"
   echo "  15 3 * * *  ->  ${BACKUP_DIR}"
-  echo "  log: /var/log/souqi-backup.log"
+  echo "  log: ${logfile}"
   echo ""
   echo "  Dumps live on the same disk as the database. That covers a bad"
   echo "  migration or a dropped table, not a lost VM. Copy them off the box"
