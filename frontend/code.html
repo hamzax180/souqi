@@ -6553,11 +6553,47 @@
     });
   }
 
+  /* Grow to fit, and keep showing the line being typed.
+
+     `height = "auto"` is how the box measures its own content — it has to
+     collapse before scrollHeight means anything. The cost is that the
+     collapse resets scrollTop to 0, and the browser had just scrolled the
+     caret into view on this very keystroke. So past the cap the composer
+     scrolled itself back to line one on every character: the text went in
+     at the bottom, out of sight, and the box showed the top of a prompt
+     nobody was looking at any more.
+
+     The cap comes from the stylesheet rather than a second copy of the
+     number. The two had already drifted — this clamped to 180 while
+     .ag-box textarea says max-height:140 — and max-height wins, so the
+     inline height was a lie 40px tall on every long prompt.
+
+     Pinned to the bottom only when the caret is at the end, which is what
+     typing means. Editing in the middle keeps the scroll position it had,
+     so fixing a typo on line two does not fling the view to line forty. */
+  function autosizeComposer() {
+    const atEnd = agInput.selectionStart === agInput.value.length
+      && agInput.selectionEnd === agInput.value.length;
+    const keep = agInput.scrollTop;
+    const cap = parseFloat(getComputedStyle(agInput).maxHeight) || 180;
+    agInput.style.height = "auto";
+    agInput.style.height = Math.min(cap, agInput.scrollHeight) + "px";
+    /* Only once it actually scrolls. Below the cap the content fits and
+       scrollHeight still rounds a pixel above clientHeight, so assigning
+       a scrollTop there left the box sitting 1px down — enough to clip
+       the top of the first line against the placeholder's position. */
+    if (agInput.scrollHeight > agInput.clientHeight + 1) {
+      agInput.scrollTop = atEnd ? agInput.scrollHeight : keep;
+    } else {
+      agInput.scrollTop = 0;
+    }
+  }
+
   agInput.addEventListener("input", () => {
     // When building: send button is always enabled (it's the cancel or queue button)
     // When idle: disabled if there's no input
     updateComposerSendButton();
-    agInput.style.height = "auto"; agInput.style.height = Math.min(180, agInput.scrollHeight) + "px";
+    autosizeComposer();
   });
 
   // Claude & Replit Model Popover
