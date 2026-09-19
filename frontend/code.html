@@ -962,28 +962,6 @@
          "Cloud credits" is the deploy host's memory, which the builder has
          no reason to fetch. A meter showing a number that is not the number
          is worse than no meter. -->
-    <div class="ag-usage" id="agUsage">
-      <div class="u-top">
-        <span class="u-plan" id="agUsagePlan">Free plan</span>
-        <a class="u-up" href="/pricing" onclick="openUpgradeModal(event)" id="agUsageUp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></svg>Upgrade</a>
-      </div>
-      <div class="u-row">
-        <span class="u-lab"><span class="u-name">5-hour limit</span><span class="u-meta"><span class="u-reset" id="agWinReset"></span><b id="agWinPct">—</b></span></span>
-        <span class="u-bar"><i id="agWinBar"></i></span>
-      </div>
-      <div class="u-row">
-        <span class="u-lab"><span class="u-name">Monthly</span><span class="u-meta"><span class="u-reset" id="agMonthReset"></span><b id="agAllowPct">—</b></span></span>
-        <span class="u-bar"><i id="agAllowBar"></i></span>
-      </div>
-      <!-- The third meter is not money. It is how much of the model's window
-           this project's own source already fills, which is the other thing
-           that runs out — and the one that explains a turn going vague on a
-           big project. Hidden until there is a project to measure. -->
-      <div class="u-row" id="agCtxRow">
-        <span class="u-lab"><span class="u-name">Context window</span><span class="u-meta"><span class="u-reset" id="agCtxUsed"></span><b id="agCtxPct">—</b></span></span>
-        <span class="u-bar"><i id="agCtxBar"></i></span>
-      </div>
-    </div>
     <a class="ag-upgrade" href="/pricing" onclick="openUpgradeModal(event)">✦ Upgrade</a>
     <div class="ag-hist-install">
       <span>Install Souqi on</span>
@@ -1077,6 +1055,19 @@
           <button type="button" class="ag-attach" id="agAttach" aria-label="Attach a logo or image" title="Attach a logo or image">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
           </button>
+          <!-- Usage, where the spending happens. It sits on THIS side of
+               .ag-brow-sp deliberately: the row's own note in code.css says
+               it needs 264px and has 262 at 375px, so the right-hand
+               cluster has nothing to give. The arc is one --pct away from
+               being a plain circle; see renderUsage. -->
+          <button type="button" class="ag-usage-btn" id="agUsageBtn"
+                  aria-haspopup="dialog" aria-expanded="false"
+                  aria-label="Usage and limits" title="Usage and limits">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle class="trk" cx="12" cy="12" r="9"></circle>
+              <circle class="arc" cx="12" cy="12" r="9"></circle>
+            </svg>
+          </button>
           <!-- multiple, and no SVG. The server refuses image/svg+xml because
                the bucket is public-read, so an SVG there would run as a
                document in the asset domain's origin; offering it in the
@@ -1156,6 +1147,37 @@
         </div>
       </div>
     </form>
+
+    <!-- position:fixed with coordinates from JS, the way .ag-chatpop does
+         it. .ag has overflow-x:hidden, and an absolutely positioned panel
+         inside .ag-brow gets clipped mid-word by it — which is the only
+         reason the model popover carries twenty lines of clamp arithmetic.
+         Fixed sidesteps the whole problem. -->
+    <div class="ag-usagepop" id="agUsagePop" role="dialog" aria-label="Usage and limits">
+    <div class="ag-usage" id="agUsage">
+      <div class="u-top">
+        <span class="u-plan" id="agUsagePlan">Free plan</span>
+        <a class="u-up" href="/pricing" onclick="openUpgradeModal(event)" id="agUsageUp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></svg>Upgrade</a>
+      </div>
+      <div class="u-row">
+        <span class="u-lab"><span class="u-name">5-hour limit</span><span class="u-meta"><span class="u-reset" id="agWinReset"></span><b id="agWinPct">—</b></span></span>
+        <span class="u-bar"><i id="agWinBar"></i></span>
+      </div>
+      <div class="u-row">
+        <span class="u-lab"><span class="u-name">Monthly</span><span class="u-meta"><span class="u-reset" id="agMonthReset"></span><b id="agAllowPct">—</b></span></span>
+        <span class="u-bar"><i id="agAllowBar"></i></span>
+      </div>
+      <!-- The third meter is not money. It is how much of the model's window
+           this project's own source already fills, which is the other thing
+           that runs out — and the one that explains a turn going vague on a
+           big project. Hidden until there is a project to measure. -->
+      <div class="u-row" id="agCtxRow">
+        <span class="u-lab"><span class="u-name">Context window</span><span class="u-meta"><span class="u-reset" id="agCtxUsed"></span><b id="agCtxPct">—</b></span></span>
+        <span class="u-bar"><i id="agCtxBar"></i></span>
+      </div>
+    </div>
+      <p class="u-note" id="agCtxNote" hidden></p>
+    </div>
 
     <!-- New-chat-only: type tiles + example prompts. Hidden together with
          #agEmptyState once the first turn lands — see isFirstBuild in
@@ -6520,6 +6542,7 @@
       e.stopPropagation();
       const isOpen = agModelPopover.classList.toggle("open");
       agModelPill.classList.toggle("open", isOpen);
+      if (isOpen && typeof closeUsagePop === "function") closeUsagePop();
       if (isOpen) {
         /* Open toward whichever side has the room.
 
@@ -6744,9 +6767,10 @@
     if (!agEffortPop) return;
     agEffortPop.classList.add("open");
     if (agEffortPill) { agEffortPill.classList.add("open"); agEffortPill.setAttribute("aria-expanded", "true"); }
-    // Close the sibling picker rather than stacking two popovers.
+    // Close the sibling pickers rather than stacking popovers.
     if (agModelPopover) agModelPopover.classList.remove("open");
     if (agModelPill) agModelPill.classList.remove("open");
+    if (typeof closeUsagePop === "function") closeUsagePop();
     /* After the class lands, so clientWidth is the laid-out width and not the
        zero a hidden element reports. */
     requestAnimationFrame(positionThumb);
@@ -7040,6 +7064,65 @@
     $("agChatsLabel").textContent = me ? chatLabel(me, i) : "New chat";
     btn.title = chats.length > 1 ? chats.length + " conversations in this project" : "Conversations";
   }
+
+  /* ---- usage popover ------------------------------------------------
+     Built on .ag-chatpop's shape: position:fixed, coordinates measured on
+     open, dismissed by outside click, Escape and resize. It lives in the
+     composer row rather than the rail because the rail's footer was 226px
+     of permanently-visible column for three numbers nobody reads
+     continuously — rail-motion.css:501 says as much about the same card. */
+  const agUsageBtn = $("agUsageBtn");
+  const agUsagePop = $("agUsagePop");
+
+  function closeUsagePop() {
+    if (!agUsagePop) return;
+    agUsagePop.classList.remove("open");
+    if (agUsageBtn) agUsageBtn.setAttribute("aria-expanded", "false");
+  }
+
+  function openUsagePop() {
+    if (!agUsagePop || !agUsageBtn) return;
+    /* Only this row's popovers, and only one at a time — the convention
+       openEffort already follows for the model picker. */
+    if (typeof closeEffort === "function") closeEffort();
+    if (typeof agModelPopover !== "undefined" && agModelPopover) {
+      agModelPopover.classList.remove("open");
+      if (agModelPill) agModelPill.classList.remove("open");
+    }
+
+    agUsagePop.classList.add("open");
+    agUsageBtn.setAttribute("aria-expanded", "true");
+
+    const r = agUsageBtn.getBoundingClientRect();
+    const w = agUsagePop.offsetWidth, h = agUsagePop.offsetHeight;
+    const PAD = 8;
+    agUsagePop.style.left = Math.max(PAD, Math.min(r.left, innerWidth - w - PAD)) + "px";
+    /* Above the button when there is room, which on a composer pinned to
+       the bottom of the window is essentially always. */
+    agUsagePop.style.top = (r.top - h - 8 < PAD ? r.bottom + 8 : r.top - h - 8) + "px";
+
+    /* THE NUMBERS ARE STALE UNTIL ASKED FOR. renderUsage runs on page load
+       and on project open and never again — no timer, nothing after a turn
+       — so the bars drift for the whole session. Refreshing here is what
+       makes them true at the moment somebody looks. */
+    if (window.__refreshUsage) window.__refreshUsage();
+  }
+
+  if (agUsageBtn) {
+    agUsageBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (agUsagePop && agUsagePop.classList.contains("open")) closeUsagePop();
+      else openUsagePop();
+    });
+  }
+  if (agUsagePop) agUsagePop.addEventListener("click", (e) => e.stopPropagation());
+  document.addEventListener("click", (e) => {
+    if (!agUsagePop || !agUsagePop.classList.contains("open")) return;
+    if (e.target.closest && (e.target.closest("#agUsagePop") || e.target.closest("#agUsageBtn"))) return;
+    closeUsagePop();
+  });
+  addEventListener("keydown", (e) => { if (e.key === "Escape") closeUsagePop(); });
+  addEventListener("resize", closeUsagePop);
 
   function closeChatPop() { chatPop.classList.remove("open"); }
 
@@ -7650,6 +7733,18 @@
       }
     }
 
+    /* The threshold is real: AUTO_COMPACT_AT in
+       agent-src/lib/codeagent/context/token-budget.ts. Hardcoded here
+       rather than served, and named so the next reader can check it —
+       claiming a number the agent does not actually use would be worse
+       than showing none. */
+    const note = $("agCtxNote");
+    if (note) {
+      const showable = ctx && Number(ctx.windowTokens) > 0;
+      note.hidden = !showable;
+      if (showable) note.textContent = "Compacts automatically at 85%";
+    }
+
     const when = $("agWinReset");
     if (when) {
       // Only once something has been spent — a countdown on an untouched
@@ -7663,6 +7758,22 @@
     }
     // The month always has a known reset: the 1st, in UTC, which is the
     // boundary monthSpend() actually buckets on.
+    /* The ring carries the HIGHER of the two spend meters, because that is
+       the one that will stop you first — a month at 10% is no comfort when
+       the five-hour window is full. Same thresholds usageBar paints the
+       bars with, so the circle and the bar under it never disagree. */
+    const ring = $("agUsageBtn");
+    if (ring) {
+      const wc = Number(d.windowBudgetUsd || 0), mc = Number(d.budgetUsd || 0);
+      const wp = wc > 0 ? (Number(d.windowUsd || 0) / wc) * 100 : 0;
+      const mp = mc > 0 ? (Number(d.spentUsd || 0) / mc) * 100 : 0;
+      const pct = Math.max(0, Math.min(100, Math.round(Math.max(wp, mp))));
+      ring.style.setProperty("--pct", pct);
+      ring.classList.toggle("warn", pct >= 70 && pct < 90);
+      ring.classList.toggle("hot", pct >= 90);
+      ring.setAttribute("title", "Usage and limits \u2014 " + pct + "% used");
+    }
+
     const mres = $("agMonthReset");
     if (mres) {
       const now = new Date();

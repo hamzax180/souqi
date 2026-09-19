@@ -1598,6 +1598,49 @@
     border-radius:6px;display:grid;place-items:center;cursor:pointer;transition:.15s}
   .ag-attach:hover{border-color:var(--line-hover);color:var(--ink)}
   .ag-attach svg{width:16px;height:16px}
+
+  /* ---- the usage ring ----
+     Two circles and one custom property. The arc starts at the top because
+     a gauge beginning at three o'clock reads as a slice of a pie rather
+     than as a proportion. r=9, so the circumference is 56.55 and the dash
+     offset is the unfilled remainder of it. */
+  .ag-usage-btn{flex:none;width:30px;height:30px;border:1px solid var(--line);
+    background:transparent;border-radius:999px;display:grid;place-items:center;
+    cursor:pointer;padding:0;color:var(--accent);
+    transition:border-color var(--dur-snappy,.12s) ease,background-color var(--dur-snappy,.12s) ease}
+  .ag-usage-btn:hover{border-color:var(--ink-2);
+    background:color-mix(in srgb,currentColor 10%,transparent)}
+  .ag-usage-btn svg{width:18px;height:18px;transform:rotate(-90deg);overflow:visible}
+  .ag-usage-btn circle{fill:none;stroke-width:3}
+  .ag-usage-btn .trk{stroke:color-mix(in srgb,currentColor 22%,transparent)}
+  .ag-usage-btn .arc{stroke:currentColor;stroke-linecap:round;
+    stroke-dasharray:56.55;
+    stroke-dashoffset:calc(56.55 - (56.55 * var(--pct,0) / 100));
+    transition:stroke-dashoffset var(--dur-chill,.3s) var(--ease-snappy,ease-out)}
+  .ag-usage-btn.warn{color:var(--warn)}
+  .ag-usage-btn.hot{color:var(--danger)}
+  @media (prefers-reduced-motion:reduce){
+    .ag-usage-btn,.ag-usage-btn .arc{transition:none}
+  }
+
+  /* ---- the panel it opens ---- */
+  .ag-usagepop{position:fixed;z-index:130;width:min(300px,calc(100vw - 16px));
+    background:var(--card);border:1px solid var(--line);border-radius:14px;
+    padding:12px 13px;box-shadow:0 16px 40px -10px rgba(11,22,38,.45);
+    opacity:0;visibility:hidden;transform:translateY(4px);
+    transition:opacity .16s ease,transform .16s ease,visibility .16s ease}
+  /* .ag-chatpop carries one of these and it is not decoration: a 45%
+     blue-black shadow under a #26282b card is invisible, so in dark mode
+     the panel lost its edge and read as part of the composer it floats
+     over. Same two-layer shape the chat popover uses. */
+  :root[data-theme="dark"] .ag-usagepop{
+    box-shadow:0 4px 10px -4px rgba(0,0,0,.5),0 24px 52px -20px rgba(0,0,0,.85)}
+  .ag-usagepop.open{opacity:1;visibility:visible;transform:none}
+  /* Under the context row, naming the real threshold. The number is
+     AUTO_COMPACT_AT in agent-src/lib/codeagent/context/token-budget.ts; if
+     that moves this line is wrong and says so confidently. */
+  .u-note{margin:0;font-size:.68rem;color:var(--mut);line-height:1.45}
+  @media (prefers-reduced-motion:reduce){ .ag-usagepop{transition:none} }
   /* Chips wrap onto their own line rather than squeezing the composer's
      button row — eight attachments is a legitimate thing to do and must not
      push the send button off the end. */
@@ -2154,13 +2197,29 @@
      one control the row exists for stays where the eye last left it. */
   @media (max-width:640px){
     .ag-box{padding-inline:10px}
-    .ag-brow{gap:4px;justify-content:flex-end}
+    /* 3px, not 4, and the pills give up 2px a side — 13px between them, to
+       pay for a 28px ring and the gap it arrived with.
+
+       The row had 1.2px LESS than it needed the moment the ring landed:
+       260.6 wanted against 259.4 offered at 360px. It still measured one
+       clean row at 375 and at 640, so the regression was invisible at every
+       width except the one an Android phone actually is. And .ag-brow wraps,
+       which means the pills' flex-shrink never gets a turn — wrapping is
+       resolved before shrinking — so 1.2px bought a whole second line,
+       36px of row become 68px. flex-wrap cannot simply go away here:
+       .ag-attach-row is flex:0 0 100% and depends on it to claim a line of
+       its own once a file is attached. So the row buys width instead.
+       11.8px of slack at 360 now. */
+    .ag-brow{gap:3px;justify-content:flex-end}
     .ag-brow-sp{display:none}
-    .ag-attach{margin-inline-end:auto}
-    .ag-attach,.ag-voice-btn{width:28px;height:28px}
+    /* The ring is last in the left group now, so the auto margin that
+       splits the row belongs to it rather than to +. */
+    .ag-attach{margin-inline-end:0}
+    .ag-usage-btn{margin-inline-end:auto}
+    .ag-attach,.ag-voice-btn,.ag-usage-btn{width:28px;height:28px}
     .ag-send{width:30px;height:30px}
-    .ag-effort-pill{padding-inline:7px}
-    .ag-model-pill{padding-inline:7px}
+    .ag-effort-pill{padding-inline:5px}
+    .ag-model-pill{padding-inline:5px}
   }
 
   .ag-empty{position:relative;padding:44px 20px 36px;color:var(--ink-2);text-align:center}
@@ -4648,27 +4707,12 @@
      history about a row and a half back without shrinking any text or
      thinning the bars, which are the two things that would cost legibility
      rather than just air. */
-  .ag-usage{display:flex;flex-direction:column;gap:8px;padding:9px 11px;border-radius:12px;
-    border:1px solid var(--line);background:var(--card);box-shadow:var(--sh-subtle);
-    transition:background var(--dur-snappy,.12s) ease,border-color var(--dur-snappy,.12s) ease,
-               box-shadow var(--dur-snappy,.12s) ease}
-  /* Replit lights a card up rather than merely lifting it: the border warms
-     toward the accent and the shadow picks up the accent's colour, so the
-     surface reads as live under the pointer instead of just raised. Both
-     halves are color-mix on --accent, which keeps it correct in either
-     theme - a fixed blue glow is invisible on a light card and garish on a
-     dark one. The neutral --sh-subtle stays underneath so the card does not
-     lose its own weight while the glow sits on top of it. */
-  /* Hover fills the card with the wash, at the strength that actually
-     reads: #daeff8 on a #f6f5f4 rail in light, #243b46 on #18191b in
-     dark. One inset layer gathers the light toward the edges. Nothing
-     leaves the box - an outer halo in a 238px rail lands on the Recent
-     list above it and the install row below. */
-  .ag-usage:hover{border-color:color-mix(in srgb,var(--accent) 30%,var(--line));
-    background:color-mix(in srgb,var(--accent) 15%,var(--card));
-    box-shadow:var(--sh-subtle),
-      inset 0 0 20px -6px color-mix(in srgb,var(--accent) 34%,transparent)}
-  @media (prefers-reduced-motion:reduce){ .ag-usage{transition:none} }
+  /* The chrome moved to .ag-usagepop — this is the contents of a panel now,
+     not a tile in a rail. The accent hover wash went with it: inside
+     something already raised on its own shadow it read as a hover target
+     that does nothing, and the comment that used to sit here measured it
+     against "a 238px rail" that no longer surrounds it. */
+  .ag-usage{display:flex;flex-direction:column;gap:11px}
   .ag-usage .u-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
   .ag-usage .u-plan{font-size:.78rem;font-weight:600;color:var(--ink);text-transform:capitalize}
   /* Mixed toward --ink rather than the bare --accent. On the tinted card
@@ -4791,9 +4835,12 @@
      two halves of one question, and splitting the reset onto its own row
      below the bar (which is what this did before) made it read as a
      footnote to the bar rather than as half the answer. */
-  .u-lab{display:flex;align-items:baseline;justify-content:space-between;gap:7px;
-    font-size:.72rem;color:var(--ink-2);width:100%}
-  .u-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:none}
+  /* Tuned for a 194px rail when it lived in one. A ~300px panel has room
+     for the name in full and the reset time beside the number, which is the
+     shape this row was always reaching for. */
+  .u-lab{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+    font-size:.775rem;color:var(--ink);width:100%}
+  .u-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:none;font-weight:550}
   /* Claude has a 460px popover for this line; the rail has 194px. At the
      worst case it actually has to render - "5-hour limit / Resets in 2h37m
      / 100%" - the three parts came to 2px under the width, and the part
@@ -4805,7 +4852,7 @@
      3.58:1 against it; the accent wash took that to 2.90, which is under
      AA for text this size. --ink-2 puts it back to 4.61. The hierarchy
      still holds - the percentage beside it is --ink and bold. */
-  .u-reset{color:var(--ink-2);font-size:.67rem;white-space:nowrap;
+  .u-reset{color:var(--mut);font-size:.72rem;white-space:nowrap;
     overflow:hidden;text-overflow:ellipsis;min-width:0}
   .u-meta b{flex:none}
   .u-lab b{font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums}
